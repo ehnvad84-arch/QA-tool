@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--scenario", type=Path, help="сценарий (по умолчанию scenario.yaml рядом)")
     run.add_argument("--thresholds", type=Path, help="пороги (по умолчанию thresholds.yaml рядом)")
 
+    sub.add_parser("doctor", help="проверить установку: версия, ffmpeg, справка")
+
     discover = sub.add_parser("discover", help="найти камеры в сети")
     discover.add_argument("--interface", default="", help="IP сетевой карты к камерам")
     discover.add_argument("--target", help="адрес для прямого запроса")
@@ -86,6 +88,28 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_doctor() -> int:
+    import subprocess
+
+    from qa_tool.gui.help_window import load_topics, manual_dir
+    from qa_tool.tools import tool_path
+
+    print(f"qa-tool {__version__}")
+    ok = True
+    for name in ("ffmpeg", "ffprobe"):
+        path = tool_path(name)
+        if path is None:
+            print(f"{name}: не найден")
+            ok = False
+            continue
+        first = subprocess.run([path, "-version"], capture_output=True, text=True).stdout
+        print(f"{name}: {path} — {first.splitlines()[0] if first else 'нет ответа'}")
+    topics = load_topics()
+    print(f"справка: {manual_dir()} — разделов {len(topics)}")
+    ok = ok and "index" in topics
+    return EXIT_OK if ok else EXIT_STAND
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -93,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "discover":
         return cmd_discover(args)
+    if args.command == "doctor":
+        return cmd_doctor()
     from qa_tool.gui.app import run_gui
 
     return run_gui()
