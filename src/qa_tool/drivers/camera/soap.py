@@ -17,11 +17,25 @@ from qa_tool.core.secrets import redact
 from qa_tool.core.taboo import check_onvif
 from qa_tool.drivers.camera import http
 
+# Префиксы служб ONVIF, которые проверки пишут в теле запроса (<tr2:GetProfiles/> и т. п.);
+# все объявляются в конверте, поэтому тело — без своих xmlns.
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",
     "tds": "http://www.onvif.org/ver10/device/wsdl",
     "tt": "http://www.onvif.org/ver10/schema",
+    "trt": "http://www.onvif.org/ver10/media/wsdl",
+    "tr2": "http://www.onvif.org/ver20/media/wsdl",
+    "tev": "http://www.onvif.org/ver10/events/wsdl",
+    "timg": "http://www.onvif.org/ver20/imaging/wsdl",
+    "trc": "http://www.onvif.org/ver10/recording/wsdl",
+    "tse": "http://www.onvif.org/ver10/search/wsdl",
+    "trp": "http://www.onvif.org/ver10/replay/wsdl",
+    "tan": "http://www.onvif.org/ver20/analytics/wsdl",
+    "tptz": "http://www.onvif.org/ver20/ptz/wsdl",
+    "wsnt": "http://docs.oasis-open.org/wsn/b-2",
+    "wsa": "http://www.w3.org/2005/08/addressing",
 }
+_ENVELOPE_XMLNS = " ".join(f'xmlns:{prefix}="{uri}"' for prefix, uri in NS.items())
 _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
 _WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
 
@@ -86,7 +100,7 @@ class SoapClient:
         """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         envelope = (
-            f'<s:Envelope xmlns:s="{NS["s"]}" xmlns:tds="{NS["tds"]}" xmlns:tt="{NS["tt"]}">'
+            f"<s:Envelope {_ENVELOPE_XMLNS}>"
             f"<s:Header>{self._security_header()}</s:Header><s:Body>{body}</s:Body></s:Envelope>"
         )
         try:

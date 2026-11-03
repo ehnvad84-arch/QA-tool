@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
+
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",
@@ -42,8 +44,7 @@ class Passport:
 def _envelope(body: str) -> bytes:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
-        f'<s:Envelope xmlns:s="{NS["s"]}" xmlns:tds="http://www.onvif.org/ver10/device/wsdl"'
-        ' xmlns:tt="http://www.onvif.org/ver10/schema">'
+        f'<s:Envelope xmlns:s="{NS["s"]}" {ENVELOPE_NS}>'
         f"<s:Body>{body}</s:Body></s:Envelope>"
     ).encode()
 
@@ -63,8 +64,15 @@ def password_digest(nonce: bytes, created: str, password: str) -> str:
 
 
 class MockCamera:
-    def __init__(self, passport: Passport, username: str = "admin", password: str = "admin"):
+    def __init__(
+        self,
+        passport: Passport,
+        username: str = "admin",
+        password: str = "admin",
+        state: OnvifState | None = None,
+    ):
         self.passport = passport
+        self.state = state or OnvifState()
         self.username = username
         self.password = password
         self.requests: list[str] = []
@@ -112,7 +120,10 @@ class MockCamera:
         return user == self.username and digest == password_digest(nonce, created, self.password)
 
     def answer(self, payload: bytes) -> tuple[int, bytes]:
-        root = ET.fromstring(payload)
+        try:
+            root = ET.fromstring(payload)
+        except ET.ParseError as e:  # как настоящая камера: ошибка в ответ, а не обрыв связи
+            return 400, _fault(f"Malformed request: {e}")
         body = root.find("s:Body", NS)
         operation = body[0].tag.split("}")[-1] if body is not None and len(body) else ""
         self.requests.append(operation)
@@ -136,6 +147,12 @@ class MockCamera:
                 f"<tt:Media><tt:XAddr>{base}/media_service</tt:XAddr></tt:Media>"
                 "</tds:Capabilities></tds:GetCapabilitiesResponse>"
             )
+        services = OnvifServices(
+            self.state, f"http://127.0.0.1:{self.port}/onvif", f"rtsp://127.0.0.1:{self.rtsp_port}"
+        )
+        answer = services.handle(operation, body[0])
+        if answer is not None:
+            return 200, _envelope(answer)
         return 400, _fault(f"Action not supported: {operation}")
 
     def _handler(self):
