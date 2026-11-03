@@ -1,0 +1,28 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-9.2.0, pluggy-1.7.0
+PySide6 6.12.0 -- Qt runtime 6.12.0 -- Qt compiled 6.12.0
+rootdir: /home/ehnvad/projects/QA-tool
+configfile: pyproject.toml
+testpaths: tests
+plugins: qt-4.5.0, anyio-4.16.0
+collected 122 items
+
+tests/checks/test_connect.py ...                                         [  2%]
+tests/core/test_checks.py ..........                                     [ 10%]
+tests/core/test_config.py ..........                                     [ 18%]
+tests/core/test_scheduler.py ....                                        [ 22%]
+tests/core/test_secrets.py ..........                                    [ 30%]
+tests/core/test_store.py ....                                            [ 33%]
+tests/core/test_taboo.py ............................................    [ 69%]
+tests/drivers/test_onvif_generic.py ......                               [ 74%]
+tests/gui/test_cameras_stand.py ....                                     [ 77%]
+tests/gui/test_help.py ...                                               [ 80%]
+tests/gui/test_scenario_run.py ....                                      [ 83%]
+tests/gui/test_window.py .....                                           [ 87%]
+tests/report/test_html.py .....                                          [ 91%]
+tests/test_cli.py .                                                      [ 92%]
+tests/test_cli_run.py ....                                               [ 95%]
+tests/test_mock_camera.py ...                                            [ 98%]
+tests/test_tools.py ..                                                   [100%]
+
+============================= 122 passed in 54.27s =============================

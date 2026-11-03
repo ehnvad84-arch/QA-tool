@@ -17,3 +17,17 @@ def test_doctor_reports_manual(capsys):
     main(["doctor"])
     out = capsys.readouterr().out
     assert "qa-tool" in out and "справка:" in out and "разделов" in out
+
+
+def test_russian_output_survives_single_byte_console(monkeypatch):
+    import io
+
+    from qa_tool.cli import setup_console
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp1252")  # как консоль Windows на раннере
+    monkeypatch.setattr(sys, "stdout", console)
+    setup_console()
+    print("справка: разделов 21")
+    console.flush()
+    assert raw.getvalue().decode("utf-8").strip() == "справка: разделов 21"

@@ -110,7 +110,23 @@ def cmd_doctor() -> int:
     return EXIT_OK if ok else EXIT_STAND
 
 
+def setup_console() -> None:
+    """Русский текст в консоли и в перенаправленном выводе на любой ОС.
+
+    Консоль Windows по умолчанию в однобайтовой кодировке (cp1252, cp866): без этого
+    первое же русское слово роняет программу (UnicodeEncodeError).
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    setup_console()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "run":
