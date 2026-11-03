@@ -12,6 +12,10 @@ dependencies = [
     "jinja2>=3.1",
     "openpyxl>=3.1",
     "pyyaml>=6",
+    # Проверки ONVIF (этап 2): закреплённый коммит — обновление только через ревью (AD-6).
+    # onvif-tt запускает свои тесты через pytest.main, поэтому pytest нужен и программе.
+    "onvif-tt @ git+https://github.com/OpenIPC/onvif-tt@8866b251bc63a3c746ca3f9b6544bdfcfcfa90df",
+    "pytest>=8",
 ]
 
 [project.scripts]
@@ -26,6 +30,9 @@ dev = [
 build = [
     "pyinstaller>=6.11",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true  # onvif-tt ставится из git по коммиту
 
 [build-system]
 requires = ["hatchling"]

@@ -39,7 +39,10 @@ jobs:
       - name: Уязвимости зависимостей — pip-audit (база PyPA, токен не нужен)
         run: |
           uv export --no-hashes --no-dev --no-emit-project --format requirements-txt > requirements.txt
-          uvx --python 3.12 pip-audit@2.10.1 --strict -r requirements.txt
+          # onvif-tt ставится из git по коммиту: в базе PyPI его нет, он проверяется ревью (AD-6);
+          # его зависимости из PyPI pip-audit проверяет
+          grep -v '^onvif-tt @' requirements.txt > audit.txt
+          uvx --python 3.12 pip-audit@2.10.1 --strict -r audit.txt
 
   build-linux:
     needs: test
