@@ -20,6 +20,7 @@ qa-tool = "qa_tool.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-qt>=4.4",
     "ruff>=0.8",
 ]
 build = [
@@ -35,6 +36,7 @@ packages = ["src/qa_tool"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+qt_api = "pyside6"
 
 [tool.ruff]
 line-length = 100

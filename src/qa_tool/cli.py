@@ -93,8 +93,9 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "discover":
         return cmd_discover(args)
-    parser.print_help()
-    return EXIT_OK
+    from qa_tool.gui.app import run_gui
+
+    return run_gui()
 
 
 if __name__ == "__main__":
