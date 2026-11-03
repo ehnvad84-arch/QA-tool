@@ -30,3 +30,9 @@ class Screen(QWidget):
 
     def refresh(self) -> None:
         """Обновить данные при показе экрана."""
+
+    def notify(self) -> None:
+        """Состояние стенда изменилось — обновить строку статуса окна."""
+        window = self.window()
+        if hasattr(window, "update_status"):
+            window.update_status()

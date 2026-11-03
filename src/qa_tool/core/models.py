@@ -58,6 +58,12 @@ class Stand:
         taken = {c.slot for c in self.cameras}
         return [s for s in range(1, MAX_SLOTS + 1) if s not in taken]
 
+    def remove_camera(self, slot: int) -> None:
+        self.cameras = [c for c in self.cameras if c.slot != slot]
+
+    def camera_at(self, slot: int) -> Camera | None:
+        return next((c for c in self.cameras if c.slot == slot), None)
+
     def add_camera(self, camera: Camera) -> None:
         if not self.free_slots():
             raise ConfigError(f"Свободных мест нет: на стенде уже {MAX_SLOTS} камер")

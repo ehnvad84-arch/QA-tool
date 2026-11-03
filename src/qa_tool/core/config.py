@@ -67,3 +67,38 @@ def load_thresholds(path: Path) -> dict[str, Threshold]:
         except (KeyError, TypeError, ValueError) as e:
             raise ConfigError(f"{path.name}, порог {key}: нужно числовое value") from e
     return thresholds
+
+
+def save_stand(stand: Stand, path: Path) -> None:
+    """Записать stand.yaml. Паролей в нём нет и быть не может (security.md)."""
+    runs_dir = stand.runs_dir
+    if runs_dir.is_relative_to(path.parent):
+        runs_dir = runs_dir.relative_to(path.parent)
+    data = {
+        "place": stand.place.value,
+        "runs_dir": runs_dir.as_posix(),
+        "interface": stand.interface,
+        "cameras": [
+            {
+                "slot": c.slot,
+                "address": c.address,
+                "port": c.port,
+                "rtsp_port": c.rtsp_port,
+                "username": c.username,
+                "vendor": c.vendor,
+                "name": c.name,
+            }
+            for c in stand.cameras
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def save_scenario(scenario: Scenario, path: Path) -> None:
+    from dataclasses import asdict
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(asdict(scenario), allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )

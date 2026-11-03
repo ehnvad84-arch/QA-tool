@@ -16,10 +16,24 @@ from qa_tool.gui.state import AppState
 CONTROLS = (QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QAbstractItemView)
 
 
+def _inside_control(widget: QWidget, root: QWidget) -> bool:
+    """Заголовки таблицы, стрелки списка и т. п. — части элемента, подсказка у него самого."""
+    parent = widget.parentWidget()
+    while parent is not None and parent is not root:
+        if isinstance(parent, CONTROLS):
+            return True
+        parent = parent.parentWidget()
+    return False
+
+
 def controls_without_help(root: QWidget) -> list[str]:
     missing = []
     for widget in root.findChildren(QWidget):
-        visible_control = isinstance(widget, CONTROLS) and widget.isVisibleTo(root)
+        visible_control = (
+            isinstance(widget, CONTROLS)
+            and widget.isVisibleTo(root)
+            and not _inside_control(widget, root)
+        )
         if visible_control and not (widget.toolTip() and widget.property(HELP_ID)):
             label = widget.text() if hasattr(widget, "text") else widget.objectName()
             missing.append(f"{type(widget).__name__} «{label}»")
@@ -63,3 +77,13 @@ def test_five_screens_in_menu_order(qtbot, tmp_path):
     titles = [window.menu.item(i).text() for i in range(window.menu.count())]
     assert titles == ["Стенд", "Камеры", "Сценарий", "Прогон", "Протоколы"]
     assert "камер на местах: 0 из 8" in window.status.text()
+
+
+def test_camera_dialog_controls_have_help(qtbot):
+    from qa_tool.gui.camera_dialog import CameraDialog
+
+    create_app()
+    dialog = CameraDialog([1, 2, 3])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert not controls_without_help(dialog)

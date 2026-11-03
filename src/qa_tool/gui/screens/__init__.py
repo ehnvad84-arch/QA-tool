@@ -1,20 +1,8 @@
 """Пять экранов окна в порядке меню."""
 
 from qa_tool.gui.screens.base import Screen
-
-
-class StandScreen(Screen):
-    title = "Стенд"
-    help_id = "stand"
-    hint = "Место стенда, папка прогонов и оборудование стенда"
-    intro = "Где стоят камеры и куда сохранять прогоны."
-
-
-class CamerasScreen(Screen):
-    title = "Камеры"
-    help_id = "cameras"
-    hint = "Поиск камер в сети и расстановка по местам 1–8"
-    intro = "Найдите камеры в сети или добавьте вручную и поставьте их на места стенда."
+from qa_tool.gui.screens.cameras import CamerasScreen
+from qa_tool.gui.screens.stand import StandScreen
 
 
 class ScenarioScreen(Screen):
