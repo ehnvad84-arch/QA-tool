@@ -48,6 +48,15 @@ def _iso(moment: datetime.datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _utc_xml(moment: datetime.datetime) -> str:
+    return (
+        f"<tt:UTCDateTime><tt:Date><tt:Year>{moment.year}</tt:Year><tt:Month>{moment.month}</tt:Month>"
+        f"<tt:Day>{moment.day}</tt:Day></tt:Date><tt:Time><tt:Hour>{moment.hour}</tt:Hour>"
+        f"<tt:Minute>{moment.minute}</tt:Minute><tt:Second>{moment.second}</tt:Second></tt:Time>"
+        "</tt:UTCDateTime>"
+    )
+
+
 def _text(element: ET.Element, local_name: str, default: str = "") -> str:
     """Текст первого потомка с таким локальным именем — без привязки к префиксам."""
     for child in element.iter():
@@ -88,6 +97,9 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
+    clock_offset_s: float = 0.0  # часы камеры отличаются от часов стенда
+    storage_fault: bool = False  # камера не умеет GetStorageConfigurations
     metadata_stream: bool = True  # Profile M объявлен, но в потоке нет дорожки метаданных
     analytics_modules: tuple[str, ...] = ("tt:CellMotionEngine",)  # настроенные модули
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
@@ -130,7 +142,9 @@ class OnvifServices:
         )
         return f"<tds:GetScopesResponse>{items}</tds:GetScopesResponse>"
 
-    def op_GetStorageConfigurations(self, _request) -> str:  # noqa: N802
+    def op_GetStorageConfigurations(self, _request) -> str | None:  # noqa: N802
+        if self.state.storage_fault:
+            return None
         if not self.state.has_sd:
             return "<tds:GetStorageConfigurationsResponse/>"
         return (
@@ -225,6 +239,23 @@ class OnvifServices:
 
     # --- Поиск и воспроизведение записей --------------------------------------------------------------------
 
+    def op_GetRecordingSummary(self, _request) -> str:  # noqa: N802
+        s = self.state
+        ends = [r["end"] for r in s.recordings]
+        if any(j["mode"] == "Active" for j in s.jobs) and not s.recording_stalled:
+            ends.append(self._clock())  # запись идёт: последний кадр — «сейчас» по часам камеры
+        starts = [r["start"] for r in s.recordings] or ends
+        span = (
+            f"<tt:DataFrom>{_iso(min(starts))}</tt:DataFrom><tt:DataUntil>{_iso(max(ends))}</tt:DataUntil>"
+            if ends
+            else ""
+        )
+        return (
+            f"<tse:GetRecordingSummaryResponse><tse:Summary>{span}"
+            f"<tt:NumberRecordings>{len(s.recordings)}</tt:NumberRecordings>"
+            "</tse:Summary></tse:GetRecordingSummaryResponse>"
+        )
+
     def op_FindRecordings(self, _request) -> str:  # noqa: N802
         token = f"search-{next(self.state._ids)}"
         self.state.searches[token] = list(self.state.recordings)
@@ -296,9 +327,12 @@ class OnvifServices:
             "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime>"
             f"<tt:DateTimeType>{s.datetime_type}</tt:DateTimeType>"
             f"<tt:DaylightSavings>{s.dst}</tt:DaylightSavings>"
-            f"<tt:TimeZone><tt:TZ>{s.tz}</tt:TZ></tt:TimeZone>"
+            f"<tt:TimeZone><tt:TZ>{s.tz}</tt:TZ></tt:TimeZone>{_utc_xml(self._clock())}"
             "</tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>"
         )
+
+    def _clock(self) -> datetime.datetime:
+        return _now() + datetime.timedelta(seconds=self.state.clock_offset_s)
 
     def op_SetSystemDateAndTime(self, request) -> str | None:  # noqa: N802
         if self._set_allowed() is None:
