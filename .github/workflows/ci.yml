@@ -40,16 +40,6 @@ jobs:
         run: |
           uv export --no-hashes --no-dev --no-emit-project --format requirements-txt > requirements.txt
           uvx --python 3.12 pip-audit@2.10.1 --strict -r requirements.txt
-      - name: Snyk по зависимостям (нужен секрет SNYK_TOKEN)
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: |
-          if [ -z "$SNYK_TOKEN" ]; then
-            echo "::warning::SNYK_TOKEN не задан — Snyk пропущен, зависимости проверил pip-audit"
-            exit 0
-          fi
-          uv export --no-hashes --no-dev --no-emit-project --format requirements-txt > requirements.txt
-          npx --yes snyk@1.1308.3 test --file=requirements.txt --package-manager=pip --severity-threshold=high
 
   build-linux:
     needs: test

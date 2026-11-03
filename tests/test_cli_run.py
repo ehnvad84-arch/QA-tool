@@ -36,8 +36,15 @@ def test_run_all_passed_creates_run_folder(tmp_path, fleet, monkeypatch, capsys)
 
 
 def test_run_with_failed_check_exits_1(tmp_path, fleet, monkeypatch):
+    set_passwords(monkeypatch)
+    path = write_stand(tmp_path, fleet)
+    fleet[3].stop()  # камера места 4 не в сети с начала — «не прошла»
+    assert main(["run", "--stand", str(path)]) == EXIT_FAILED
+
+
+def test_wrong_password_is_stand_error_exit_2(tmp_path, fleet, monkeypatch):
     set_passwords(monkeypatch, wrong_slot=4)
-    assert main(["run", "--stand", str(write_stand(tmp_path, fleet))]) == EXIT_FAILED
+    assert main(["run", "--stand", str(write_stand(tmp_path, fleet))]) == EXIT_STAND
 
 
 def test_config_error_exits_2(tmp_path, fleet, monkeypatch, capsys):

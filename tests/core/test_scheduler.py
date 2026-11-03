@@ -4,6 +4,7 @@ import pytest
 
 from qa_tool.core.models import Camera, Place, Scenario, Stand
 from qa_tool.core.scheduler import Runner
+from qa_tool.core.worker import LOST_DURING_CHECK
 from tests.fake_checks import MAIN, SLOW
 from tests.mock_camera import start_fleet
 
@@ -151,7 +152,8 @@ def test_hung_check_removes_only_that_camera(tmp_path, fleet):
         assert rows["FAKE-NET-1"][0] == "ошибка стенда"
 
 
-def test_camera_lost_during_failing_check_is_stand_error_not_task(tmp_path, fleet):
+def test_camera_lost_during_check_is_camera_defect(tmp_path, fleet):
+    # решение директора 2026-11-03: перестала отвечать во время проверки — сбой камеры
     trace_dir = tmp_path / "trace"
     trace_dir.mkdir()
 
@@ -169,7 +171,7 @@ def test_camera_lost_during_failing_check_is_stand_error_not_task(tmp_path, flee
     )
     store = runner.run()
     lost = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=3)}
-    assert lost["FAKE-FAILS-1"] == ("ошибка стенда", "нет связи"), lost
+    assert lost["FAKE-FAILS-1"] == ("не прошла", LOST_DURING_CHECK), lost
     alive = {r["check_id"]: r["status"] for r in store.results(slot=1)}
     assert alive["FAKE-FAILS-1"] == "не прошла"
 
@@ -220,8 +222,8 @@ def test_coordinator_freeze_extends_deadlines():
     assert cam.running[1] >= 129.0
 
 
-def test_camera_lost_during_first_check_is_stand_error(tmp_path, fleet):
-    # первая проверка видит открытый порт, а к концу камера пропала: «нет связи», не задача
+def test_camera_lost_during_first_check_is_camera_defect(tmp_path, fleet):
+    # первая проверка видит открытый порт, а к концу камера пропала — тоже сбой камеры
     trace_dir = tmp_path / "trace"
     trace_dir.mkdir()
 
@@ -239,5 +241,5 @@ def test_camera_lost_during_first_check_is_stand_error(tmp_path, fleet):
     )
     store = runner.run()
     rows = {r["slot"]: (r["status"], r["reason"]) for r in store.results()}
-    assert rows[2] == ("ошибка стенда", "нет связи")
+    assert rows[2] == ("не прошла", LOST_DURING_CHECK)
     assert rows[1][0] == "не прошла"

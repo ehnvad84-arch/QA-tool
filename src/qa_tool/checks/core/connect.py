@@ -14,6 +14,9 @@ from qa_tool.drivers.camera.probe import rtsp_answers, tcp_open
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
 
 PASSPORT_KEY = "passport"
+NOT_AUTHORIZED = (
+    "NotAuthorized"  # подкод SOAP Fault ter:NotAuthorized — общий код отказа в доступе ONVIF
+)
 
 
 @REGISTRY.check(
@@ -53,7 +56,17 @@ def connect(ctx: CheckContext) -> CheckResult:
     driver = OnvifCamera(cam, ctx.password, timeout)
     try:
         passport = driver.get_device_information()
-    except (CameraUnreachable, OnvifFault) as e:
+    except OnvifFault as e:
+        if NOT_AUTHORIZED in str(e):
+            # Решение директора 2026-11-03: неверный логин или пароль — ошибка настройки
+            # стенда и подключения, а не дефект камеры; задачи программистам нет.
+            return CheckResult.stand_error(
+                f"камера не приняла логин или пароль места {cam.slot} — проверьте их на экране "
+                f"«Камеры» ({e})"
+            )
+        problems.append(f"ONVIF GetDeviceInformation: {e}")
+        passport = None
+    except CameraUnreachable as e:
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
     evidence = [

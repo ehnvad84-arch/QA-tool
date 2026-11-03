@@ -46,7 +46,7 @@ def test_switched_off_camera_fails_with_reason(mock):
     assert f"нет связи по HTTP (порт {ctx.camera.port})" in result.reason
 
 
-def test_wrong_password_fails_with_onvif_reason(mock):
+def test_wrong_password_is_stand_error_not_camera_defect(mock):
     result = run_check(SPEC, ctx_for(mock, password="bad"))
-    assert result.status is Status.FAILED
-    assert "NotAuthorized" in result.reason
+    assert result.status is Status.STAND_ERROR
+    assert "не приняла логин или пароль места 1" in result.reason

@@ -26,6 +26,7 @@ from qa_tool.drivers.camera.probe import tcp_open
 
 FIRST_CHECK = "CORE-CONNECT-1"
 STOPPED = "прогон остановлен"
+LOST_DURING_CHECK = "камера перестала отвечать во время проверки (сбой камеры или прошивки)"
 
 
 def resolve_registry(ref: str) -> Registry:
@@ -144,8 +145,17 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 and liveness
                 and not camera_alive(args.camera)
             ):
-                # камера пропала во время проверки: это не дефект камеры, а «нет связи» (S5)
-                send_result(check_id, CheckResult.stand_error("нет связи"), started)
+                # Решение директора 2026-11-03: камера, переставшая отвечать во время проверки, —
+                # сбой камеры или прошивки, задача программистам. Остальные её проверки после
+                # этого провести нельзя — они получают «ошибка стенда: нет связи».
+                failed = CheckResult(
+                    Status.FAILED,
+                    reason=LOST_DURING_CHECK,
+                    expected=result.expected,
+                    actual=f"{result.actual or result.reason}; камера перестала отвечать",
+                    evidence=result.evidence,
+                )
+                send_result(check_id, failed, started)
                 lost()
                 return
             send_result(check_id, result, started)

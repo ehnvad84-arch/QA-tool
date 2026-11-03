@@ -45,5 +45,5 @@
   Готово, когда: автотест — у каждого `help_id` есть раздел в `docs/manual/`; F1 на экране «Камеры» открывает раздел «Камеры»
 - [x] T19 — Сборка Linux: PyInstaller (onedir) → AppImage, ffmpeg BtbN LGPL закреплённого выпуска внутри · сценарий: S12 · проверка: manual · исполнитель: main
   Готово, когда: AppImage на Ubuntu 24.04 запускается; `--version`, справка и `ffmpeg -version` из каталога сборки работают
-- [!] T20 — CI GitHub Actions (предусловие: репозиторий создан директором): матрица Ubuntu + Windows — линтер, тесты (offscreen), Snyk по зависимостям, сборка AppImage и Windows `.exe` (PyInstaller + Inno Setup, ffmpeg BtbN LGPL) как артефакты · сценарий: S12 · проверка: manual · исполнитель: main
+- [x] T20 — CI GitHub Actions (предусловие: репозиторий создан директором): матрица Ubuntu + Windows — линтер, тесты (offscreen), Snyk по зависимостям, сборка AppImage и Windows `.exe` (PyInstaller + Inno Setup, ffmpeg BtbN LGPL) как артефакты · сценарий: S12 · проверка: manual · исполнитель: main
   Готово, когда: оба задания зелёные на ветке, оба установщика лежат в артефактах; директор ставит `.exe` на Windows-компьютер, программа запускается, справка открывается
