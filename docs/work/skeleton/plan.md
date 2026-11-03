@@ -7,7 +7,7 @@
 
 Спека: docs/work/skeleton/feature-spec.md · Ветка: feature/skeleton
 
-- [ ] T1 — Каркас пакета: `pyproject.toml` (uv, Python 3.12, ruff, pytest) со всеми зависимостями из спеки, `uv.lock`, `src/qa_tool/`, команда `qa-tool --version` · сценарий: S11 · проверка: auto · исполнитель: main
+- [x] T1 — Каркас пакета: `pyproject.toml` (uv, Python 3.12, ruff, pytest) со всеми зависимостями из спеки, `uv.lock`, `src/qa_tool/`, команда `qa-tool --version` · сценарий: S11 · проверка: auto · исполнитель: main
   Готово, когда: `uv run qa-tool --version` печатает версию; `uv run ruff check .` и `uv run pytest` зелёные
 - [ ] T2 — Модели и загрузка `stand.yaml` / `scenario.yaml` / `thresholds.yaml` с проверкой: места 1–8, место стенда, у порога есть источник · сценарий: S3 · проверка: auto · исполнитель: main
   Готово, когда: тесты — 9-я камера отклоняется с понятной ошибкой; поле `password` в `stand.yaml` — ошибка конфигурации; сценарий без файла — значения по умолчанию из спеки

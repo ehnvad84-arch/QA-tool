@@ -17,3 +17,4 @@
 
 - 2026-11-03 · этап 1 · спека и план skeleton · f438d58 · разделы UI и архитектуры — главная сессия вместо субагентов (весь контекст уже собран в сессии)
 - 2026-11-03 · Гейт 1 · plan-reviewer: approve, 10 warning — все закрыты правкой спеки (scenario.yaml, «Остановить», ffmpeg BtbN LGPL) и плана (критерии T7/T10/T11 через run.sqlite, summary.*, экран «Стенд» в T15, .env.example, Snyk, keyring-тестовый бэкенд, экранирование, команда mock для ручных задач, T19 — только Linux, .exe и проверка на Windows — в T20)
+- 2026-11-03 · T1 · каркас пакета, uv + Python 3.12, `qa-tool --version` · проверка: `uv run qa-tool --version` → qa-tool 0.1.0; ruff check/format чисто; pytest — 1 passed · отклонение: pytest-qt добавится в T14 (на машине нет libEGL.so.1 — нужен `sudo apt install libegl1`); .workflow исключён из ruff
