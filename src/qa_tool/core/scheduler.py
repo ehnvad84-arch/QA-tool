@@ -67,6 +67,9 @@ class Runner:
     # --- запуск -------------------------------------------------------------------------------
 
     def run(self) -> RunStore:
+        passwords = {
+            cam.slot: get_password(cam) for cam in self.stand.cameras
+        }  # ConfigError — до создания папки прогона
         self.store = RunStore.create(self.stand, self.scenario)
         self.outbox = self._mp.Queue()
         plans = {
@@ -87,7 +90,7 @@ class Runner:
             inbox = self._mp.Queue()
             args = WorkerArgs(
                 camera=cam,
-                password=get_password(cam),
+                password=passwords[cam.slot],
                 place=self.stand.place,
                 plan=plans[cam.slot],
                 registry_ref=self.registry_ref,
