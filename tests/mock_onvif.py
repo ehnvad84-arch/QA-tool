@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 SERVICE_NS = {
+    "ptz": "http://www.onvif.org/ver20/ptz/wsdl",
+    "deviceio": "http://www.onvif.org/ver10/deviceIO/wsdl",
     "device": "http://www.onvif.org/ver10/device/wsdl",
     "media": "http://www.onvif.org/ver10/media/wsdl",
     "media2": "http://www.onvif.org/ver20/media/wsdl",
@@ -30,7 +32,10 @@ ENVELOPE_NS = (
     'xmlns:tev="http://www.onvif.org/ver10/events/wsdl" '
     'xmlns:tan="http://www.onvif.org/ver20/analytics/wsdl" '
     'xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" '
-    'xmlns:wsa="http://www.w3.org/2005/08/addressing"'
+    'xmlns:wsa="http://www.w3.org/2005/08/addressing" '
+    'xmlns:trt="http://www.onvif.org/ver10/media/wsdl" '
+    'xmlns:timg="http://www.onvif.org/ver20/imaging/wsdl" '
+    'xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"'
 )
 PROFILE_SCOPES = {"S": "Streaming", "G": "G", "M": "M", "T": "T"}
 
@@ -65,6 +70,23 @@ class OnvifState:
     )
     searches: dict[str, list[dict]] = field(default_factory=dict)
     subscriptions: set[str] = field(default_factory=set)
+    # настройки, которые меняют изменяющие тесты onvif-tt (снимок и восстановление, T7)
+    datetime_type: str = "NTP"
+    dst: str = "false"
+    tz: str = "MSK-3"
+    imaging_xml: str = (
+        "<tt:Brightness>50</tt:Brightness>"
+        "<tt:Focus><tt:AutoFocusMode>MANUAL</tt:AutoFocusMode></tt:Focus>"
+    )
+    focus_position: str = "0.3"
+    ptz_config_xml: str = (
+        '<tptz:PTZConfiguration token="ptz-1"><tt:Name>PTZ</tt:Name>'
+        "<tt:DefaultPTZTimeout>PT5S</tt:DefaultPTZTimeout></tptz:PTZConfiguration>"
+    )
+    ptz_position: tuple[float, float, float] = (0.1, -0.2, 0.0)
+    relay_xml: str = "<tt:Mode>Bistable</tt:Mode><tt:DelayTime>PT1S</tt:DelayTime><tt:IdleState>closed</tt:IdleState>"
+    relay_state: str = "inactive"
+    reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
@@ -84,7 +106,7 @@ class OnvifServices:
     # --- Device -------------------------------------------------------------------------------
 
     def op_GetServices(self, _request) -> str:  # noqa: N802
-        services = ["device", "media", "media2", "events", "imaging"]
+        services = ["device", "media", "media2", "events", "imaging", "ptz", "deviceio"]
         if "G" in self.state.profiles:
             services += ["recording", "search", "replay"]
         if "M" in self.state.profiles:
@@ -248,3 +270,100 @@ class OnvifServices:
 
     def op_Unsubscribe(self, _request) -> str:  # noqa: N802
         return "<wsnt:UnsubscribeResponse/>"
+
+    # --- настройки, которые меняют изменяющие тесты (T7) ----------------------------------------
+
+    def _set_allowed(self) -> str | None:
+        return "" if not self.state.reject_set else None
+
+    def op_GetSystemDateAndTime(self, _request) -> str:  # noqa: N802
+        s = self.state
+        return (
+            "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime>"
+            f"<tt:DateTimeType>{s.datetime_type}</tt:DateTimeType>"
+            f"<tt:DaylightSavings>{s.dst}</tt:DaylightSavings>"
+            f"<tt:TimeZone><tt:TZ>{s.tz}</tt:TZ></tt:TimeZone>"
+            "</tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>"
+        )
+
+    def op_SetSystemDateAndTime(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        self.state.datetime_type = _text(request, "DateTimeType", self.state.datetime_type)
+        self.state.dst = _text(request, "DaylightSavings", self.state.dst)
+        self.state.tz = _text(request, "TZ", self.state.tz)
+        return "<tds:SetSystemDateAndTimeResponse/>"
+
+    def op_GetRelayOutputs(self, _request) -> str:  # noqa: N802
+        return (
+            '<tds:GetRelayOutputsResponse><tds:RelayOutputs token="relay-1">'
+            f"<tt:Properties>{self.state.relay_xml}</tt:Properties>"
+            "</tds:RelayOutputs></tds:GetRelayOutputsResponse>"
+        )
+
+    def op_SetRelayOutputSettings(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        properties = next(e for e in request if e.tag.endswith("Properties"))
+        self.state.relay_xml = "".join(ET.tostring(c, encoding="unicode") for c in properties)
+        return "<tds:SetRelayOutputSettingsResponse/>"
+
+    def op_SetRelayOutputState(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        self.state.relay_state = _text(request, "LogicalState", self.state.relay_state)
+        return "<tds:SetRelayOutputStateResponse/>"
+
+    def op_GetVideoSources(self, _request) -> str:  # noqa: N802
+        return '<trt:GetVideoSourcesResponse><trt:VideoSources token="vs-1"/></trt:GetVideoSourcesResponse>'
+
+    def op_GetImagingSettings(self, _request) -> str:  # noqa: N802
+        return (
+            "<timg:GetImagingSettingsResponse><timg:ImagingSettings>"
+            f"{self.state.imaging_xml}</timg:ImagingSettings></timg:GetImagingSettingsResponse>"
+        )
+
+    def op_SetImagingSettings(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        settings = next(e for e in request if e.tag.endswith("ImagingSettings"))
+        self.state.imaging_xml = "".join(ET.tostring(c, encoding="unicode") for c in settings)
+        return "<timg:SetImagingSettingsResponse/>"
+
+    def op_GetStatus(self, request) -> str:  # noqa: N802
+        if any(e.tag.endswith("ProfileToken") for e in request):
+            x, y, zoom = self.state.ptz_position
+            return (
+                "<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position>"
+                f'<tt:PanTilt x="{x}" y="{y}"/><tt:Zoom x="{zoom}"/>'
+                "</tt:Position></tptz:PTZStatus></tptz:GetStatusResponse>"
+            )
+        return (
+            "<timg:GetStatusResponse><timg:Status><tt:FocusStatus20>"
+            f"<tt:Position>{self.state.focus_position}</tt:Position>"
+            "</tt:FocusStatus20></timg:Status></timg:GetStatusResponse>"
+        )
+
+    def op_Move(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        self.state.focus_position = _text(request, "Position", self.state.focus_position)
+        return "<timg:MoveResponse/>"
+
+    def op_GetConfigurations(self, _request) -> str:  # noqa: N802
+        return f"<tptz:GetConfigurationsResponse>{self.state.ptz_config_xml}</tptz:GetConfigurationsResponse>"
+
+    def op_SetConfiguration(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        config = next(e for e in request if e.tag.endswith("PTZConfiguration"))
+        self.state.ptz_config_xml = ET.tostring(config, encoding="unicode")
+        return "<tptz:SetConfigurationResponse/>"
+
+    def op_AbsoluteMove(self, request) -> str | None:  # noqa: N802
+        if self._set_allowed() is None:
+            return None
+        pan = next(e for e in request.iter() if e.tag.endswith("PanTilt"))
+        zoom = next(e for e in request.iter() if e.tag.endswith("Zoom"))
+        self.state.ptz_position = (float(pan.get("x")), float(pan.get("y")), float(zoom.get("x")))
+        return "<tptz:AbsoluteMoveResponse/>"

@@ -111,3 +111,74 @@ def test_taboo_stop_and_xfail_mapping():
     )
     xpass = onvif_tt.to_child({"id": "X-2", "status": "xpassed", "last_request": "<a/>"}, names)
     assert xpass.result.status is Status.PASSED
+
+
+def test_writes_snapshot_and_restore_row(mock, monkeypatch):
+    def spoil_and_report(command, env, **kwargs):  # «onvif-tt» меняет время и пишет отчёт
+        assert "--allow-writes" in command
+        mock.state.datetime_type, mock.state.tz = "Manual", "UTC0"
+        report = command[command.index("--report") + 1]
+        with open(report, "w", encoding="utf-8") as f:
+            f.write(
+                '{"summary": {}, "results": [{"id": "DEVICE-3-1-11", "status": "passed", '
+                '"last_request": "<SetSystemDateAndTime/>"}]}'
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(onvif_tt.subprocess, "run", spoil_and_report)
+    ctx = ctx_for(mock)
+    ctx.allow_writes = True
+    result = run_check(SPEC, ctx)
+    rows = {c.check_id: c.result for c in result.children}
+    assert rows[onvif_tt.RESTORE_ID].status is Status.PASSED
+    assert (mock.state.datetime_type, mock.state.tz) == ("NTP", "MSK-3")
+
+
+def test_restore_happens_even_when_run_hangs_and_failure_is_visible(mock, monkeypatch):
+    def hang(command, env, timeout, **kwargs):
+        mock.state.datetime_type = "Manual"
+        mock.state.reject_set = True  # и камера ещё и не даёт вернуть
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(onvif_tt.subprocess, "run", hang)
+    ctx = ctx_for(mock)
+    ctx.allow_writes = True
+    result = run_check(SPEC, ctx)
+    rows = {c.check_id: c.result for c in result.children}
+    assert rows[onvif_tt.CHECK_ID].status is Status.STAND_ERROR
+    restore = rows[onvif_tt.RESTORE_ID]
+    assert restore.status is Status.STAND_ERROR and "камера осталась изменённой" in restore.reason
+
+
+def test_no_snapshot_no_writes(mock, monkeypatch):
+    seen = {}
+
+    def fake_run(command, env, **kwargs):
+        seen["c"] = command
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(onvif_tt.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        onvif_tt.SnapshotTaker,
+        "take",
+        lambda self: onvif_tt.Snapshot(skipped=["дата и время: нет ответа"]),
+    )
+    ctx = ctx_for(mock)
+    ctx.allow_writes = True
+    result = run_check(SPEC, ctx)
+    assert "--allow-writes" not in seen["c"]
+    rows = {c.check_id: c.result for c in result.children}
+    assert "изменяющие тесты onvif-tt не запускались" in rows[onvif_tt.SNAPSHOT_ID].reason
+
+
+def test_write_skip_reason_in_russian():
+    row = onvif_tt.to_child(
+        {
+            "id": "PTZ-3-1-1",
+            "status": "skipped",
+            "longrepr": "Skipped: test mutates DUT state — pass --allow-writes to enable",
+        },
+        {},
+    )
+    assert row.result.status is Status.SKIPPED
+    assert row.result.reason == "не разрешено сценарием: изменяющая проверка"

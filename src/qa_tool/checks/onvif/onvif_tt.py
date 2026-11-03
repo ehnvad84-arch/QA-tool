@@ -19,6 +19,7 @@ from pathlib import Path
 
 from qa_tool.checks.onvif.excluded import EXCLUDED
 from qa_tool.checks.onvif.ott_runner import PASSWORD_ENV
+from qa_tool.checks.onvif.snapshot import Snapshot, SnapshotTaker
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -28,9 +29,12 @@ from qa_tool.core.checks import (
     Phase,
     Status,
 )
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 from qa_tool.drivers.camera.taboo_proxy import TABOO_FAULT_CODE, TabooProxy
 
 CHECK_ID = "ONVIF-TT"
+SNAPSHOT_ID = "RUV-SNAPSHOT-1"
+RESTORE_ID = "RUV-RESTORE-1"
 MODULE_TIMEOUT_S = 1800.0  # 161 тест onvif-tt; на медленной камере — до ~15 мин, запас вдвое
 STAND_FAULTS = (TABOO_FAULT_CODE, "QAToolForeignHost", "QAToolNoAnswer", "ServiceUnbindable")
 STATUS = {
@@ -68,6 +72,10 @@ def reason_from(longrepr: str, status: str) -> str:
     if not longrepr:
         return ""
     if status == "skipped":
+        if "--allow-reboot" in longrepr:
+            return "не разрешено сценарием: перезагрузка камеры (нужны обе галочки)"
+        if "--allow-writes" in longrepr:
+            return "не разрешено сценарием: изменяющая проверка"
         match = _SKIPPED.search(longrepr)
         return f"onvif-tt пропустил: {match.group(1).strip()}" if match else "onvif-tt пропустил"
     lines = [line.strip() for line in str(longrepr).splitlines() if line.strip()]
@@ -110,7 +118,9 @@ def to_child(item: dict, names: dict[str, str]) -> ChildResult:
     )
 
 
-def run_onvif_tt(ctx: CheckContext, proxy: TabooProxy, report: Path, timeout_s: float) -> str:
+def run_onvif_tt(
+    ctx: CheckContext, proxy: TabooProxy, report: Path, timeout_s: float, writes: bool
+) -> str:
     """Прогнать onvif-tt против посредника; пароль — переменной окружения, не аргументом.
 
     Returns:
@@ -130,9 +140,9 @@ def run_onvif_tt(ctx: CheckContext, proxy: TabooProxy, report: Path, timeout_s: 
         "--exclude",
         *EXCLUDED,
     ]
-    if ctx.allow_writes:
+    if writes:
         command.append("--allow-writes")
-    if ctx.allow_writes and ctx.allow_destructive:
+    if writes and ctx.allow_destructive:
         command.append("--allow-reboot")
     env = {**os.environ, PASSWORD_ENV: ctx.password}
     done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout_s)
@@ -150,14 +160,85 @@ def run_onvif_tt(ctx: CheckContext, proxy: TabooProxy, report: Path, timeout_s: 
     timeout_s=MODULE_TIMEOUT_S + 120,
 )
 def onvif_tt(ctx: CheckContext) -> CheckResult:
-    """Прогнать onvif-tt по камере и вернуть строку протокола на каждый его тест."""
+    """Прогнать onvif-tt по камере и вернуть строку протокола на каждый его тест.
+
+    С галочкой «изменяющие» перед прогоном сохраняются настройки, которые меняют изменяющие
+    тесты, а после — возвращаются и сверяются (строка `RUV-RESTORE-1`), даже если onvif-tt
+    упал или завис. Не удалось сохранить — изменяющие тесты не запускаются.
+    """
+    extra_rows: list[ChildResult] = []
+    taker, snap, writes = None, None, False
+    if ctx.allow_writes:
+        taker = SnapshotTaker(ctx.camera, SoapClient(ctx.camera.username, ctx.password))
+        try:
+            snap = taker.take()
+        except (CameraUnreachable, OnvifFault, ValueError) as e:
+            snap = Snapshot(skipped=[str(e)])
+        writes = not snap.skipped
+        if snap.skipped:
+            extra_rows.append(
+                ChildResult(
+                    SNAPSHOT_ID,
+                    "Сохранение настроек перед изменяющими тестами",
+                    CheckResult.stand_error(
+                        "настройки не сохранены — изменяющие тесты onvif-tt "
+                        "не запускались: " + "; ".join(snap.skipped)
+                    ),
+                )
+            )
     proxy = TabooProxy(ctx.camera.address, ctx.camera.port).start()
+    restore_row = None
+    try:
+        result = _run(ctx, proxy, writes)
+    except Exception as e:  # прогон сорвался — настройки всё равно возвращаем (finally)
+        result = CheckResult.stand_error(f"сбой прогона onvif-tt: {type(e).__name__}: {e}")
+    finally:
+        proxy.stop()
+        if writes and taker and snap:
+            restore_row = _restore_row(taker, snap)
+    if not extra_rows and restore_row is None:
+        return result
+    # прогон без строк (сорвался) — его итог отдельной строкой, чтобы рядом была строка
+    # о восстановлении настроек
+    rows = result.children or [ChildResult(CHECK_ID, "Прогон onvif-tt", result)]
+    return CheckResult(
+        result.status,
+        actual=result.actual,
+        data=result.data,
+        children=[*extra_rows, *rows, *([restore_row] if restore_row else [])],
+    )
+
+
+def _restore_row(taker: "SnapshotTaker", snap: "Snapshot") -> ChildResult:
+    """Строка протокола «вернули ли настройки камеры как были» (AD-3, never.md)."""
+    restored, problems = taker.restore(snap)
+    evidence = [Evidence("restored.txt", "Восстановлено и сверено:\n" + "\n".join(restored))]
+    if problems:
+        result = CheckResult(
+            Status.STAND_ERROR,
+            reason="камера осталась изменённой: " + "; ".join(problems),
+            expected="настройки после изменяющих тестов совпадают с исходными",
+            actual="; ".join(problems),
+            evidence=evidence,
+        )
+    else:
+        result = CheckResult(
+            Status.PASSED,
+            expected="настройки после изменяющих тестов совпадают с исходными",
+            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}",
+            evidence=evidence,
+        )
+    return ChildResult(RESTORE_ID, "Восстановление настроек после изменяющих тестов", result)
+
+
+def _run(ctx: CheckContext, proxy: TabooProxy, writes: bool) -> CheckResult:
+    """Прогнать onvif-tt и разобрать его отчёт в строки протокола."""
     try:
         with tempfile.TemporaryDirectory(prefix="qa-tool-ott-") as folder:
             report = Path(folder) / "report.json"
             timeout_s = float(ctx.extra.get("onvif_tt_timeout_s", MODULE_TIMEOUT_S))
             try:
-                tail = run_onvif_tt(ctx, proxy, report, timeout_s)
+                tail = run_onvif_tt(ctx, proxy, report, timeout_s, writes)
             except subprocess.TimeoutExpired:
                 return CheckResult.stand_error(f"onvif-tt не уложился в {timeout_s:g} с")
             except OSError as e:
@@ -167,8 +248,6 @@ def onvif_tt(ctx: CheckContext) -> CheckResult:
             data = json.loads(report.read_text(encoding="utf-8"))
     except ValueError as e:
         return CheckResult.stand_error(f"отчёт onvif-tt не разобран: {e}")
-    finally:
-        proxy.stop()
     names = titles()
     children = [to_child(item, names) for item in data.get("results", [])]
     for test_id, why in EXCLUDED.items():
@@ -179,10 +258,9 @@ def onvif_tt(ctx: CheckContext) -> CheckResult:
                 CheckResult.skipped(f"исключён в QA-tool: {why}"),
             )
         )
-    summary = data.get("summary", {})
     return CheckResult(
         Status.PASSED,
-        actual=f"onvif-tt: {summary}",
+        actual=f"onvif-tt: {data.get('summary', {})}",
         data={"onvif_tt_blocked": [b.reason for b in proxy.blocked]},
         children=children,
     )
