@@ -138,6 +138,8 @@ class CheckSpec:
     severity: Severity = Severity.MAJOR
     order: int = 100  # порядок внутри фазы; CORE-CONNECT-1 — первым
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
+    group: str = ""  # подгруппа внутри модуля на экране «Сценарий»; пусто — прямо в модуле
+    help_id: str = ""  # раздел справки F1 для строки проверки; пусто — общий раздел «Проверки»
 
     def applies_to(self, camera: Camera) -> bool:
         """Подходит ли проверка производителю камеры (AD-4: адаптерные — только своим)."""
@@ -159,7 +161,7 @@ class Registry:
             title: название для экрана и протокола.
             description: «что делаем, что ожидаем» — уходит в протокол и шаги задачи.
             **options: поля CheckSpec (phase, resources, vendors, places, writes,
-                destructive, severity, order, timeout_s).
+                destructive, severity, order, timeout_s, group, help_id).
 
         Raises:
             ValueError: проверка с таким id уже зарегистрирована.

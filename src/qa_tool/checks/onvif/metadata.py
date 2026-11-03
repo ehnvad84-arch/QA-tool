@@ -141,6 +141,8 @@ def is_metadata_stream(document: str) -> bool:
     phase=Phase.NETWORK,
     order=30,
     severity=Severity.MAJOR,
+    group="Профиль M: метаданные и аналитика",
+    help_id="onvif-metadata",
 )
 def metadata_configuration(ctx: CheckContext) -> CheckResult:
     """Конфигурации метаданных есть и подключены к медиапрофилю."""
@@ -188,6 +190,8 @@ def metadata_configuration(ctx: CheckContext) -> CheckResult:
     phase=Phase.NETWORK,
     order=31,
     severity=Severity.MAJOR,
+    group="Профиль M: метаданные и аналитика",
+    help_id="onvif-metadata",
     timeout_s=90,
 )
 def metadata_stream(ctx: CheckContext) -> CheckResult:
@@ -292,6 +296,8 @@ def metadata_stream(ctx: CheckContext) -> CheckResult:
     phase=Phase.NETWORK,
     order=32,
     severity=Severity.MAJOR,
+    group="Профиль M: метаданные и аналитика",
+    help_id="onvif-metadata",
 )
 def analytics_modules(ctx: CheckContext) -> CheckResult:
     """Служба аналитики перечисляет модули; настроенные модули — из поддерживаемых."""

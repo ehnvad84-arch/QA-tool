@@ -102,6 +102,8 @@ def camera_now(soap: SoapClient, device_url: str) -> datetime.datetime | None:
     phase=Phase.NETWORK,
     order=10,
     severity=Severity.MAJOR,
+    group="Профиль G: накопитель и архив",
+    help_id="onvif-archive",
 )
 def storage(ctx: CheckContext) -> CheckResult:
     """Камера сообщает о накопителе; без записи и без накопителя — «пропущена»."""
@@ -149,6 +151,8 @@ def storage(ctx: CheckContext) -> CheckResult:
     phase=Phase.NETWORK,
     order=11,
     severity=Severity.MAJOR,
+    group="Профиль G: накопитель и архив",
+    help_id="onvif-archive",
 )
 def recording_fresh(ctx: CheckContext) -> CheckResult:
     """Последний кадр архива не старше порога, пока задание записи включено."""

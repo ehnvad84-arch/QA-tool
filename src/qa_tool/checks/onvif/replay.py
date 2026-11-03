@@ -186,6 +186,8 @@ def play(uri: str, user: str, password: str, seconds: float) -> dict:
     order=20,
     severity=Severity.BLOCKER,
     timeout_s=DEFAULT_RECORD_S + 180,
+    group="Профиль G: накопитель и архив",
+    help_id="onvif-archive",
 )
 def replay(ctx: CheckContext) -> CheckResult:
     """Найти, получить и проиграть архив; при пустой карте — записать (если разрешено)."""

@@ -16,6 +16,7 @@ import fnmatch
 import json
 from dataclasses import asdict, dataclass
 
+from qa_tool.checks.onvif.onvif_tt import CHECK_ID as ONVIF_TT
 from qa_tool.core.checks import (
     PREVIOUS_RESULTS,
     REGISTRY,
@@ -188,6 +189,27 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
     return {p for p, scope in SCOPES.items() if f"onvif://www.onvif.org/Profile/{scope}" in items}
 
 
+def confirms(check_id: str) -> list[str]:
+    """Какие обязательные функции профилей подтверждает проверка: «G: Поиск записей».
+
+    Для ONVIF-TT — профили, функции которых подтверждают его тесты: свои ID у них появляются
+    только в прогоне, поэтому ID onvif-tt (не RUV-*) в матрице и есть его вклад.
+    """
+    if check_id == ONVIF_TT:
+        covered = [
+            profile
+            for profile, features in PROFILES.items()
+            if any(not m.startswith("RUV-") for f in features for m in f.tests)
+        ]
+        return [f"{', '.join(covered)}: тесты onvif-tt по областям спецификации"]
+    return [
+        f"{profile}: {feature.name}"
+        for profile, features in PROFILES.items()
+        for feature in features
+        if any(fnmatch.fnmatch(check_id, mask) for mask in feature.tests)
+    ]
+
+
 def matrix(previous: dict[str, tuple[str, str]]) -> list[FeatureVerdict]:
     """Матрица «профиль × обязательная функция» по строкам протокола."""
     out = []
@@ -207,6 +229,8 @@ def matrix(previous: dict[str, tuple[str, str]]) -> list[FeatureVerdict]:
     phase=Phase.NETWORK,
     order=990,
     severity=Severity.MAJOR,
+    group="Итог по профилям",
+    help_id="onvif-profiles",
 )
 def profiles(ctx: CheckContext) -> CheckResult:
     """Строка на каждый профиль: объявлен ли он и работают ли его обязательные функции."""

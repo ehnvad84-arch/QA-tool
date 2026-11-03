@@ -158,6 +158,8 @@ def run_onvif_tt(
     phase=Phase.NETWORK,
     order=10,
     timeout_s=MODULE_TIMEOUT_S + 120,
+    group="Тесты onvif-tt",
+    help_id="onvif-tt",
 )
 def onvif_tt(ctx: CheckContext) -> CheckResult:
     """Прогнать onvif-tt по камере и вернуть строку протокола на каждый его тест.
