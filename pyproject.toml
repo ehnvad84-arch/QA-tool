@@ -43,6 +43,8 @@ packages = ["src/qa_tool"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# модуль pytest из onvif-tt нужен только его прогону (checks/onvif), в наших тестах — лишний
+addopts = "-p no:onvif_tt_runner"
 qt_api = "pyside6"
 
 [tool.ruff]

@@ -7,7 +7,7 @@
 
 Спека: docs/work/onvif/feature-spec.md · Ветка: feature/onvif
 
-- [ ] T1 — onvif-tt зависимостью с закреплённым коммитом 8866b25 (git) в `pyproject.toml` и `uv.lock`; pytest — в зависимости программы (onvif-tt запускается через `pytest.main`); новый файл `NOTICE` с лицензиями onvif-tt и корпуса ONVIF · сценарий: S1 · проверка: auto · исполнитель: main
+- [x] T1 — onvif-tt зависимостью с закреплённым коммитом 8866b25 (git) в `pyproject.toml` и `uv.lock`; pytest — в зависимости программы (onvif-tt запускается через `pytest.main`); новый файл `NOTICE` с лицензиями onvif-tt и корпуса ONVIF · сценарий: S1 · проверка: auto · исполнитель: main
   Готово, когда: `uv run python -c "import onvif_tt"` работает; pip-audit без уязвимостей; CI зелёный
 - [ ] T2 — Посредник табу `drivers/camera/taboo_proxy.py` (AD-7): 127.0.0.1, случайный порт, пересылка через `http.request` с тайм-аутом по запросу (PullMessages ждёт до 60 с), SOAP Fault `ter:QAToolTaboo` на запрещённое, подмена адресов камеры на адрес посредника в ответах GetServices, GetCapabilities и в `SubscriptionReference` (CreatePullPointSubscription, Subscribe); сокет посредника — в ALLOWED теста архитектуры · сценарий: S2 · проверка: auto · исполнитель: main
   Готово, когда: тест — SetUser через посредника не доходит до mock-камеры; GetServices, GetCapabilities и SubscriptionReference возвращают адреса посредника; PullMessages с ожиданием 30 с проходит
