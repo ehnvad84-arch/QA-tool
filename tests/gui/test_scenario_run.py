@@ -88,3 +88,29 @@ def test_scenario_choices_saved(qtbot, tmp_path, fleet):
     saved = load_scenario(tmp_path / "scenario.yaml")
     assert "FAKE-NET-1" not in saved.checks and "FAKE-NET-2" in saved.checks
     assert saved.allow_writes and not saved.allow_destructive
+
+
+def test_protocols_screen_opens_all_formats(qtbot, tmp_path, fleet):
+    from qa_tool.gui.screens.protocols import ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:2])
+    run = screen(window, RunScreen)
+    run.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+
+    protocols = screen(window, ProtocolsScreen)
+    opened = []
+    protocols.opener = opened.append
+    window.menu.setCurrentRow(4)
+    assert protocols.runs_table.rowCount() == 1
+    assert protocols.docs_table.rowCount() == 3  # сводка + 2 камеры
+    for row in range(3):
+        protocols.docs_table.selectRow(row)
+        for fmt in ("pdf", "xlsx", "html"):
+            assert protocols.open_selected(fmt) is not None
+    names = sorted(p.name for p in opened)
+    assert names == sorted(
+        f"{stem}.{fmt}"
+        for stem in ("summary", "protocol_1", "protocol_2")
+        for fmt in ("pdf", "xlsx", "html")
+    )
