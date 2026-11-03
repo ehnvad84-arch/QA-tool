@@ -60,7 +60,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "ERA", "D100", "D101", "D102", "
 [tool.ruff.lint.per-file-ignores]
 # docstring обязательны в ядре, драйверах, проверках и протоколах; экраны и тесты говорят сами за себя
 "src/qa_tool/gui/**" = ["D1"]
-"tests/**" = ["D1"]
+"tests/**" = ["D1", "E501"]  # в тестах длинные строки — образцы XML, SOAP и RTSP целиком
 "packaging/**" = ["D1"]
 "scripts/**" = ["D1"]
 "src/qa_tool/__init__.py" = ["D1"]

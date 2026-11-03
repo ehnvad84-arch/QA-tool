@@ -11,7 +11,6 @@ import argparse
 import base64
 import hashlib
 import socket
-import socketserver
 import struct
 import threading
 import uuid
@@ -21,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
+from tests.mock_rtsp import MockRtspServer
 
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
@@ -77,8 +77,7 @@ class MockCamera:
         self.password = password
         self.requests: list[str] = []
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
-        self._rtsp = socketserver.ThreadingTCPServer(("127.0.0.1", 0), self._rtsp_handler())
-        self._rtsp.daemon_threads = True
+        self.rtsp = MockRtspServer()
         self._threads: list[threading.Thread] = []
 
     @property
@@ -87,17 +86,17 @@ class MockCamera:
 
     @property
     def rtsp_port(self) -> int:
-        return self._rtsp.server_address[1]
+        return self.rtsp.port
 
     @property
     def xaddr(self) -> str:
         return f"http://127.0.0.1:{self.port}/onvif/device_service"
 
     def start(self) -> "MockCamera":
-        for server in (self._http, self._rtsp):
-            t = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
-            t.start()
-            self._threads.append(t)
+        t = threading.Thread(target=self._http.serve_forever, args=(0.05,), daemon=True)
+        t.start()
+        self._threads.append(t)
+        self.rtsp.start()
         return self
 
     def stop(self) -> None:
@@ -105,9 +104,9 @@ class MockCamera:
         if getattr(self, "_stopped", False):
             return
         self._stopped = True
-        for server in (self._http, self._rtsp):
-            server.shutdown()
-            server.server_close()
+        self._http.shutdown()
+        self._http.server_close()
+        self.rtsp.stop()
 
     def _authorized(self, root: ET.Element) -> bool:
         token = root.find(".//wsse:UsernameToken", NS)
@@ -170,18 +169,6 @@ class MockCamera:
 
             def log_message(self, *args):
                 pass
-
-        return Handler
-
-    @staticmethod
-    def _rtsp_handler():
-        class Handler(socketserver.StreamRequestHandler):
-            def handle(self):
-                request = self.rfile.readline()
-                if request.startswith(b"OPTIONS"):
-                    self.wfile.write(
-                        b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: OPTIONS, DESCRIBE\r\n\r\n"
-                    )
 
         return Handler
 

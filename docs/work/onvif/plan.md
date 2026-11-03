@@ -13,7 +13,7 @@
   Готово, когда: тест — SetUser через посредника не доходит до mock-камеры; GetServices, GetCapabilities и SubscriptionReference возвращают адреса посредника; PullMessages с ожиданием 30 с проходит
 - [x] T3 — Mock-камера, SOAP: GetServices, Media2 GetProfiles/GetStreamUri, Search (FindRecordings, GetRecordingSearchResults), Replay (GetReplayUri), Recording Control (задания записи), GetStorageConfigurations, конфигурации метаданных и модулей аналитики, события PullPoint · файл: `tests/mock_camera.py` · сценарий: S1, S5, S6, S7 · проверка: auto · исполнитель: main
   Готово, когда: тесты драйвера получают ответы всех операций; включённое задание записи даёт запись в поиске
-- [ ] T4 — Mock-камера, RTSP: минимальный сервер DESCRIBE/SETUP/PLAY, отдающий ffmpeg-ом сгенерированный H.264 (живой поток, «архив» с Range, поток метаданных) · файлы: `tests/mock_camera.py`, `tests/mock_rtsp.py` · сценарий: S5, S6 · проверка: auto · исполнитель: main
+- [x] T4 — Mock-камера, RTSP: минимальный сервер DESCRIBE/SETUP/PLAY, отдающий ffmpeg-ом сгенерированный H.264 (живой поток, «архив» с Range, поток метаданных) · файлы: `tests/mock_camera.py`, `tests/mock_rtsp.py` · сценарий: S5, S6 · проверка: auto · исполнитель: main
   Готово, когда: `ffprobe` из сборки читает с mock 10 с видео и поток метаданных
 - [ ] T5 — Составная проверка: `CheckResult.children` → отдельные строки в базе (через `RunStore.add_result`, с `redact`), протоколе и на плитках прогона · файлы: `core/checks.py`, `core/scheduler.py`, `core/store.py`, `report/model.py`, `gui/screens/run.py` · сценарий: S1 · проверка: auto · исполнитель: main
   Готово, когда: тест — проверка с 3 дочерними результатами даёт 3 строки протокола, задачи — по «не прошла»; секрет в дочернем `last_request` вырезан
