@@ -48,11 +48,20 @@ STATUS = {
 _SKIPPED = re.compile(r"Skipped: (.+?)['\")]*$", re.S)
 
 
+RUNNER_FLAG = "--ott-runner"  # packaging/entry.py: собранная программа становится запускателем
+
+
 def runner_command() -> list[str]:
-    """Команда запуска `ott_runner`: модулем Python или из собранной программы (T14)."""
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--ott-runner"]
-    return [sys.executable, "-m", "qa_tool.checks.onvif.ott_runner"]
+    """Команда запуска `ott_runner`: модулем Python или из собранной программы.
+
+    В сборке Windows оконный qa-tool.exe не имеет консоли — у pytest не было бы stdout,
+    поэтому запускателем служит консольный qa-tool-cli.exe из той же папки (окно консоли
+    не показывается: CREATE_NO_WINDOW в `_run`).
+    """
+    if not getattr(sys, "frozen", False):
+        return [sys.executable, "-m", "qa_tool.checks.onvif.ott_runner"]
+    console = Path(sys.executable).with_name("qa-tool-cli.exe")
+    return [str(console if console.exists() else sys.executable), RUNNER_FLAG]
 
 
 def titles() -> dict[str, str]:
@@ -144,8 +153,18 @@ def run_onvif_tt(
         command.append("--allow-writes")
     if writes and ctx.allow_destructive:
         command.append("--allow-reboot")
-    env = {**os.environ, PASSWORD_ENV: ctx.password}
-    done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout_s)
+    # вывод pytest читается как UTF-8 и на Windows, где консоль по умолчанию в cp866/cp1251
+    env = {**os.environ, PASSWORD_ENV: ctx.password, "PYTHONIOENCODING": "utf-8"}
+    done = subprocess.run(
+        command,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_s,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # 0 — не Windows
+    )
     return (done.stdout + done.stderr)[-2000:]
 
 

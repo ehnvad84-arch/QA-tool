@@ -62,6 +62,8 @@ jobs:
           app=$(ls dist/*.AppImage)
           "$app" --appimage-extract-and-run --version
           "$app" --appimage-extract-and-run doctor
+      - name: Модуль ONVIF собранной программой против виртуальной камеры
+        run: uv run python packaging/smoke_onvif.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
       - uses: actions/upload-artifact@v4
         with:
           name: QA-tool-linux-AppImage
@@ -80,6 +82,8 @@ jobs:
         run: |
           build\pyinstaller\qa-tool\qa-tool-cli.exe --version
           build\pyinstaller\qa-tool\qa-tool-cli.exe doctor
+      - name: Модуль ONVIF собранной программой против виртуальной камеры
+        run: uv run python packaging/smoke_onvif.py build\pyinstaller\qa-tool\qa-tool-cli.exe
       - uses: actions/upload-artifact@v4
         with:
           name: QA-tool-windows-setup
