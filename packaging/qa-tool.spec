@@ -21,6 +21,8 @@ a = Analysis(
     excludes=["tests", "pytest"],
 )
 pyz = PYZ(a.pure)
-exe_ = EXE(pyz, a.scripts, [], exclude_binaries=True, name="qa-tool", console=False,
-           icon=str(root / "packaging" / "icon.ico") if os.name == "nt" else None)
-coll = COLLECT(exe_, a.binaries, a.datas, name="qa-tool")
+icon = str(root / "packaging" / "icon.ico") if os.name == "nt" else None
+gui = EXE(pyz, a.scripts, [], exclude_binaries=True, name="qa-tool", console=False, icon=icon)
+# Windows: у оконной программы нет консоли — для `run`, `doctor`, `discover` отдельный qa-tool-cli.exe
+extra = [EXE(pyz, a.scripts, [], exclude_binaries=True, name="qa-tool-cli", console=True, icon=icon)]
+coll = COLLECT(gui, *(extra if os.name == "nt" else []), a.binaries, a.datas, name="qa-tool")

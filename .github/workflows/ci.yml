@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  UV_PYTHON: "3.12"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Системные библиотеки Qt (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 fonts-dejavu-core
+      - run: uv sync
+      - name: Линтер
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Тесты
+        run: uv run pytest -q
+
+  snyk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Snyk по зависимостям (нужен секрет SNYK_TOKEN)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "::warning::SNYK_TOKEN не задан — проверка зависимостей Snyk пропущена"
+            exit 0
+          fi
+          uv export --no-hashes --no-dev --format requirements-txt > requirements.txt
+          npx --yes snyk@1 test --file=requirements.txt --package-manager=pip --severity-threshold=high
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 fonts-dejavu-core
+      - run: packaging/linux/build.sh
+      - name: Проверка сборки
+        run: |
+          app=$(ls dist/*.AppImage)
+          "$app" --appimage-extract-and-run --version
+          "$app" --appimage-extract-and-run doctor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QA-tool-linux-AppImage
+          path: dist/*.AppImage
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: powershell -File packaging\windows\build.ps1
+      - name: Проверка сборки
+        run: |
+          build\pyinstaller\qa-tool\qa-tool-cli.exe --version
+          build\pyinstaller\qa-tool\qa-tool-cli.exe doctor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QA-tool-windows-setup
+          path: dist/*-setup.exe
