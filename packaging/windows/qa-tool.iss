@@ -1,4 +1,4 @@
-; Установщик Windows. Собирается из build\pyinstaller\qa-tool: iscc /DVersion=0.1.0 packaging\windows\qa-tool.iss
+﻿; Установщик Windows. Собирается из build\pyinstaller\qa-tool: iscc /DVersion=0.1.0 packaging\windows\qa-tool.iss
 #ifndef Version
   #define Version "0.0.0"
 #endif

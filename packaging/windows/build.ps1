@@ -1,4 +1,4 @@
-# Сборка установщика Windows: PyInstaller (onedir) + ffmpeg LGPL + Inno Setup.
+﻿# Сборка установщика Windows: PyInstaller (onedir) + ffmpeg LGPL + Inno Setup.
 #   powershell -File packaging\windows\build.ps1   → dist\QA-tool-<версия>-setup.exe
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..\..")
