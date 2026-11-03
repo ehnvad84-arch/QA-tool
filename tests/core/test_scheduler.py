@@ -97,3 +97,49 @@ def test_stop_skips_unstarted_checks(tmp_path, fleet):
     assert len(statuses) == 2 * len(SLOW)
     assert ("пропущена", "прогон остановлен") in statuses
     assert store.run_info()["state"] == "остановлен"
+
+
+def test_lost_camera_marked_stand_error_others_finish(tmp_path, fleet):
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+
+    def on_event(event):
+        if event.kind == "result" and event.slot == 3:
+            fleet[2].stop()  # у камеры 3 пропала сеть
+
+    runner = Runner(
+        make_stand(tmp_path, fleet),
+        Scenario(checks=SLOW),
+        registry_ref=REF,
+        on_event=on_event,
+        extra={"trace_dir": str(trace_dir)},
+    )
+    store = runner.run()
+    for slot in range(1, 9):
+        rows = store.results(slot=slot)
+        assert len(rows) == len(SLOW)
+        if slot == 3:
+            assert rows[0]["status"] == "прошла"
+            assert {(r["status"], r["reason"]) for r in rows[1:]} == {
+                ("ошибка стенда", "нет связи")
+            }
+        else:
+            assert {r["status"] for r in rows} == {"прошла"}, slot
+    assert store.run_info()["state"] == "завершён"
+
+
+def test_hung_check_removes_only_that_camera(tmp_path, fleet):
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+    stand = make_stand(tmp_path, fleet[:2])
+    runner = Runner(
+        stand,
+        Scenario(checks=["FAKE-HANG-1", "FAKE-NET-1"]),
+        registry_ref=REF,
+        extra={"trace_dir": str(trace_dir)},
+    )
+    store = runner.run()
+    for slot in (1, 2):
+        rows = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=slot)}
+        assert rows["FAKE-HANG-1"] == ("ошибка стенда", "проверка зависла (> 1 с)")
+        assert rows["FAKE-NET-1"][0] == "ошибка стенда"
