@@ -29,7 +29,7 @@
 
 <h2>1. Сводка по модулям</h2>
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>Модуль</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th></tr>
+  <thead><tr><th>Модуль</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th></tr></thead>
   {% for module, c in p.modules %}
   <tr><td>{{ module }}</td><td>{{ c["прошла"] }}</td><td>{{ c["не прошла"] }}</td><td>{{ c["ошибка стенда"] }}</td><td>{{ c["пропущена"] }}</td></tr>
   {% endfor %}
@@ -37,7 +37,7 @@
 
 <h2>2. Результаты проверок</h2>
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>№</th><th>Проверка</th><th>Что делали</th><th>Ожидание</th><th>Факт</th><th>Порог (источник)</th><th>Результат</th><th>Доказательство</th></tr>
+  <thead><tr><th>№</th><th>Проверка</th><th>Что делали</th><th>Ожидание</th><th>Факт</th><th>Порог (источник)</th><th>Результат</th><th>Доказательство</th></tr></thead>
   {% for r in p.rows %}
   <tr>
     <td>{{ r.number }}</td>
@@ -55,7 +55,7 @@
 <h2>3. Задачи программистам</h2>
 {% if p.tasks %}
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>№</th><th>Задача</th><th>Модуль</th><th>Важность</th><th>Шаги воспроизведения</th><th>Ожидалось</th><th>Получено</th><th>Доказательство</th></tr>
+  <thead><tr><th>№</th><th>Задача</th><th>Модуль</th><th>Важность</th><th>Шаги воспроизведения</th><th>Ожидалось</th><th>Получено</th><th>Доказательство</th></tr></thead>
   {% for t in p.tasks %}
   <tr>
     <td>{{ t.number }}</td><td>{{ t.title }}</td><td>{{ t.module }}</td><td>{{ t.severity }}</td>

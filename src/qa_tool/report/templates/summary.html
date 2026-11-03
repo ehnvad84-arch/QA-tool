@@ -8,7 +8,7 @@
 
 <h2>1. Камеры</h2>
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>Место</th><th>Протокол</th><th>Камера</th><th>Прошивка</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th><th>Заключение</th></tr>
+  <thead><tr><th>Место</th><th>Протокол</th><th>Камера</th><th>Прошивка</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th><th>Заключение</th></tr></thead>
   {% for p in s.protocols %}
   <tr>
     <td>{{ p.slot }}</td><td>{{ p.protocol_id }}</td><td>{{ p.camera_name }}</td><td>{{ p.passport.firmware }}</td>
@@ -20,7 +20,7 @@
 
 <h2>2. Сравнение: проверка × камера</h2>
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>Проверка</th>{% for p in s.protocols %}<th>{{ p.slot }}. {{ p.camera_name }}</th>{% endfor %}</tr>
+  <thead><tr><th>Проверка</th>{% for p in s.protocols %}<th>{{ p.slot }}. {{ p.camera_name }}</th>{% endfor %}</tr></thead>
   {% for check_id, title in s.checks %}
   <tr><td><b>{{ check_id }}</b><br>{{ title }}</td>
     {% for p in s.protocols %}{% set st = s.matrix[check_id].get(p.slot, "—") %}
@@ -31,7 +31,7 @@
 
 <h2>3. Задачи программистам по камерам</h2>
 <table border="1" cellspacing="0" cellpadding="4">
-  <tr><th>Место</th><th>Камера</th><th>Задач</th><th>Из них блокеров</th></tr>
+  <thead><tr><th>Место</th><th>Камера</th><th>Задач</th><th>Из них блокеров</th></tr></thead>
   {% for p in s.protocols %}
   <tr><td>{{ p.slot }}</td><td>{{ p.camera_name }}</td><td>{{ p.tasks | length }}</td>
       <td>{{ p.tasks | selectattr("severity", "equalto", "блокер") | list | length }}</td></tr>

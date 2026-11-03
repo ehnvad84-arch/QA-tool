@@ -37,6 +37,8 @@
 - Прогон без окна: `uv run qa-tool run --stand stand.yaml`
 - Тесты: `uv run pytest` · один тест: `uv run pytest tests/path::test_name`
 - Линтер и форматирование: `uv run ruff check . && uv run ruff format --check .`
+- Виртуальные камеры для ручной проверки: `uv run python -m tests.mock_camera --count 9 --write-stand stand.yaml` (логин и пароль admin)
+- Qt (окно, PDF) на Linux требует `libegl1`. На машине разработки без него: `apt-get download libegl1`, распаковать `dpkg-deb -x` в `~/.cache/qa-tool-syslibs/root` и запускать с `LD_LIBRARY_PATH=~/.cache/qa-tool-syslibs/root/usr/lib/x86_64-linux-gnu`
 
 ## Внешние источники
 

@@ -74,5 +74,34 @@ def test_summary_matrix_covers_all_cameras(store):
 
 
 def test_publish_writes_protocol_per_camera_and_summary(store):
-    names = sorted(p.name for p in publish(store))
-    assert names == ["protocol_1.html", "protocol_2.html", "summary.html"]
+    names = {p.name for p in publish(store)}
+    assert {"protocol_1.html", "protocol_2.html", "summary.html"} <= names
+
+
+def pdf_text(path) -> str:
+    from PySide6.QtPdf import QPdfDocument
+
+    doc = QPdfDocument(None)
+    assert doc.load(str(path)) == QPdfDocument.Error.None_
+    return "".join(doc.getAllText(i).text() for i in range(doc.pageCount()))
+
+
+def test_pdf_and_excel_published(store):
+    from openpyxl import load_workbook
+
+    names = {p.name for p in publish(store)}
+    for slot in (1, 2):
+        assert {f"protocol_{slot}.pdf", f"protocol_{slot}.xlsx"} <= names
+    assert {"summary.pdf", "summary.xlsx"} <= names
+    assert f"{store.run_id}-1" in pdf_text(store.run_dir / "protocol_1.pdf")
+    assert store.run_id in pdf_text(store.run_dir / "summary.pdf")
+
+    summary = load_workbook(store.run_dir / "summary.xlsx")
+    assert summary.sheetnames == ["Сводка", "Проверки", "Задачи", "Сравнение"]
+    matrix = list(summary["Сравнение"].values)
+    assert matrix[0][2:] == ("1. Ruver <script>alert(1)</script>", "2. 10.0.0.2")
+    row = next(r for r in matrix if r[0] == "T-OK")
+    assert row[2:] == ("прошла", "прошла")
+    camera = load_workbook(store.run_dir / "protocol_1.xlsx")
+    assert camera.sheetnames == ["Сводка", "Проверки", "Задачи"]
+    assert camera["Задачи"].max_row == 2  # заголовок + одна задача
