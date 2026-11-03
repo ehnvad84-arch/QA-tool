@@ -114,3 +114,13 @@ def test_protocols_screen_opens_all_formats(qtbot, tmp_path, fleet):
         for stem in ("summary", "protocol_1", "protocol_2")
         for fmt in ("pdf", "xlsx", "html")
     )
+
+
+def test_stress_duration_chosen_from_ten_minute_steps(qtbot, tmp_path, fleet):
+    window = make_window(qtbot, tmp_path, fleet[:1], registry_ref="tests.fake_checks:REGISTRY")
+    scenario = screen(window, ScenarioScreen)
+    values = [scenario.stress.itemData(i) for i in range(scenario.stress.count())]
+    assert values[:5] == [10, 20, 30, 40, 50] and values[-1] == 1440
+    assert scenario.stress.itemText(values.index(240)) == "4 ч"
+    scenario.stress.setCurrentIndex(values.index(40))
+    assert load_scenario(tmp_path / "scenario.yaml").stress_minutes == 40

@@ -3,9 +3,9 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QMessageBox,
-    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
 )
@@ -13,6 +13,15 @@ from PySide6.QtWidgets import (
 from qa_tool.gui.help import helped
 from qa_tool.gui.screens.base import Screen
 from qa_tool.report.model import MODULE_TITLES
+
+# Решение директора 2026-11-03: длительность стресс-теста выбирается из списка шагом 10 минут;
+# для долгих прогонов (ночь, сутки) — часы.
+STRESS_CHOICES = [*range(10, 121, 10), 180, 240, 360, 480, 720, 1440]
+
+
+def stress_label(minutes: int) -> str:
+    """Подпись длительности: «40 мин», «3 ч», «24 ч»."""
+    return f"{minutes // 60} ч" if minutes >= 180 and minutes % 60 == 0 else f"{minutes} мин"
 
 
 class ScenarioScreen(Screen):
@@ -52,16 +61,17 @@ class ScenarioScreen(Screen):
             "scenario-permissions",
         )
         self.stress = helped(
-            QSpinBox(),
-            "Сколько минут держать максимальную нагрузку в стресс-фазе.",
+            QComboBox(),
+            "Сколько держать максимальную нагрузку на все камеры в стресс-фазе: "
+            "от 10 минут до суток.",
             "scenario-stress",
         )
-        self.stress.setRange(1, 24 * 60)
-        self.stress.setSuffix(" мин")
-        self.stress.setMaximumWidth(140)
+        for minutes in STRESS_CHOICES:
+            self.stress.addItem(stress_label(minutes), minutes)
+        self.stress.setMaximumWidth(160)
         self.allow_writes.toggled.connect(self._changed)
         self.allow_destructive.toggled.connect(self._confirm_destructive)
-        self.stress.valueChanged.connect(self._changed)
+        self.stress.currentIndexChanged.connect(self._changed)
         form.addRow(self.allow_writes)
         form.addRow(self.allow_destructive)
         form.addRow("Длительность стресс-теста", self.stress)
@@ -101,7 +111,7 @@ class ScenarioScreen(Screen):
         scenario.checks = None if checked == all_ids else checked
         scenario.allow_writes = self.allow_writes.isChecked()
         scenario.allow_destructive = self.allow_destructive.isChecked()
-        scenario.stress_minutes = self.stress.value()
+        scenario.stress_minutes = int(self.stress.currentData())
         self.state.save()
 
     def refresh(self) -> None:
@@ -134,5 +144,9 @@ class ScenarioScreen(Screen):
         self.tree.expandAll()
         self.allow_writes.setChecked(scenario.allow_writes)
         self.allow_destructive.setChecked(scenario.allow_destructive)
-        self.stress.setValue(scenario.stress_minutes)
+        index = self.stress.findData(scenario.stress_minutes)
+        if index < 0:  # значение из scenario.yaml не из списка — показываем его как есть
+            self.stress.addItem(stress_label(scenario.stress_minutes), scenario.stress_minutes)
+            index = self.stress.count() - 1
+        self.stress.setCurrentIndex(index)
         self._loading = False
