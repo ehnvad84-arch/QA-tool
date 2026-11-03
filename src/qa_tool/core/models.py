@@ -27,6 +27,7 @@ class Camera:
     address: str
     username: str
     port: int = 80
+    rtsp_port: int = 554
     vendor: str = "generic"
     name: str = ""
 

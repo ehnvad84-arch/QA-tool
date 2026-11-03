@@ -21,3 +21,4 @@
 - 2026-11-03 · T2 · модели Stand/Camera/Scenario/Threshold, чтение stand/scenario/thresholds.yaml · проверка: pytest — 11 passed (9-я камера, пароль в yaml, умолчания сценария, источник порога); ruff чисто
 - 2026-11-03 · T3 · keyring + QA_TOOL_PASSWORD_<n>, redact() для HTTP/SOAP/JSON/query, .env.example · проверка: pytest — 21 passed (тестовый бэкенд keyring в памяти); ruff чисто
 - 2026-11-03 · T4 · Registry/CheckSpec/CheckResult, фазы, план проверок по производителю, месту и галочкам · проверка: pytest — 31 passed (разрушающая без галочки не вызывается; «прошла» без доказательства → ошибка стенда); ruff чисто
+- 2026-11-03 · T5 · tests/mock_camera.py: SOAP GetDeviceInformation/GetCapabilities с PasswordDigest, RTSP OPTIONS, общий ответчик WS-Discovery, `python -m tests.mock_camera --count 9 --write-stand`; Camera.rtsp_port · проверка: pytest — 34 passed (8 паспортов, неверный пароль → fault, stop закрывает порты); ruff чисто
