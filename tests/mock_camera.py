@@ -93,7 +93,10 @@ class MockCamera:
         return self
 
     def stop(self) -> None:
-        """Камера «пропала из сети»: оба порта закрываются."""
+        """Камера «пропала из сети»: оба порта закрываются. Повторный вызов ничего не делает."""
+        if getattr(self, "_stopped", False):
+            return
+        self._stopped = True
         for server in (self._http, self._rtsp):
             server.shutdown()
             server.server_close()

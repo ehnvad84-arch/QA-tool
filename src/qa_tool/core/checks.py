@@ -95,6 +95,8 @@ class CheckSpec:
     writes: bool = False
     destructive: bool = False
     severity: Severity = Severity.MAJOR
+    order: int = 100  # порядок внутри фазы; CORE-CONNECT-1 — первым
+    timeout_s: float = 120.0  # дольше — проверка считается зависшей
 
     def applies_to(self, camera: Camera) -> bool:
         return self.vendors is None or camera.vendor.lower() in self.vendors
@@ -118,7 +120,7 @@ class Registry:
         return register
 
     def all(self) -> list[CheckSpec]:
-        return sorted(self._specs.values(), key=lambda s: (s.phase, s.module, s.id))
+        return sorted(self._specs.values(), key=lambda s: (s.phase, s.order, s.module, s.id))
 
     def get(self, id: str) -> CheckSpec:
         return self._specs[id]

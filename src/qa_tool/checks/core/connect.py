@@ -38,6 +38,8 @@ def _rtsp_answers(address: str, port: int, timeout: float) -> bool:
         "и серийный номер."
     ),
     severity=Severity.BLOCKER,
+    order=0,
+    timeout_s=30,
 )
 def connect(ctx: CheckContext) -> CheckResult:
     cam, timeout = ctx.camera, float(ctx.extra.get("timeout_s", 5.0))

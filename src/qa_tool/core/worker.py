@@ -1,0 +1,110 @@
+"""Рабочий процесс одной камеры. Запускается планировщиком через multiprocessing (spawn).
+
+Сообщения в координатор (outbox): кортежи (вид, место, ...):
+  started(check_id, время) · result(check_id, CheckResult, время начала) ·
+  lock(check_id, ресурсы) · release(check_id) · barrier(check_id) · phase_done(фаза) · lost(причина)
+Ответы координатора (inbox): ("phase", фаза) · ("grant", check_id) · ("go", check_id) ·
+  ("abort", check_id) · ("quit",)
+"""
+
+import datetime
+import importlib
+import socket
+from dataclasses import dataclass, field
+from typing import Any
+
+from qa_tool.core.checks import CheckContext, CheckResult, Phase, Registry, Status, run_check
+from qa_tool.core.models import Camera, Place, Threshold
+
+FIRST_CHECK = "CORE-CONNECT-1"
+STOPPED = "прогон остановлен"
+
+
+def resolve_registry(ref: str) -> Registry:
+    module_name, _, attr = ref.partition(":")
+    target = getattr(importlib.import_module(module_name), attr)
+    return target() if callable(target) and not isinstance(target, Registry) else target
+
+
+@dataclass
+class WorkerArgs:
+    camera: Camera
+    password: str
+    place: Place
+    plan: list[tuple[str, str | None]]  # (check_id, причина пропуска)
+    registry_ref: str
+    sync_checks: set[str] = field(default_factory=set)
+    thresholds: dict[str, Threshold] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
+    for _ in range(attempts):
+        try:
+            with socket.create_connection((camera.address, camera.port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _now() -> str:
+    return datetime.datetime.now().isoformat(timespec="milliseconds")
+
+
+def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
+    registry = resolve_registry(args.registry_ref)
+    slot = args.camera.slot
+    ctx = CheckContext(args.camera, args.password, args.place, args.thresholds, dict(args.extra))
+    by_phase: dict[Phase, list[tuple[str, str | None]]] = {}
+    for check_id, skip in args.plan:
+        by_phase.setdefault(registry.get(check_id).phase, []).append((check_id, skip))
+    alive_checked = False  # камера отвечала хотя бы раз — дальше пропажа = «нет связи»
+    unreachable_from_start = False
+
+    def send_result(check_id: str, result: CheckResult, started: str) -> None:
+        outbox.put(("result", slot, check_id, result, started))
+
+    while True:
+        message = inbox.get()
+        if message[0] == "quit":
+            return
+        phase = Phase(message[1])
+        for check_id, skip in by_phase.get(phase, []):
+            spec = registry.get(check_id)
+            started = _now()
+            if stop_event.is_set():
+                send_result(check_id, CheckResult.skipped(STOPPED), started)
+                continue
+            if skip is not None:
+                send_result(check_id, run_check(spec, ctx, skip), started)
+                continue
+            if unreachable_from_start:
+                reason = f"камера не на связи с начала прогона (см. {FIRST_CHECK})"
+                send_result(check_id, CheckResult.skipped(reason), started)
+                continue
+            if alive_checked and args.extra.get("liveness", True) and not camera_alive(args.camera):
+                outbox.put(("lost", slot, "нет связи"))
+                return
+            if check_id in args.sync_checks:
+                outbox.put(("barrier", slot, check_id))
+                if inbox.get()[0] == "abort":
+                    send_result(check_id, CheckResult.skipped(STOPPED), started)
+                    continue
+            elif spec.resources:
+                outbox.put(("lock", slot, check_id, sorted(spec.resources)))
+                if inbox.get()[0] == "abort":
+                    send_result(check_id, CheckResult.skipped(STOPPED), started)
+                    continue
+            started = _now()
+            outbox.put(("started", slot, check_id, started))
+            result = run_check(spec, ctx)
+            if spec.resources and check_id not in args.sync_checks:
+                outbox.put(("release", slot, check_id))
+            if check_id == FIRST_CHECK and not alive_checked:
+                unreachable_from_start = (
+                    result.status is Status.FAILED and "нет связи" in result.reason
+                )
+            alive_checked = alive_checked or not unreachable_from_start
+            send_result(check_id, result, started)
+        outbox.put(("phase_done", slot, int(phase)))

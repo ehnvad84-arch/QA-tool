@@ -1,0 +1,46 @@
+"""Фиктивные проверки для тестов планировщика: пишут отметки времени в trace_dir."""
+
+import json
+import time
+from pathlib import Path
+
+from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Status
+
+REGISTRY = Registry()
+
+
+def _traced(seconds: float):
+    def check(ctx):
+        start = time.time()
+        time.sleep(seconds)
+        end = time.time()
+        trace = Path(ctx.extra["trace_dir"]) / f"{ctx.camera.slot}.jsonl"
+        with trace.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": ctx.extra.get("_id"), "start": start, "end": end}) + "\n")
+        return CheckResult(Status.PASSED, evidence=[Evidence("trace.txt", f"{start}-{end}")])
+
+    return check
+
+
+def _register(check_id: str, seconds: float, **options):
+    func = _traced(seconds)
+
+    def wrapped(ctx):
+        ctx.extra["_id"] = check_id
+        return func(ctx)
+
+    REGISTRY.check(check_id, "fake", check_id, "фиктивная проверка", **options)(wrapped)
+
+
+_register("FAKE-NET-1", 0.05)
+_register("FAKE-NET-2", 0.05)
+_register("FAKE-SYNC-1", 0.1, phase=Phase.SYNC, resources={"light"})
+_register("FAKE-LIGHT-1", 0.1, phase=Phase.SEQUENTIAL, resources={"light"})
+_register("FAKE-STRESS-1", 0.05, phase=Phase.STRESS)
+_register("FAKE-SLOW-1", 0.4)
+_register("FAKE-SLOW-2", 0.4)
+_register("FAKE-SLOW-3", 0.4)
+_register("FAKE-HANG-1", 30, timeout_s=1)
+
+MAIN = ["FAKE-NET-1", "FAKE-NET-2", "FAKE-SYNC-1", "FAKE-LIGHT-1", "FAKE-STRESS-1"]
+SLOW = ["FAKE-SLOW-1", "FAKE-SLOW-2", "FAKE-SLOW-3"]
