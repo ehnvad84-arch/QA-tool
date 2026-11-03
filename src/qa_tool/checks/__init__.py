@@ -7,6 +7,7 @@ from qa_tool.core.checks import REGISTRY, Registry
 MODULES = [
     "qa_tool.checks.core.connect",
     "qa_tool.checks.onvif.onvif_tt",
+    "qa_tool.checks.onvif.replay",
     "qa_tool.checks.onvif.profiles",
 ]
 

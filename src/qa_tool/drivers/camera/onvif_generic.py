@@ -1,6 +1,7 @@
 """Общий ONVIF-драйвер: годится для любой камеры, своей и конкурента (AD-4)."""
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.soap import NS, SoapClient
@@ -15,6 +16,43 @@ class Passport:
     firmware: str
     serial: str
     hardware: str
+
+
+# пространство имён службы ONVIF → короткое имя (GetServices)
+SERVICE_KEYS = {
+    "http://www.onvif.org/ver10/device/wsdl": "device",
+    "http://www.onvif.org/ver10/media/wsdl": "media",
+    "http://www.onvif.org/ver20/media/wsdl": "media2",
+    "http://www.onvif.org/ver10/events/wsdl": "events",
+    "http://www.onvif.org/ver20/imaging/wsdl": "imaging",
+    "http://www.onvif.org/ver20/ptz/wsdl": "ptz",
+    "http://www.onvif.org/ver10/deviceIO/wsdl": "deviceio",
+    "http://www.onvif.org/ver10/recording/wsdl": "recording",
+    "http://www.onvif.org/ver10/search/wsdl": "search",
+    "http://www.onvif.org/ver10/replay/wsdl": "replay",
+    "http://www.onvif.org/ver20/analytics/wsdl": "analytics",
+}
+
+
+def service_urls(soap: SoapClient, camera: Camera) -> dict[str, str]:
+    """Адреса служб камеры по GetServices; адрес на чужом хосте отброшен (security.md).
+
+    Raises:
+        CameraUnreachable, OnvifFault: GetServices не прошёл.
+    """
+    device_url = f"http://{camera.address}:{camera.port}/onvif/device_service"
+    answer = soap.call(
+        device_url,
+        "<tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>",
+    )
+    out = {"device": device_url}
+    for service in (e for e in answer.iter() if e.tag.endswith("}Service")):
+        namespace = next((c.text or "" for c in service if c.tag.endswith("}Namespace")), "")
+        url = next((c.text or "" for c in service if c.tag.endswith("}XAddr")), "").strip()
+        key = SERVICE_KEYS.get(namespace.strip())
+        if key and key != "device" and urlsplit(url).hostname == camera.address:
+            out[key] = url
+    return out
 
 
 class OnvifCamera:

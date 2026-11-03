@@ -11,20 +11,12 @@
 """
 
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
 from xml.etree.ElementTree import Element, tostring
 
 from qa_tool.core.models import Camera
+from qa_tool.drivers.camera.onvif_generic import service_urls
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
-_NS_DEVICE = "http://www.onvif.org/ver10/device/wsdl"
-_SERVICE_KEYS = {
-    "http://www.onvif.org/ver10/media/wsdl": "media",
-    "http://www.onvif.org/ver20/media/wsdl": "media2",
-    "http://www.onvif.org/ver20/imaging/wsdl": "imaging",
-    "http://www.onvif.org/ver20/ptz/wsdl": "ptz",
-    "http://www.onvif.org/ver10/deviceIO/wsdl": "deviceio",
-}
 POSITION_TOLERANCE = 0.02  # шаг привода у PTZ и фокуса: точнее камеры возвращаются редко
 
 
@@ -87,17 +79,7 @@ class SnapshotTaker:
 
     def services(self) -> dict[str, str]:
         """Адреса служб камеры по GetServices; адреса на чужих хостах отброшены."""
-        answer = self.soap.call(
-            self.device_url,
-            "<tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>",
-        )
-        out = {"device": self.device_url}
-        for service in _find_all(answer, "Service"):
-            key = _SERVICE_KEYS.get(_text(service, "Namespace"))
-            url = _text(service, "XAddr")
-            if key and urlsplit(url).hostname == self.camera.address:
-                out[key] = url
-        return out
+        return service_urls(self.soap, self.camera)
 
     # --- снимок -------------------------------------------------------------------------------
 

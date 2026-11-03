@@ -87,6 +87,7 @@ class OnvifState:
     relay_xml: str = "<tt:Mode>Bistable</tt:Mode><tt:DelayTime>PT1S</tt:DelayTime><tt:IdleState>closed</tt:IdleState>"
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
+    replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
@@ -243,7 +244,9 @@ class OnvifServices:
             "</tse:EndSearchResponse>"
         )
 
-    def op_GetReplayUri(self, request) -> str:  # noqa: N802
+    def op_GetReplayUri(self, request) -> str | None:  # noqa: N802
+        if self.state.replay_fault:
+            return None
         token = _text(request, "RecordingToken")
         uri = f"{self.rtsp_url}/replay/{token}"
         return f"<trp:GetReplayUriResponse><trp:Uri>{uri}</trp:Uri></trp:GetReplayUriResponse>"
