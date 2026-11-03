@@ -14,6 +14,7 @@ import httpx
 from defusedxml import ElementTree
 
 from qa_tool.core.secrets import redact
+from qa_tool.core.taboo import check_onvif
 
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",
@@ -65,6 +66,7 @@ class SoapClient:
         )
 
     def call(self, url: str, body: str) -> Element:
+        check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         envelope = (
             f'<s:Envelope xmlns:s="{NS["s"]}" xmlns:tds="{NS["tds"]}" xmlns:tt="{NS["tt"]}">'
             f"<s:Header>{self._security_header()}</s:Header><s:Body>{body}</s:Body></s:Envelope>"

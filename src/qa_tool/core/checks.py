@@ -12,6 +12,7 @@ from enum import IntEnum, StrEnum
 from typing import Any
 
 from qa_tool.core.models import Camera, Place, Scenario, Threshold
+from qa_tool.core.taboo import TabooViolation
 
 
 class Status(StrEnum):
@@ -159,6 +160,8 @@ def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> Ch
     start = time.monotonic()
     try:
         result = spec.func(ctx)
+    except TabooViolation as e:  # проверка попыталась нарушить табу — ошибка программы
+        result = CheckResult.stand_error(f"запрещённая операция не отправлена: {e}")
     except Exception as e:  # сбой самой проверки — не вина камеры
         result = CheckResult.stand_error(f"сбой проверки: {type(e).__name__}: {e}")
     if result.status is Status.PASSED and not result.evidence:

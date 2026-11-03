@@ -7,7 +7,7 @@
 
 - Стек: Python 3.12, PySide6 (Qt) — окно; onvif-tt + zeep — ONVIF; schemathesis + httpx — API; Playwright — веб-интерфейс; ffmpeg/ffprobe — поток и кодеки; OpenCV, scikit-image — картинка; SQLite — результаты; openpyxl, Qt PDF — протоколы.
 - Сборки: Windows (PyInstaller + Inno Setup) и Linux (AppImage + .deb) из одного кода.
-- Код ещё не написан — каркас появится на этапе 1 (docs/ROADMAP.md). Целевая карта:
+- Каркас — этап 1 (docs/ROADMAP.md, docs/work/skeleton/). Карта:
   - `src/qa_tool/core/` — модели, сценарий прогона, планировщик на 8 камер, блокировки ресурсов стенда, база результатов
   - `src/qa_tool/checks/<модуль>/` — проверки: onvif, api, web, io, lens, daynight, stream, codec, sdcard, image, analytics, compare
   - `src/qa_tool/drivers/` — `camera/` (ruver, generic_onvif) и `stand/` (relay, gpio, audio, light, screen, poe)
@@ -30,8 +30,6 @@
 
 ## HOW — команды
 
-Появятся на этапе 1. Ожидаемые:
-
 - Установка: `uv sync`
 - Запуск окна: `uv run qa-tool`
 - Прогон без окна: `uv run qa-tool run --stand stand.yaml`
@@ -48,6 +46,8 @@
 - API камеры «Рувер» — OpenAPI `ruware-api-release-*.json` из репозитория прошивки (~/projects/HiSi-Developing-Firmware); веб-интерфейс — там же, `www/` (Vue 3).
 
 ## Правила проекта
+
+**ТАБУ: сетевые настройки, логины и пароли камеры не меняются никогда** (never.md, AD-7). Любой запрос к камере идёт через `src/qa_tool/core/taboo.py`.
 
 Прочитай в начале сессии, если их ещё нет в контексте: docs/rules/conventions.md, docs/rules/architecture.md, docs/rules/never.md, docs/rules/security.md.
 
