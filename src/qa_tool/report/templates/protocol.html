@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>Протокол {{ p.protocol_id }}</title>
+{% include "_style.html" %}
+</head><body>
+<h1>ПРОТОКОЛ ИСПЫТАНИЙ IP-КАМЕРЫ № {{ p.protocol_id }}</h1>
+<p class="muted">Прогон {{ p.run_id }} · начат {{ p.started }} · окончен {{ p.finished }} · qa-tool {{ p.version }}</p>
+
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr><th width="30%">Камера</th><td>{{ p.camera_name }}</td></tr>
+  <tr><th>Производитель</th><td>{{ p.passport.manufacturer }}</td></tr>
+  <tr><th>Модель</th><td>{{ p.passport.model }}</td></tr>
+  <tr><th>Прошивка</th><td>{{ p.passport.firmware }}</td></tr>
+  <tr><th>Серийный номер</th><td>{{ p.passport.serial }}</td></tr>
+  <tr><th>Аппаратная версия</th><td>{{ p.passport.hardware }}</td></tr>
+  <tr><th>Адрес · место на стенде</th><td>{{ p.address }} · место {{ p.slot }}</td></tr>
+  <tr><th>Место стенда</th><td>{{ p.place }}</td></tr>
+  <tr><th>Сценарий</th><td>
+    {% if p.scenario.checks %}проверки: {{ p.scenario.checks | join(", ") }}{% else %}все доступные проверки{% endif %};
+    изменяющие — {{ "разрешены" if p.scenario.allow_writes else "запрещены" }};
+    разрушающие — {{ "разрешены" if p.scenario.allow_destructive else "запрещены" }}
+  </td></tr>
+</table>
+
+<h2>Заключение</h2>
+<p class="{{ p.verdict_kind }}">{{ p.verdict }}</p>
+<p>Проверок: {{ p.rows | length }} · прошла: {{ p.counts["прошла"] }} · не прошла: {{ p.counts["не прошла"] }}
+ · ошибка стенда: {{ p.counts["ошибка стенда"] }} · пропущена: {{ p.counts["пропущена"] }}</p>
+
+<h2>1. Сводка по модулям</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Модуль</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th></tr></thead>
+  {% for module, c in p.modules %}
+  <tr><td>{{ module }}</td><td>{{ c["прошла"] }}</td><td>{{ c["не прошла"] }}</td><td>{{ c["ошибка стенда"] }}</td><td>{{ c["пропущена"] }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>2. Результаты проверок</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>№</th><th>Проверка</th><th>Что делали</th><th>Ожидание</th><th>Факт</th><th>Порог (источник)</th><th>Результат</th><th>Доказательство</th></tr></thead>
+  {% for r in p.rows %}
+  <tr>
+    <td>{{ r.number }}</td>
+    <td><b>{{ r.check_id }}</b><br>{{ r.title }}<br><span class="muted">{{ r.module }}</span></td>
+    <td>{{ r.description }}</td>
+    <td>{{ r.expected }}</td>
+    <td>{{ r.actual }}</td>
+    <td>{{ r.threshold }}</td>
+    <td class="st-{{ r.status | replace(" ", "-") }}">{{ r.status }}{% if r.reason %}<br>{{ r.reason }}{% endif %}</td>
+    <td>{{ r.evidence }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>3. Задачи программистам</h2>
+{% if p.tasks %}
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>№</th><th>Задача</th><th>Модуль</th><th>Важность</th><th>Шаги воспроизведения</th><th>Ожидалось</th><th>Получено</th><th>Доказательство</th></tr></thead>
+  {% for t in p.tasks %}
+  <tr>
+    <td>{{ t.number }}</td><td>{{ t.title }}</td><td>{{ t.module }}</td><td>{{ t.severity }}</td>
+    <td>{% for step in t.steps %}{{ loop.index }}. {{ step }}<br>{% endfor %}</td>
+    <td>{{ t.expected }}</td><td>{{ t.actual }}</td><td>{{ t.evidence }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>Замечаний нет.</p>
+{% endif %}
+<p class="muted">«Ошибка стенда» и «пропущена» в задачи не входят: это не дефект камеры.</p>
+
+<h2>4. Подписи</h2>
+<table border="0" cellspacing="0" cellpadding="8">
+  <tr><td width="50%">Испытания провёл: ____________________ / ____________ /</td><td>Дата: ____________</td></tr>
+  <tr><td>Проверил (ОТК): ____________________ / ____________ /</td><td>Дата: ____________</td></tr>
+</table>
+</body></html>
