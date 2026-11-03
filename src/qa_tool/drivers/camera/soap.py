@@ -10,11 +10,11 @@ import os
 from dataclasses import dataclass, field
 from xml.etree.ElementTree import Element
 
-import httpx
 from defusedxml import ElementTree
 
 from qa_tool.core.secrets import redact
 from qa_tool.core.taboo import check_onvif
+from qa_tool.drivers.camera import http
 
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",
@@ -72,13 +72,14 @@ class SoapClient:
             f"<s:Header>{self._security_header()}</s:Header><s:Body>{body}</s:Body></s:Envelope>"
         )
         try:
-            response = httpx.post(
+            response = http.request(
+                "POST",
                 url,
                 content=envelope.encode(),
                 headers={"Content-Type": "application/soap+xml; charset=utf-8"},
                 timeout=self.timeout,
             )
-        except httpx.TransportError as e:
+        except http.TransportError as e:
             raise CameraUnreachable(f"{url}: нет ответа ({type(e).__name__})") from e
         known = [self.password]
         self.exchanges.append(

@@ -9,12 +9,20 @@
 
 import datetime
 import importlib
-import socket
 from dataclasses import dataclass, field
 from typing import Any
 
-from qa_tool.core.checks import CheckContext, CheckResult, Phase, Registry, Status, run_check
+from qa_tool.core.checks import (
+    UNREACHABLE,
+    CheckContext,
+    CheckResult,
+    Phase,
+    Registry,
+    Status,
+    run_check,
+)
 from qa_tool.core.models import Camera, Place, Threshold
+from qa_tool.drivers.camera.probe import tcp_open
 
 FIRST_CHECK = "CORE-CONNECT-1"
 STOPPED = "прогон остановлен"
@@ -39,13 +47,16 @@ class WorkerArgs:
 
 
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
-    for _ in range(attempts):
-        try:
-            with socket.create_connection((camera.address, camera.port), timeout=timeout):
-                return True
-        except OSError:
-            continue
-    return False
+    return any(tcp_open(camera.address, camera.port, timeout) for _ in range(attempts))
+
+
+def wait_reply(inbox, expected: str) -> str:
+    """Ответ координатора на просьбу: expected, «abort» или «quit». Чужие сообщения не считаются
+    разрешением — проверка не запустится без блокировки ресурса."""
+    while True:
+        kind = inbox.get()[0]
+        if kind in (expected, "abort", "quit"):
+            return kind
 
 
 def _now() -> str:
@@ -65,6 +76,13 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
     def send_result(check_id: str, result: CheckResult, started: str) -> None:
         outbox.put(("result", slot, check_id, result, started))
 
+    def lost() -> None:
+        outbox.put(("lost", slot, "нет связи"))
+        # не выходим сами: иначе координатор может увидеть «процесс умер» раньше,
+        # чем прочтёт «нет связи», и запишет не ту причину. Ждём, пока он нас снимет.
+        while inbox.get()[0] != "quit":
+            pass
+
     while True:
         message = inbox.get()
         if message[0] == "quit":
@@ -83,21 +101,20 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 reason = f"камера не на связи с начала прогона (см. {FIRST_CHECK})"
                 send_result(check_id, CheckResult.skipped(reason), started)
                 continue
-            if alive_checked and args.extra.get("liveness", True) and not camera_alive(args.camera):
-                outbox.put(("lost", slot, "нет связи"))
-                # не выходим сами: иначе координатор может увидеть «процесс умер» раньше,
-                # чем прочтёт «нет связи», и запишет не ту причину. Ждём, пока он нас снимет.
-                while inbox.get()[0] != "quit":
-                    pass
+            liveness = args.extra.get("liveness", True)
+            if alive_checked and liveness and not camera_alive(args.camera):
+                lost()
                 return
-            if check_id in args.sync_checks:
-                outbox.put(("barrier", slot, check_id))
-                if inbox.get()[0] == "abort":
-                    send_result(check_id, CheckResult.skipped(STOPPED), started)
-                    continue
-            elif spec.resources:
-                outbox.put(("lock", slot, check_id, sorted(spec.resources)))
-                if inbox.get()[0] == "abort":
+            if check_id in args.sync_checks or spec.resources:
+                if check_id in args.sync_checks:
+                    outbox.put(("barrier", slot, check_id))
+                    reply = wait_reply(inbox, "go")
+                else:
+                    outbox.put(("lock", slot, check_id, sorted(spec.resources)))
+                    reply = wait_reply(inbox, "grant")
+                if reply == "quit":
+                    return
+                if reply == "abort":
                     send_result(check_id, CheckResult.skipped(STOPPED), started)
                     continue
             started = _now()
@@ -105,10 +122,19 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
             result = run_check(spec, ctx)
             if spec.resources and check_id not in args.sync_checks:
                 outbox.put(("release", slot, check_id))
-            if check_id == FIRST_CHECK and not alive_checked:
-                unreachable_from_start = (
-                    result.status is Status.FAILED and "нет связи" in result.reason
+            if not alive_checked:
+                unreachable_from_start = check_id == FIRST_CHECK and bool(
+                    result.data.get(UNREACHABLE)
                 )
-            alive_checked = alive_checked or not unreachable_from_start
+                alive_checked = not unreachable_from_start
+            elif (
+                result.status in (Status.FAILED, Status.STAND_ERROR)
+                and liveness
+                and not camera_alive(args.camera)
+            ):
+                # камера пропала во время проверки: это не дефект камеры, а «нет связи» (S5)
+                send_result(check_id, CheckResult.stand_error("нет связи"), started)
+                lost()
+                return
             send_result(check_id, result, started)
         outbox.put(("phase_done", slot, int(phase)))

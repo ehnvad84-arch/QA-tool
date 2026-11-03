@@ -1,21 +1,26 @@
 """Табу (решение директора 2026-11-03): программа никогда не меняет у камеры сетевые настройки,
-логины и пароли. Проверка стоит в драйверах перед отправкой: запрещённый запрос не уходит в сеть.
+логины и пароли. Проверка стоит в единой точке выхода к камере (drivers/camera/http.py) перед
+отправкой: запрещённый запрос не уходит в сеть.
 
-Сюда же отнесены операции, которые меняют сеть и учётные записи косвенно: сброс к заводским
-и восстановление/импорт полной конфигурации.
+Сюда же отнесены операции, которые меняют сеть и учётные записи косвенно: сброс к заводским,
+восстановление и импорт полной конфигурации, смена способа хранения паролей, сертификатов и TLS.
 """
 
+import posixpath
 import re
+from urllib.parse import unquote, urlsplit
 
 
 class TabooViolation(PermissionError):
     """Попытка отправить камере запрещённую команду. Это ошибка программы, а не камеры."""
 
 
-# ONVIF: сеть (Device Management → Network), учётные записи, сброс и восстановление.
+# --- ONVIF --------------------------------------------------------------------------------------
+
 FORBIDDEN_ONVIF = frozenset(
     op.lower()
     for op in (
+        # сеть
         "SetNetworkInterfaces",
         "SetNetworkProtocols",
         "SetNetworkDefaultGateway",
@@ -31,22 +36,67 @@ FORBIDDEN_ONVIF = frozenset(
         "SetDiscoveryMode",
         "SetRemoteDiscoveryMode",
         "SetDPAddresses",
+        "SetDot11Configuration",
         "SetDot1XConfiguration",
         "CreateDot1XConfiguration",
         "DeleteDot1XConfiguration",
-        "SetAccessPolicy",
+        # учётные записи и вход
         "CreateUsers",
         "DeleteUsers",
         "SetUser",
         "SetRemoteUser",
+        "SetAccessPolicy",
+        "SetHashingAlgorithm",
+        "SetPasswordComplexityConfiguration",
+        "SetPasswordHistoryConfiguration",
+        "SetAuthFailureWarningConfiguration",
+        # сертификаты и TLS (Device и Advanced Security)
+        "CreateCertificate",
+        "LoadCertificates",
+        "LoadCACertificates",
+        "DeleteCertificates",
+        "SetCertificatesStatus",
+        "SetClientCertificateMode",
+        "LoadCertificateWithPrivateKey",
+        "SetEnabledTLSVersions",
+        "AddServerCertificateAssignment",
+        "RemoveServerCertificateAssignment",
+        "ReplaceServerCertificateAssignment",
+        "CreateRSAKeyPair",
+        "UploadKeyPairInPKCS8",
+        "UploadCertificateWithPrivateKeyInPKCS12",
+        "DeleteKey",
+        "DeleteCertificate",
+        "UploadCertificate",
+        "UploadPassphrase",
+        # сброс, восстановление, прошивка в обход сценария
         "SetSystemFactoryDefault",
         "RestoreSystem",
         "StartSystemRestore",
     )
 )
 
+_XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_OPENING_TAG = re.compile(r"<\s*(?:[\w.-]+:)?([A-Za-z_][\w.-]*)")
+
+
+def soap_operations(body: str) -> list[str]:
+    """Имена всех элементов запроса (без комментариев): операцию нельзя спрятать за другой."""
+    return _OPENING_TAG.findall(_XML_COMMENT.sub("", body))
+
+
+def check_onvif(body: str) -> None:
+    for operation in soap_operations(body):
+        if operation.lower() in FORBIDDEN_ONVIF:
+            raise TabooViolation(
+                f"ONVIF {operation} запрещена: программа не меняет сетевые настройки, "
+                "логины и пароли камеры"
+            )
+
+
+# --- HTTP API адаптеров (первый — «Рувер», OpenAPI) ----------------------------------------------
+
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# Адаптер «Рувер» (OpenAPI): любые изменения по этим путям запрещены (чтение разрешено).
 FORBIDDEN_HTTP_PREFIXES = (
     "/api/network",  # IP, маска, шлюз, DNS, DHCP, порты, RTSP-авторизация
     "/api/users",  # логины, пароли, роли, права
@@ -56,86 +106,102 @@ FORBIDDEN_HTTP_PREFIXES = (
     "/api/service/import_settings",  # импорт полной конфигурации — то же
 )
 
-_OPERATION = re.compile(r"<\s*(?:[\w.-]+:)?([A-Za-z_][\w.-]*)")
+
+def normalize_path(url_or_path: str) -> str:
+    """Путь без хоста, %XX, `//`, `./`, `../` и регистра — обходы префиксов не проходят."""
+    path = urlsplit(url_or_path).path if "://" in url_or_path else url_or_path.split("?", 1)[0]
+    for _ in range(3):  # двойное кодирование %256E → %6E → n
+        decoded = unquote(path)
+        if decoded == path:
+            break
+        path = decoded
+    normalized = posixpath.normpath("/" + path.replace("\\", "/")).lower()
+    return "/" + normalized.lstrip("/")
 
 
-def soap_operation(body: str) -> str:
-    match = _OPERATION.search(body)
-    return match.group(1) if match else ""
-
-
-def check_onvif(body: str) -> None:
-    operation = soap_operation(body)
-    if operation.lower() in FORBIDDEN_ONVIF:
-        raise TabooViolation(
-            f"ONVIF {operation} запрещена: программа не меняет сетевые настройки, "
-            "логины и пароли камеры"
-        )
-
-
-def check_http(method: str, path: str) -> None:
+def check_http(method: str, url_or_path: str) -> None:
     if method.upper() not in _WRITE_METHODS:
         return
-    normalized = "/" + path.split("?", 1)[0].strip("/").lower()
+    normalized = normalize_path(url_or_path)
     for prefix in FORBIDDEN_HTTP_PREFIXES:
         if normalized == prefix or normalized.startswith(prefix + "/"):
             raise TabooViolation(
-                f"{method.upper()} {path} запрещён: программа не меняет сетевые настройки, "
+                f"{method.upper()} {url_or_path} запрещён: программа не меняет сетевые настройки, "
                 "логины и пароли камеры"
             )
 
 
-# Веб-обход любой камеры (AD-4, AD-7): чужой интерфейс заранее не известен, поэтому изменяющий
-# запрос не пропускается, если в адресе, теле или заголовке страницы есть слово-признак.
+# --- Веб-обход любой камеры (AD-4, AD-7) ----------------------------------------------------------
+# Чужой интерфейс заранее не известен. Изменяющий запрос (в том числе GET с action=set… — так
+# устроены Dahua CGI и Axis VAPIX) не пропускается, если в его пути, параметрах, теле или заголовке
+# страницы есть слово-признак сети, учётных записей, сертификатов или сброса. Сравнение — по
+# словам (с разбором camelCase), а не по подстрокам: «report» не ловится словом «port».
 # Список широкий намеренно: лучше не нажать лишнего.
-WEB_FORBIDDEN_WORDS = (
+
+WEB_EXACT_WORDS = frozenset(
+    [
+        "ip",
+        "ipv4",
+        "ipv6",
+        "mtu",
+        "mac",
+        "wan",
+        "lan",
+        "nat",
+        "dns",
+        "ddns",
+        "ntp",
+        "sip",
+        "p2p",
+        "lte",
+        "apn",
+        "upnp",
+        "port",
+        "ports",
+        "pwd",
+        "psw",
+        "pass",
+        "tls",
+        "ssl",
+        "dot1x",
+        "8021x",
+    ]
+)
+WEB_PREFIX_WORDS = (
     # сеть
     "network",
     "netcfg",
+    "netinfo",
     "tcpip",
-    "tcp/ip",
-    "ipv4",
-    "ipv6",
-    "ipaddress",
-    "ip_address",
+    "ipaddr",
     "dhcp",
     "gateway",
     "netmask",
     "subnet",
-    "dns",
-    "ddns",
     "pppoe",
-    "upnp",
-    "port",
-    "8021x",
-    "802.1x",
     "wifi",
     "wlan",
     "wireless",
-    "ntp",
     "hostname",
-    "sip",
-    "p2p",
     "cloud",
-    "lte",
-    "apn",
     "сеть",
     "сети",
     "сетев",
     "шлюз",
-    "маска",
+    "маск",
     "порт",
-    # учётные записи и безопасность
+    # учётные записи, вход, безопасность
     "user",
     "account",
-    "password",
-    "passwd",
+    "passw",
     "pwd",
     "login",
+    "logon",
     "credential",
     "auth",
     "security",
     "certificate",
+    "cert",
     "snmp",
     "пользовател",
     "учётн",
@@ -143,6 +209,7 @@ WEB_FORBIDDEN_WORDS = (
     "парол",
     "логин",
     "безопасн",
+    "сертифик",
     # сброс, восстановление, импорт, прошивка
     # «update» и «default» не берём: они есть почти в каждой кнопке «Сохранить»
     "reset",
@@ -151,6 +218,8 @@ WEB_FORBIDDEN_WORDS = (
     "import",
     "upgrade",
     "firmware",
+    "activate",
+    "configurationdata",
     "сброс",
     "заводск",
     "восстанов",
@@ -158,20 +227,68 @@ WEB_FORBIDDEN_WORDS = (
     "обновлен",
     "прошивк",
 )
+WRITE_VERBS = frozenset(
+    [
+        "set",
+        "update",
+        "add",
+        "delete",
+        "del",
+        "remove",
+        "modify",
+        "apply",
+        "save",
+        "import",
+        "reset",
+        "upgrade",
+        "restore",
+        "activate",
+        "create",
+        "edit",
+        "write",
+        "change",
+    ]
+)
 _SAFE_WEB_METHODS = {"GET", "HEAD", "OPTIONS"}
+_CAMEL = re.compile(r"([a-zа-яё0-9])([A-ZА-ЯЁ])")
+_WORD = re.compile(r"[a-zа-яё0-9]+")
+
+
+def words(*texts: str) -> list[str]:
+    joined = " ".join(t for t in texts if t)
+    return _WORD.findall(_CAMEL.sub(r"\1 \2", joined).lower())
 
 
 def web_forbidden_word(*texts: str) -> str | None:
-    """Первое слово-признак сети, учётных записей или сброса в тексте, иначе None."""
-    joined = " ".join(t.lower() for t in texts if t)
-    return next((w for w in WEB_FORBIDDEN_WORDS if w in joined), None)
+    """Первое слово-признак сети, учётных записей, сертификатов или сброса, иначе None."""
+    joined = " ".join(t for t in texts if t)
+    whole = _WORD.findall(joined.lower())  # «configurationData» целиком, без разбора camelCase
+    for word in words(*texts) + whole:
+        if word in WEB_EXACT_WORDS or word.startswith(WEB_PREFIX_WORDS):
+            return word
+    return None
+
+
+def _target(url: str) -> tuple[str, str]:
+    """(путь, параметры) без схемы и хоста, %XX раскрыты: «https://камера» — не признак."""
+    parts = urlsplit(url)
+    return unquote(parts.path), unquote(parts.query)
+
+
+def is_write_request(method: str, url: str) -> bool:
+    if method.upper() not in _SAFE_WEB_METHODS:
+        return True
+    path, query = _target(url)
+    last_segment = path.rsplit("/", 1)[-1]
+    return any(w in WRITE_VERBS for w in words(last_segment, query))
 
 
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:
-    """Для перехвата запросов браузером при веб-обходе любой камеры."""
-    if method.upper() in _SAFE_WEB_METHODS:
+    """Для любого HTTP-запроса к камере и для перехвата запросов браузером при веб-обходе."""
+    if not is_write_request(method, url):
         return
-    word = web_forbidden_word(url, body, page_title)
+    path, query = _target(url)
+    word = web_forbidden_word(path, query, body, page_title)
     if word:
         raise TabooViolation(
             f"{method.upper()} {url} не отправлен: похоже на изменение сети, учётных записей "

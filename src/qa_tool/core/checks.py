@@ -14,6 +14,9 @@ from typing import Any
 from qa_tool.core.models import Camera, Place, Scenario, Threshold
 from qa_tool.core.taboo import TabooViolation
 
+UNREACHABLE = "unreachable"
+"""Ключ в CheckResult.data: камера не ответила по сети (не ошибка проверки, а отсутствие связи)."""
+
 
 class Status(StrEnum):
     PASSED = "прошла"
