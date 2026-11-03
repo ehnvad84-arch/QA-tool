@@ -35,6 +35,22 @@
   {% endfor %}
 </table>
 
+{% if p.profiles.matrix %}
+<h2>Профили ONVIF</h2>
+<p>Объявлены камерой: {{ p.profiles.declared | join(", ") or "ни одного" }}. Обязательные функции — по ONVIF Profiles Conformance Device Test Specification.</p>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Профиль</th><th>Обязательная функция</th><th>Итог</th><th>Основание</th></tr></thead>
+  {% for v in p.profiles.matrix %}
+  <tr>
+    <td>{{ v.profile }}{% if v.profile not in p.profiles.declared %} <span class="muted">(не объявлен)</span>{% endif %}</td>
+    <td>{{ v.feature }}{% if v.note %}<br><span class="muted">{{ v.note }}</span>{% endif %}</td>
+    <td class="{{ 'st-прошла' if v.verdict == 'работает' else ('st-не-прошла' if v.verdict in ('не работает', 'не поддержана') else 'st-пропущена') }}">{{ v.verdict }}</td>
+    <td>{{ v.basis }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <h2>2. Результаты проверок</h2>
 <table border="1" cellspacing="0" cellpadding="4">
   <thead><tr><th>№</th><th>Проверка</th><th>Что делали</th><th>Ожидание</th><th>Факт</th><th>Порог (источник)</th><th>Результат</th><th>Доказательство</th></tr></thead>

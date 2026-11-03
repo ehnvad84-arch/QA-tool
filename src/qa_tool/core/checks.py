@@ -15,6 +15,10 @@ from qa_tool.core.models import Camera, Place, Scenario, Threshold
 from qa_tool.core.secrets import redact
 from qa_tool.core.taboo import TabooViolation
 
+PREVIOUS_RESULTS = "previous_results"
+"""Ключ ctx.extra: итоги уже выполненных строк этой камеры {ID: (статус, причина)} —
+для проверок, которые сводят результаты других (матрица профилей ONVIF)."""
+
 UNREACHABLE = "unreachable"
 """Ключ в CheckResult.data: камера не ответила по сети (не ошибка проверки, а отсутствие связи)."""
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qa_tool.core.checks import (
+    PREVIOUS_RESULTS,
     UNREACHABLE,
     CheckContext,
     CheckResult,
@@ -93,8 +94,13 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
     alive_checked = False  # камера отвечала хотя бы раз — дальше пропажа = «нет связи»
     unreachable_from_start = False
 
+    previous = ctx.extra.setdefault(PREVIOUS_RESULTS, {})
+
     def send_result(check_id: str, result: CheckResult, started: str) -> None:
         outbox.put(("result", slot, check_id, result, started))
+        rows = [(c.check_id, c.result) for c in result.children] or [(check_id, result)]
+        for row_id, row in rows:
+            previous[row_id] = (row.status.value, row.reason)
 
     def lost() -> None:
         outbox.put(("lost", slot, "нет связи"))
