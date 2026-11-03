@@ -88,7 +88,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
             "Video Encoder Configuration",
             ("LOCAL-MEDIA-S-ENCODER-*", "LOCAL-MEDIA-S-OPTIONS-COVER-PROFILE"),
         ),
-        Feature("Настройки метаданных", "Metadata Configuration", ()),
+        Feature("Настройки метаданных", "Metadata Configuration", ("RUV-M-METADATA-1",)),
         Feature(
             "Видеопоток RTSP",
             "Media Streaming",

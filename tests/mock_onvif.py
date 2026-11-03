@@ -88,6 +88,8 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    metadata_stream: bool = True  # Profile M объявлен, но в потоке нет дорожки метаданных
+    analytics_modules: tuple[str, ...] = ("tt:CellMotionEngine",)  # настроенные модули
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
@@ -176,10 +178,19 @@ class OnvifServices:
         )
 
     def op_GetAnalyticsModules(self, _request) -> str:  # noqa: N802
+        items = "".join(
+            f'<tan:AnalyticsModule Name="Модуль {n}" Type="{kind}"/>'
+            for n, kind in enumerate(self.state.analytics_modules, start=1)
+        )
+        return f"<tan:GetAnalyticsModulesResponse>{items}</tan:GetAnalyticsModulesResponse>"
+
+    def op_GetAnalyticsConfigurations(self, _request) -> str:  # noqa: N802
+        if "M" not in self.state.profiles:
+            return "<tr2:GetAnalyticsConfigurationsResponse/>"
         return (
-            "<tan:GetAnalyticsModulesResponse>"
-            '<tan:AnalyticsModule Name="Движение" Type="tt:CellMotionEngine"/>'
-            "</tan:GetAnalyticsModulesResponse>"
+            '<tr2:GetAnalyticsConfigurationsResponse><tr2:Configurations token="va-1">'
+            "<tt:Name>Аналитика</tt:Name></tr2:Configurations>"
+            "</tr2:GetAnalyticsConfigurationsResponse>"
         )
 
     # --- Управление записью --------------------------------------------------------------------

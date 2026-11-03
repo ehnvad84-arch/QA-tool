@@ -1,5 +1,6 @@
 """Табу держится в коде (AD-7): к камере ходят только через drivers/camera/http.py
-(HTTP) и drivers/camera/probe.py, discovery.py (сокеты только на чтение).
+(HTTP), drivers/camera/probe.py, discovery.py (сокеты только на чтение) и rtsp.py
+(поток: методы проверяет core/taboo.check_rtsp).
 
 Импорты разбираются через ast: обход записью «from urllib import request» или
 «import os, socket» тоже ловится."""
@@ -29,6 +30,7 @@ ALLOWED = {
     "drivers/camera/http.py": {"httpx"},
     "drivers/camera/probe.py": {"socket"},
     "drivers/camera/discovery.py": {"socket"},
+    "drivers/camera/rtsp.py": {"socket"},
 }
 GUARDED = "qa_tool.drivers.camera.http"
 

@@ -77,7 +77,9 @@ class MockCamera:
         self.password = password
         self.requests: list[str] = []
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
-        self.rtsp = MockRtspServer()
+        self.rtsp = MockRtspServer(
+            metadata="M" in self.state.profiles and self.state.metadata_stream
+        )
         self._threads: list[threading.Thread] = []
 
     @property

@@ -2,8 +2,10 @@
 
 Видео — H.264, сгенерированный один раз встроенным ffmpeg (OpenH264) и закешированный;
 отдаётся по RTP поверх TCP (interleaved, RFC 2326 §10.12), упаковка — RFC 6184 (одиночные
-NAL и FU-A). Пути: `/live` — по кругу; `/replay/<запись>` — 12 с и тишина, как конец архива;
-`/metadata` — XML MetadataStream раз в 0,5 с (ONVIF Streaming, vnd.onvif.metadata).
+NAL и FU-A). Пути: `/live` — видео по кругу и, если `metadata`, вторая дорожка с XML
+MetadataStream раз в 0,5 с (ONVIF Streaming, vnd.onvif.metadata — так отдают метаданные камеры
+Profile M); `/metadata` — только метаданные; `/replay/<запись>` — 12 с и тишина, как конец архива. Канал interleaved каждой
+дорожки — тот, что попросил клиент в SETUP.
 UDP не поддерживается: клиент получает 461 и должен просить TCP — так ведут себя многие камеры.
 """
 
@@ -116,28 +118,33 @@ def rtp_packets(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
 
 
 class _Session:
-    def __init__(self, path: str, frames, write):
+    def __init__(self, path: str, frames, write, channels: dict[str, int]):
         self.path, self.frames, self.write = path, frames, write
+        self.channels = channels  # дорожка («video», «metadata») → канал interleaved
         self.stop = threading.Event()
-        self.seq, self.ssrc = 1, 0x51A0C0DE
+        self.seq = {"video": 1, "metadata": 1}
 
-    def _send(self, payload: bytes, marker: bool, timestamp: int, pt: int) -> None:
+    def _send(self, kind: str, payload: bytes, marker: bool, timestamp: int, pt: int) -> None:
         header = struct.pack(
             "!BBHII",
             0x80,
             (0x80 if marker else 0) | pt,
-            self.seq & 0xFFFF,
+            self.seq[kind] & 0xFFFF,
             timestamp & 0xFFFFFFFF,
-            self.ssrc,
+            0x51A0C0DE if kind == "video" else 0x3E7AD47A,
         )
-        self.seq += 1
+        self.seq[kind] += 1
         packet = header + payload
-        self.write(b"$" + bytes([0]) + struct.pack("!H", len(packet)) + packet)
+        channel = self.channels[kind]
+        self.write(b"$" + bytes([channel]) + struct.pack("!H", len(packet)) + packet)
 
     def run(self) -> None:
-        if self.path.startswith("/metadata"):
-            self._metadata()
-            return
+        if "metadata" in self.channels:
+            threading.Thread(target=self._metadata, daemon=True).start()
+        if "video" in self.channels:
+            self._video()
+
+    def _video(self) -> None:
         replay = self.path.startswith("/replay")
         index = 0
         started = time.monotonic()
@@ -152,7 +159,7 @@ class _Session:
             )
             for n, nal in enumerate(frame):
                 for payload, marker in rtp_packets(nal, n == len(frame) - 1):
-                    self._send(payload, marker, timestamp, 96)
+                    self._send("video", payload, marker, timestamp, 96)
             index += 1
             self.stop.wait(1 / FPS)
 
@@ -165,14 +172,19 @@ class _Session:
                 'xmlns:tt="http://www.onvif.org/ver10/schema"><tt:VideoAnalytics>'
                 f'<tt:Frame UtcTime="{utc}"/></tt:VideoAnalytics></tt:MetadataStream>'
             ).encode()
-            self._send(xml, True, int((time.monotonic() - started) * 90000), 107)
+            # документ делится на два пакета: клиент обязан собирать его по биту маркера
+            timestamp = int((time.monotonic() - started) * 90000)
+            half = len(xml) // 2
+            self._send("metadata", xml[:half], False, timestamp, 107)
+            self._send("metadata", xml[half:], True, timestamp, 107)
             self.stop.wait(0.5)
 
 
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
-    def __init__(self):
+    def __init__(self, metadata: bool = True):
+        self.metadata = metadata
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
         self.sprop = ",".join(base64.b64encode(x).decode() for x in (sps, pps) if x)
@@ -192,20 +204,26 @@ class MockRtspServer:
         self._server.shutdown()
         self._server.server_close()
 
-    def sdp(self, path: str) -> str:
+    def tracks(self, path: str) -> list[str]:
+        """Дорожки пути по порядку: trackN в SETUP — N-я из них."""
         if path.startswith("/metadata"):
-            media = "m=application 0 RTP/AVP 107\r\na=rtpmap:107 vnd.onvif.metadata/90000\r\n"
-        else:
-            media = (
-                "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
-                f"a=fmtp:96 packetization-mode=1;sprop-parameter-sets={self.sprop}\r\n"
-            )
-            if path.startswith("/replay"):
-                media += f"a=range:npt=0-{SECONDS}\r\n"
-        return (
-            "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=QA-tool mock\r\nt=0 0\r\n"
-            f"{media}a=control:track1\r\n"
-        )
+            return ["metadata"]
+        return ["video", "metadata"] if path.startswith("/live") and self.metadata else ["video"]
+
+    def sdp(self, path: str) -> str:
+        media = ""
+        for n, kind in enumerate(self.tracks(path), start=1):
+            if kind == "metadata":
+                media += "m=application 0 RTP/AVP 107\r\na=rtpmap:107 vnd.onvif.metadata/90000\r\n"
+            else:
+                media += (
+                    "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
+                    f"a=fmtp:96 packetization-mode=1;sprop-parameter-sets={self.sprop}\r\n"
+                )
+                if path.startswith("/replay"):
+                    media += f"a=range:npt=0-{SECONDS}\r\n"
+            media += f"a=control:track{n}\r\n"
+        return "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=QA-tool mock\r\nt=0 0\r\n" + media
 
     def _handler(self):
         server = self
@@ -214,6 +232,7 @@ class MockRtspServer:
             def handle(self):
                 lock = threading.Lock()
                 session: _Session | None = None
+                channels: dict[str, int] = {}
 
                 def write(data: bytes) -> None:
                     with lock:
@@ -237,7 +256,7 @@ class MockRtspServer:
                         if int(headers.get("content-length", 0)):
                             self.rfile.read(int(headers["content-length"]))
                         path = "/" + url.split("://", 1)[-1].split("/", 1)[-1].split("?")[0]
-                        path = path.split("/track")[0]
+                        path, _, track = path.partition("/track")
                         server.requests.append(f"{method} {path}")
                         cseq = headers.get("cseq", "0")
                         extra, body = "", ""
@@ -247,14 +266,21 @@ class MockRtspServer:
                             body = server.sdp(path)
                             extra = f"Content-Type: application/sdp\r\nContent-Base: {url}/\r\n"
                         elif method == "SETUP":
-                            if "interleaved" not in headers.get("transport", ""):
+                            transport = headers.get("transport", "")
+                            if "interleaved=" not in transport:
                                 write(
                                     f"RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n".encode()
                                 )
                                 continue
-                            extra = "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nSession: 1A2B3C\r\n"
+                            first = int(transport.split("interleaved=")[1].split("-")[0])
+                            kinds = server.tracks(path)
+                            channels[kinds[min(int(track or 1), len(kinds)) - 1]] = first
+                            extra = (
+                                f"Transport: RTP/AVP/TCP;unicast;interleaved={first}-{first + 1}\r\n"
+                                "Session: 1A2B3C\r\n"
+                            )
                         elif method == "PLAY":
-                            session = _Session(path, server.frames, write)
+                            session = _Session(path, server.frames, write, dict(channels))
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()

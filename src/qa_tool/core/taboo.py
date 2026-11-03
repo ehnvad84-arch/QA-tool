@@ -322,3 +322,22 @@ def check_web_request(method: str, url: str, body: str = "", page_title: str = "
             f"{method.upper()} {url} не отправлен: похоже на изменение сети, учётных записей "
             f"или сброс (признак «{word}»)"
         )
+
+
+# --- RTSP ---------------------------------------------------------------------------------------
+
+# Методы, которые только читают поток. SET_PARAMETER, ANNOUNCE и RECORD (RFC 2326 §10) меняют
+# состояние камеры, а у некоторых прошивок SET_PARAMETER открывает доступ к настройкам.
+RTSP_READ_METHODS = frozenset(
+    {"OPTIONS", "DESCRIBE", "SETUP", "PLAY", "PAUSE", "GET_PARAMETER", "TEARDOWN"}
+)
+
+
+def check_rtsp(method: str) -> None:
+    """Не пропустить RTSP-запрос, который не только читает поток.
+
+    Raises:
+        TabooViolation: метод не из `RTSP_READ_METHODS`.
+    """
+    if method.upper() not in RTSP_READ_METHODS:
+        raise TabooViolation(f"RTSP {method} не отправляется: стенд только читает поток")
