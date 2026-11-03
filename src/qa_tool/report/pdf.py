@@ -1,6 +1,7 @@
 """PDF из того же HTML средствами Qt: одинаково на Windows и Linux, без внешних программ."""
 
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QMarginsF
@@ -9,11 +10,20 @@ from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, Q
 _app: QGuiApplication | None = None
 
 
+def needs_offscreen() -> bool:
+    """Без экрана Qt запускаем только на Linux без дисплея: на Windows в режиме offscreen
+    у Qt нет шрифтов и PDF выходит без текста, а рабочий стол на Windows есть всегда."""
+    return sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
 def _ensure_app() -> None:
-    """В прогоне без окна поднимаем Qt без экрана."""
+    """В прогоне без окна поднимаем Qt сами."""
     global _app
     if QGuiApplication.instance() is None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        if needs_offscreen():
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         _app = QGuiApplication([])
 
 

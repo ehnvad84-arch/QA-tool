@@ -1,10 +1,12 @@
 import os
+import sys
 
 import keyring
 import pytest
 from keyring.backend import KeyringBackend
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # тесты окна и PDF без экрана
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # тесты окна и PDF без экрана
 
 
 class MemoryKeyring(KeyringBackend):

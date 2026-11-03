@@ -5,7 +5,6 @@ on:
   pull_request:
 
 env:
-  QT_QPA_PLATFORM: offscreen
   UV_PYTHON: "3.12"
 
 jobs:
@@ -25,7 +24,7 @@ jobs:
       - name: Линтер
         run: uv run ruff check . && uv run ruff format --check .
       - name: Тесты
-        run: uv run pytest -q
+        run: uv run pytest -q  # на Linux conftest включает offscreen, на Windows — рабочий стол раннера
 
   snyk:
     runs-on: ubuntu-24.04

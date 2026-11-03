@@ -59,5 +59,5 @@ def test_rtsp_options_answers_and_stop_closes_ports():
     try:
         httpx.post(f"http://127.0.0.1:{port}/onvif/device_service", content=b"", timeout=1)
         raise AssertionError("камера должна быть недоступна")
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.ConnectTimeout):  # Windows не отказывает, а молчит
         pass
