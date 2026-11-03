@@ -28,13 +28,9 @@ def list_runs(runs_dir: Path) -> list[dict]:
         try:
             info = store.run_info()
             worst = summary_status(store)
+            protocols = [build_protocol(store, c["slot"]) for c in store.cameras()]
             cameras = [
-                {
-                    "slot": c["slot"],
-                    "name": build_protocol(store, c["slot"]).camera_name,
-                    "verdict": build_protocol(store, c["slot"]).verdict,
-                }
-                for c in store.cameras()
+                {"slot": p.slot, "name": p.camera_name, "verdict": p.verdict} for p in protocols
             ]
             runs.append(
                 {
