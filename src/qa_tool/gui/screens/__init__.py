@@ -2,23 +2,9 @@
 
 from qa_tool.gui.screens.base import Screen
 from qa_tool.gui.screens.cameras import CamerasScreen
+from qa_tool.gui.screens.run import RunScreen
+from qa_tool.gui.screens.scenario import ScenarioScreen
 from qa_tool.gui.screens.stand import StandScreen
-
-
-class ScenarioScreen(Screen):
-    title = "Сценарий"
-    help_id = "scenario"
-    hint = "Какие проверки запускать и что им разрешено менять в камере"
-    intro = (
-        "Отметьте проверки. Изменяющие и разрушающие проверки выключены, пока вы их не разрешите."
-    )
-
-
-class RunScreen(Screen):
-    title = "Прогон"
-    help_id = "run"
-    hint = "Запуск прогона и ход проверок по каждой камере"
-    intro = "Запустите прогон и следите за проверками по каждому месту."
 
 
 class ProtocolsScreen(Screen):

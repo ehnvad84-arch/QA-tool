@@ -17,6 +17,7 @@ class AppState:
     stand: Stand | None = None
     scenario: Scenario | None = None
     running: bool = False
+    registry_ref: str = "qa_tool.checks:registry"  # тесты подставляют фиктивные проверки
 
     def __post_init__(self) -> None:
         if self.stand is None:
@@ -26,6 +27,15 @@ class AppState:
                 self.stand = Stand(place=Place.COLOR_BOX, runs_dir=self.stand_path.parent / "runs")
         if self.scenario is None:
             self.scenario = load_scenario(self.scenario_path)
+
+    def registry(self):
+        from qa_tool.core.worker import resolve_registry
+
+        return resolve_registry(self.registry_ref)
+
+    @property
+    def thresholds_path(self) -> Path:
+        return self.stand_path.parent / "thresholds.yaml"
 
     @property
     def scenario_path(self) -> Path:
