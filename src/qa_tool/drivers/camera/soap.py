@@ -46,6 +46,8 @@ class Exchange:
 
 @dataclass
 class SoapClient:
+    """SOAP-клиент ONVIF с WS-Security UsernameToken (PasswordDigest)."""
+
     username: str
     password: str
     timeout: float = 5.0
@@ -67,6 +69,20 @@ class SoapClient:
         )
 
     def call(self, url: str, body: str) -> Element:
+        """Вызвать операцию ONVIF.
+
+        Args:
+            url: адрес сервиса ONVIF.
+            body: тело `<s:Body>` с одной операцией.
+
+        Returns:
+            Первый элемент Body ответа.
+
+        Raises:
+            TabooViolation: операция запрещена — запрос не отправлен.
+            CameraUnreachable: нет ответа.
+            OnvifFault: SOAP Fault или ответ не SOAP.
+        """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         envelope = (
             f'<s:Envelope xmlns:s="{NS["s"]}" xmlns:tds="{NS["tds"]}" xmlns:tt="{NS["tt"]}">'

@@ -30,6 +30,13 @@ PASSPORT_KEY = "passport"
     timeout_s=30,
 )
 def connect(ctx: CheckContext) -> CheckResult:
+    """Проверить, что камера доступна по HTTP и RTSP и отдаёт по ONVIF свой паспорт.
+
+    Паспорт (производитель, модель, прошивка, серийный номер) кладётся в
+    `data[PASSPORT_KEY]` и уходит в шапку протокола. Закрытый HTTP-порт —
+    «не прошла» с признаком `UNREACHABLE`: по нему планировщик пропускает
+    остальные проверки камеры, а не копит одинаковые задачи.
+    """
     cam, timeout = ctx.camera, float(ctx.extra.get("timeout_s", 5.0))
     expected = f"HTTP {cam.port} и RTSP {cam.rtsp_port} отвечают, ONVIF отдаёт паспорт"
     problems = []

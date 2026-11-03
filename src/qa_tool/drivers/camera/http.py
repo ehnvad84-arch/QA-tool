@@ -25,6 +25,23 @@ def request(
     headers: dict[str, str] | None = None,
     timeout: float = 5.0,
 ) -> httpx.Response:
+    """Отправить HTTP-запрос камере, предварительно проверив табу (AD-7).
+
+    Args:
+        method: HTTP-метод.
+        url: полный адрес на камере.
+        content: тело запроса; SOAP определяется по Content-Type или конверту.
+        headers: заголовки.
+        timeout: тайм-аут, с.
+
+    Returns:
+        Ответ httpx.
+
+    Raises:
+        TabooViolation: запрос меняет сеть, учётные записи или делает сброс —
+            в сеть он не отправлен.
+        TransportError: камера не ответила.
+    """
     headers = headers or {}
     text = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
     if _is_soap(headers, text):

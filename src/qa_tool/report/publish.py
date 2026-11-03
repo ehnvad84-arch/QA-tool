@@ -10,6 +10,11 @@ from qa_tool.report.xlsx import write_protocol_xlsx, write_summary_xlsx
 
 
 def publish(store: RunStore) -> list[Path]:
+    """Выпустить протоколы всех камер и сводку в HTML, PDF и Excel в папку прогона.
+
+    Returns:
+        Пути записанных файлов.
+    """
     summary = build_summary(store)
     out = store.run_dir
     written = []

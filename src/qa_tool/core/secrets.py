@@ -21,6 +21,7 @@ def _key(camera: Camera) -> str:
 
 
 def set_password(camera: Camera, password: str) -> None:
+    """Сохранить пароль камеры в системном хранилище по ключу «адрес:порт»."""
     keyring.set_password(SERVICE, _key(camera), password)
 
 
@@ -69,6 +70,15 @@ _PATTERNS = [
 
 
 def redact(text: str, known_secrets: list[str] | None = None) -> str:
+    """Вырезать секреты из текста перед записью в журнал, базу или протокол.
+
+    Args:
+        text: обмен с камерой, причина, лог.
+        known_secrets: пароли, известные вызывающему, — заменяются везде.
+
+    Returns:
+        Текст, где пароли, токены, Authorization, UsernameToken и cookie — `***`.
+    """
     for pattern, replacement in _PATTERNS:
         text = pattern.sub(replacement, text)
     for secret in known_secrets or []:

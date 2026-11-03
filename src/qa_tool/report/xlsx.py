@@ -136,6 +136,7 @@ _SUMMARY_HEADERS = [
 
 
 def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
+    """Excel протокола камеры: листы «Сводка», «Проверки», «Задачи»."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Сводка"
@@ -147,6 +148,7 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
 
 
 def write_summary_xlsx(path: Path, s: Summary) -> Path:
+    """Сводный Excel прогона: те же листы по всем камерам и «Сравнение»."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Сводка"

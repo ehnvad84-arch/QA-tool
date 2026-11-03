@@ -4,6 +4,7 @@ import socket
 
 
 def tcp_open(address: str, port: int, timeout: float = 1.0) -> bool:
+    """Принимает ли камера TCP-соединение на порт (ничего не отправляет)."""
     try:
         with socket.create_connection((address, port), timeout=timeout):
             return True

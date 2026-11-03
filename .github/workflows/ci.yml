@@ -26,6 +26,8 @@ jobs:
       - run: uv sync --locked
       - name: Линтер
         run: uv run ruff check . && uv run ruff format --check .
+      - name: Правила комментирования (docs/rules/comments.md)
+        run: uv run python scripts/check_comments.py
       - name: Тесты
         run: uv run pytest -q  # на Linux conftest включает offscreen, на Windows — рабочий стол раннера
 

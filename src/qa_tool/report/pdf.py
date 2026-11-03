@@ -28,6 +28,11 @@ def _ensure_app() -> None:
 
 
 def write_pdf(path: Path, html: str, title: str) -> Path:
+    """Сохранить HTML как PDF (A4, альбомная) средствами Qt.
+
+    На Linux без дисплея Qt поднимается без экрана, на Windows — в обычном режиме:
+    в режиме offscreen у Qt на Windows нет шрифтов и PDF выходит пустым.
+    """
     _ensure_app()
     writer = QPdfWriter(str(path))
     writer.setTitle(title)

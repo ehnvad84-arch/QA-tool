@@ -44,6 +44,7 @@ def safe_name(name: str, limit: int = 80) -> str:
 
 
 def next_run_id(runs_dir: Path, today: datetime.date | None = None) -> str:
+    """Номер следующего прогона за день: QA-ГГГГММДД-ННН."""
     prefix = f"QA-{(today or datetime.date.today()):%Y%m%d}-"
     taken = [p.name for p in runs_dir.glob(prefix + "*")] if runs_dir.exists() else []
     numbers = [int(n[len(prefix) :]) for n in taken if n[len(prefix) :].isdigit()]
@@ -51,6 +52,12 @@ def next_run_id(runs_dir: Path, today: datetime.date | None = None) -> str:
 
 
 class RunStore:
+    """База прогона `run.sqlite` и папка доказательств.
+
+    Соединение SQLite привязано к потоку, где создано: из другого потока база
+    открывается заново (`RunStore(run_dir)`). Пишет только координатор прогона.
+    """
+
     def __init__(self, run_dir: Path, readonly: bool = False):
         self.run_dir = run_dir
         self.run_id = run_dir.name
@@ -66,6 +73,7 @@ class RunStore:
 
     @classmethod
     def create(cls, stand: Stand, scenario: Scenario) -> "RunStore":
+        """Создать папку и базу нового прогона и записать в неё камеры стенда (без паролей)."""
         stand.runs_dir.mkdir(parents=True, exist_ok=True)
         run_dir = stand.runs_dir / next_run_id(stand.runs_dir)
         run_dir.mkdir()
@@ -84,9 +92,11 @@ class RunStore:
         return store
 
     def protocol_id(self, slot: int) -> str:
+        """Номер протокола камеры: номер прогона и место."""
         return f"{self.run_id}-{slot}"
 
     def set_passport(self, slot: int, passport: dict[str, str]) -> None:
+        """Записать паспорт камеры из CORE-CONNECT-1 для шапки протокола."""
         fields = ("manufacturer", "model", "firmware", "serial", "hardware")
         assignments = ", ".join(f"{f} = ?" for f in fields)
         self.db.execute(
@@ -109,6 +119,9 @@ class RunStore:
         return folder.relative_to(self.run_dir).as_posix()
 
     def add_result(self, slot: int, spec: CheckSpec, result: CheckResult, started: str) -> None:
+        """Записать результат проверки; доказательства сохраняются в evidence/ с очисткой
+        имён и секретов.
+        """
         t = result.threshold
         self.db.execute(
             "INSERT INTO results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -136,20 +149,24 @@ class RunStore:
         self.db.commit()
 
     def finish(self, state: str = "завершён") -> None:
+        """Отметить конец прогона: «завершён» или «остановлен»."""
         self.db.execute(
             "UPDATE runs SET finished = ?, state = ? WHERE id = ?", (_now(), state, self.run_id)
         )
         self.db.commit()
 
     def run_info(self) -> sqlite3.Row:
+        """Строка прогона: даты, место, сценарий, состояние."""
         return self.db.execute("SELECT * FROM runs WHERE id = ?", (self.run_id,)).fetchone()
 
     def cameras(self) -> list[sqlite3.Row]:
+        """Камеры прогона по местам."""
         return self.db.execute(
             "SELECT * FROM cameras WHERE run = ? ORDER BY slot", (self.run_id,)
         ).fetchall()
 
     def results(self, slot: int | None = None) -> list[sqlite3.Row]:
+        """Результаты прогона или одного места в порядке протокола."""
         query = "SELECT * FROM results WHERE run = ?"
         args: tuple = (self.run_id,)
         if slot is not None:
@@ -157,6 +174,7 @@ class RunStore:
         return self.db.execute(query + " ORDER BY slot, phase, module, check_id", args).fetchall()
 
     def close(self) -> None:
+        """Закрыть базу."""
         self.db.close()
 
 

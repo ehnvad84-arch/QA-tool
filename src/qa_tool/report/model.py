@@ -28,6 +28,8 @@ SEVERITY_ORDER = {"блокер": 0, "серьёзная": 1, "мелкая": 2}
 
 @dataclass
 class Row:
+    """Строка «Результаты проверок» протокола."""
+
     number: int
     check_id: str
     module: str
@@ -44,6 +46,8 @@ class Row:
 
 @dataclass
 class Task:
+    """Задача программистам по проверке, которая не прошла."""
+
     number: int
     title: str
     module: str
@@ -56,6 +60,8 @@ class Task:
 
 @dataclass
 class Protocol:
+    """Всё содержимое протокола камеры — общее для HTML, PDF и Excel."""
+
     protocol_id: str
     run_id: str
     started: str
@@ -72,7 +78,7 @@ class Protocol:
     counts: dict[str, int]
     modules: list[tuple[str, dict[str, int]]]
     verdict: str
-    verdict_kind: str  # ok · fail · incomplete
+    verdict_kind: str  # вид заключения: ok, fail, incomplete
     camera_name: str = field(default="")
 
 
@@ -88,6 +94,7 @@ def _counts(statuses: list[str]) -> dict[str, int]:
 
 
 def verdict(counts: dict[str, int]) -> tuple[str, str]:
+    """Заключение протокола и его вид (ok, fail, incomplete) по счётчикам статусов."""
     if counts[Status.STAND_ERROR.value]:
         return "Испытания не завершены: есть ошибки стенда", "incomplete"
     if counts[Status.FAILED.value]:
@@ -96,6 +103,7 @@ def verdict(counts: dict[str, int]) -> tuple[str, str]:
 
 
 def build_protocol(store: RunStore, slot: int) -> Protocol:
+    """Собрать протокол камеры из базы прогона; задачи — только из «не прошла»."""
     run = store.run_info()
     cam = next(c for c in store.cameras() if c["slot"] == slot)
     passport = {k: cam[k] for k in ("manufacturer", "model", "firmware", "serial", "hardware")}
@@ -171,6 +179,8 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
 
 @dataclass
 class Summary:
+    """Содержимое сводного отчёта: протоколы всех камер и матрица проверка × камера."""
+
     run_id: str
     started: str
     finished: str
@@ -182,6 +192,7 @@ class Summary:
 
 
 def build_summary(store: RunStore) -> Summary:
+    """Собрать сводный отчёт прогона."""
     protocols = [build_protocol(store, c["slot"]) for c in store.cameras()]
     checks: dict[str, str] = {}
     matrix: dict[str, dict[int, str]] = {}

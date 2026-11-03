@@ -45,7 +45,16 @@ src = ["src", "tests"]
 extend-exclude = [".workflow"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# ERA — закомментированный код; D1 — обязательные docstring публичного API (docs/rules/comments.md)
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ERA", "D100", "D101", "D102", "D103", "D104", "D106"]
+
+[tool.ruff.lint.per-file-ignores]
+# docstring обязательны в ядре, драйверах, проверках и протоколах; экраны и тесты говорят сами за себя
+"src/qa_tool/gui/**" = ["D1"]
+"tests/**" = ["D1"]
+"packaging/**" = ["D1"]
+"scripts/**" = ["D1"]
+"src/qa_tool/__init__.py" = ["D1"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "docs/manual" = "qa_tool/manual"

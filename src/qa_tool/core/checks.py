@@ -20,6 +20,8 @@ UNREACHABLE = "unreachable"
 
 
 class Status(StrEnum):
+    """Итог проверки. «Ошибка стенда» и «пропущена» в задачи программистам не попадают."""
+
     PASSED = "прошла"
     FAILED = "не прошла"
     SKIPPED = "пропущена"
@@ -36,10 +38,13 @@ class Phase(IntEnum):
 
     @property
     def title(self) -> str:
+        """Название фазы для экрана и протокола."""
         return {1: "сетевая", 2: "синхронная стенда", 3: "поочерёдная", 4: "стресс"}[self.value]
 
 
 class Severity(StrEnum):
+    """Важность задачи программистам по проверке, которая не прошла."""
+
     BLOCKER = "блокер"
     MAJOR = "серьёзная"
     MINOR = "мелкая"
@@ -56,6 +61,8 @@ class Evidence:
 
 @dataclass
 class CheckResult:
+    """Результат проверки одной камеры: статус, причина, ожидание, факт, порог, доказательства."""
+
     status: Status
     reason: str = ""
     expected: str = ""
@@ -67,15 +74,19 @@ class CheckResult:
 
     @classmethod
     def skipped(cls, reason: str) -> "CheckResult":
+        """Проверка не запускалась; причина печатается в протоколе."""
         return cls(Status.SKIPPED, reason=reason)
 
     @classmethod
     def stand_error(cls, reason: str) -> "CheckResult":
+        """Проверку не удалось довести до конца по вине стенда, а не камеры."""
         return cls(Status.STAND_ERROR, reason=reason)
 
 
 @dataclass
 class CheckContext:
+    """Всё, что проверка получает о камере и стенде. Пароль — только в памяти рабочего процесса."""
+
     camera: Camera
     password: str
     place: Place
@@ -88,6 +99,8 @@ CheckFunc = Callable[[CheckContext], CheckResult]
 
 @dataclass(frozen=True)
 class CheckSpec:
+    """Описание зарегистрированной проверки: где, когда и с какими ресурсами она идёт."""
+
     id: str
     module: str
     title: str
@@ -104,14 +117,31 @@ class CheckSpec:
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
 
     def applies_to(self, camera: Camera) -> bool:
+        """Подходит ли проверка производителю камеры (AD-4: адаптерные — только своим)."""
         return self.vendors is None or camera.vendor.lower() in self.vendors
 
 
 class Registry:
+    """Реестр проверок. Модули регистрируют в нём функции декоратором `check`."""
+
     def __init__(self) -> None:
         self._specs: dict[str, CheckSpec] = {}
 
     def check(self, id: str, module: str, title: str, description: str, **options: Any):
+        """Декоратор регистрации проверки.
+
+        Args:
+            id: идентификатор `<МОДУЛЬ>-<ГРУППА>-<N>`, уникальный в реестре.
+            module: модуль проверок (core, onvif, api …) — раздел протокола.
+            title: название для экрана и протокола.
+            description: «что делаем, что ожидаем» — уходит в протокол и шаги задачи.
+            **options: поля CheckSpec (phase, resources, vendors, places, writes,
+                destructive, severity, order, timeout_s).
+
+        Raises:
+            ValueError: проверка с таким id уже зарегистрирована.
+        """
+
         def register(func: CheckFunc) -> CheckFunc:
             if id in self._specs:
                 raise ValueError(f"Проверка {id} уже зарегистрирована")
@@ -125,9 +155,11 @@ class Registry:
         return register
 
     def all(self) -> list[CheckSpec]:
+        """Все проверки в порядке прогона: фаза, порядок, модуль, id."""
         return sorted(self._specs.values(), key=lambda s: (s.phase, s.order, s.module, s.id))
 
     def get(self, id: str) -> CheckSpec:
+        """Проверка по id; KeyError, если такой нет."""
         return self._specs[id]
 
     def plan_for(
@@ -148,6 +180,7 @@ class Registry:
 
 
 def skip_reason(spec: CheckSpec, scenario: Scenario, place: Place) -> str | None:
+    """Почему проверку нельзя запускать по сценарию и месту стенда; None — можно."""
     if spec.destructive and not scenario.allow_destructive:
         return "не разрешено сценарием: разрушающая проверка"
     if spec.writes and not scenario.allow_writes:
@@ -159,6 +192,20 @@ def skip_reason(spec: CheckSpec, scenario: Scenario, place: Place) -> str | None
 
 
 def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> CheckResult:
+    """Выполнить проверку и привести результат к правилам never.md.
+
+    «Прошла» без доказательства становится «ошибкой стенда»; исключение проверки —
+    тоже «ошибка стенда» (пароль из текста вырезан); попытка нарушить табу —
+    «ошибка стенда», запрос при этом в сеть не ушёл.
+
+    Args:
+        spec: проверка из реестра.
+        ctx: камера, пароль, место стенда, пороги.
+        skip: причина пропуска; если задана, проверка не вызывается.
+
+    Returns:
+        Результат с заполненной длительностью.
+    """
     if skip is not None:
         return CheckResult.skipped(skip)
     start = time.monotonic()

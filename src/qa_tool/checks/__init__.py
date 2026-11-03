@@ -8,6 +8,7 @@ MODULES = ["qa_tool.checks.core.connect"]
 
 
 def load_all() -> None:
+    """Импортировать все модули проверок, чтобы они зарегистрировались в REGISTRY."""
     for name in MODULES:
         importlib.import_module(name)
 

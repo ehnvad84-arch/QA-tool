@@ -17,6 +17,8 @@ _NS = {
 
 @dataclass
 class FoundCamera:
+    """Камера, ответившая на WS-Discovery Probe."""
+
     address: str
     port: int
     xaddrs: list[str]
@@ -49,6 +51,12 @@ def _scope_value(scopes: list[str], kind: str) -> str:
 
 
 def parse_probe_matches(data: bytes) -> list[FoundCamera]:
+    """Разобрать ответ ProbeMatches; устройства с битым адресом пропускаются.
+
+    Raises:
+        ParseError, ValueError: пакет не XML или с DTD/ENTITY (defusedxml) —
+            `discover()` такие пакеты пропускает.
+    """
     root = ElementTree.fromstring(data)
     found = []
     for match in root.iterfind(".//d:ProbeMatch", _NS):

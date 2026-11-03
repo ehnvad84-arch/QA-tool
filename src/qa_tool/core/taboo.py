@@ -86,6 +86,11 @@ def soap_operations(body: str) -> list[str]:
 
 
 def check_onvif(body: str) -> None:
+    """Не пропустить SOAP-запрос, если в нём есть запрещённая операция ONVIF.
+
+    Raises:
+        TabooViolation: в запросе операция из FORBIDDEN_ONVIF.
+    """
     for operation in soap_operations(body):
         if operation.lower() in FORBIDDEN_ONVIF:
             raise TabooViolation(
@@ -120,6 +125,11 @@ def normalize_path(url_or_path: str) -> str:
 
 
 def check_http(method: str, url_or_path: str) -> None:
+    """Не пропустить изменение запрещённых разделов API адаптера.
+
+    Raises:
+        TabooViolation: изменяющий метод по пути из FORBIDDEN_HTTP_PREFIXES.
+    """
     if method.upper() not in _WRITE_METHODS:
         return
     normalized = normalize_path(url_or_path)
@@ -255,6 +265,7 @@ _WORD = re.compile(r"[a-zа-яё0-9]+")
 
 
 def words(*texts: str) -> list[str]:
+    """Слова текста в нижнем регистре; camelCase разбирается: «setNetConfig» → set, net, config."""
     joined = " ".join(t for t in texts if t)
     return _WORD.findall(_CAMEL.sub(r"\1 \2", joined).lower())
 
@@ -276,6 +287,9 @@ def _target(url: str) -> tuple[str, str]:
 
 
 def is_write_request(method: str, url: str) -> bool:
+    """Меняет ли запрос что-то на камере: любой метод, кроме GET/HEAD/OPTIONS,
+    или GET с глаголом set/update/… в имени скрипта или параметрах (Dahua CGI, Axis VAPIX).
+    """
     if method.upper() not in _SAFE_WEB_METHODS:
         return True
     path, query = _target(url)

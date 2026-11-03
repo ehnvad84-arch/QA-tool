@@ -49,7 +49,9 @@
 
 **ТАБУ: сетевые настройки, логины и пароли камеры не меняются никогда** (never.md, AD-7). Любой запрос к камере идёт через `src/qa_tool/core/taboo.py`.
 
-Прочитай в начале сессии, если их ещё нет в контексте: docs/rules/conventions.md, docs/rules/architecture.md, docs/rules/never.md, docs/rules/security.md.
+Прочитай в начале сессии, если их ещё нет в контексте: docs/rules/conventions.md, docs/rules/architecture.md, docs/rules/never.md, docs/rules/security.md, docs/rules/comments.md.
+
+**Перед каждым push** — `.githooks/pre-push` (линтер с ERA001 и D1, `scripts/check_comments.py`, тесты; подключить один раз: `git config core.hooksPath .githooks`) и просмотр комментариев в диффе по docs/rules/comments.md: «почему, а не что», актуальность, без пересказа кода. Хук не обходить (`--no-verify` — нельзя).
 
 ## Как работаем
 

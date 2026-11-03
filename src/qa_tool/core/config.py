@@ -20,6 +20,12 @@ def _read_yaml(path: Path) -> Any:
 
 
 def load_stand(path: Path) -> Stand:
+    """Прочитать stand.yaml.
+
+    Raises:
+        ConfigError: нет файла, ошибка YAML, неизвестное место стенда, неверное место
+            камеры или пароль в файле (пароли — только в хранилище паролей).
+    """
     data = _read_yaml(path)
     if _FORBIDDEN_CAMERA_KEYS & {str(k).lower() for k in data}:
         raise ConfigError(f"{path.name}: пароль в файле стенда хранить нельзя")
@@ -48,6 +54,7 @@ def load_stand(path: Path) -> Stand:
 
 
 def load_scenario(path: Path | None) -> Scenario:
+    """Прочитать scenario.yaml; нет файла — безопасный сценарий по умолчанию."""
     if path is None or not path.exists():
         return Scenario()
     data = _read_yaml(path)
@@ -58,6 +65,11 @@ def load_scenario(path: Path | None) -> Scenario:
 
 
 def load_thresholds(path: Path) -> dict[str, Threshold]:
+    """Прочитать thresholds.yaml; у каждого порога обязателен источник значения.
+
+    Raises:
+        ConfigError: нет источника или value не число.
+    """
     thresholds = {}
     for key, raw in _read_yaml(path).items():
         if not raw.get("source"):
@@ -98,6 +110,7 @@ def save_stand(stand: Stand, path: Path) -> None:
 
 
 def save_scenario(scenario: Scenario, path: Path) -> None:
+    """Записать scenario.yaml рядом со stand.yaml."""
     from dataclasses import asdict
 
     path.parent.mkdir(parents=True, exist_ok=True)

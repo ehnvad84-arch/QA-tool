@@ -14,6 +14,7 @@ EXIT_OK, EXIT_FAILED, EXIT_STAND = 0, 1, 2
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Разбор аргументов: окно по умолчанию, подкоманды run, discover, doctor."""
     parser = argparse.ArgumentParser(prog="qa-tool", description="Стенд проверки IP-камер")
     parser.add_argument("--version", action="version", version=f"qa-tool {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -40,6 +41,11 @@ def _beside(stand: Path, given: Path | None, name: str) -> Path | None:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Прогон без окна по stand.yaml.
+
+    Returns:
+        0 — всё прошло; 1 — есть «не прошла»; 2 — ошибка стенда или конфигурации.
+    """
     from qa_tool.core.checks import Status
     from qa_tool.core.config import load_scenario, load_stand, load_thresholds
     from qa_tool.core.scheduler import Runner, summary_status
@@ -85,6 +91,7 @@ def _publish(store) -> None:
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
+    """Найти камеры в сети и напечатать адрес, производителя и модель."""
     from qa_tool.drivers.camera.discovery import discover
 
     found = discover(timeout=args.timeout, target=args.target, interface=args.interface)
@@ -95,6 +102,11 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor() -> int:
+    """Проверить установку: версия, ffmpeg и ffprobe, справка.
+
+    Returns:
+        0 — всё на месте, 2 — чего-то не хватает.
+    """
     import subprocess
 
     from qa_tool.gui.help_window import load_topics, manual_dir
@@ -132,6 +144,7 @@ def setup_console() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Точка входа `qa-tool`: без подкоманды открывает окно."""
     setup_console()
     parser = build_parser()
     args = parser.parse_args(argv)

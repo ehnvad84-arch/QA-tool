@@ -13,16 +13,21 @@ class ConfigError(ValueError):
 
 
 class Place(StrEnum):
+    """Место стенда: от него зависит, какие проверки доступны."""
+
     COLOR_BOX = "color_box"
     DARK_ROOM = "dark_room"
 
     @property
     def title(self) -> str:
+        """Название места для экрана и протокола."""
         return {"color_box": "цветовой бокс", "dark_room": "тёмная комната"}[self.value]
 
 
 @dataclass
 class Camera:
+    """Камера на месте стенда. Пароля здесь нет: он в системном хранилище паролей."""
+
     slot: int
     address: str
     username: str
@@ -40,6 +45,8 @@ class Camera:
 
 @dataclass
 class Stand:
+    """Стенд: место, сетевая карта к камерам, папка прогонов и до 8 камер на местах."""
+
     place: Place
     runs_dir: Path
     cameras: list[Camera] = field(default_factory=list)
@@ -51,16 +58,24 @@ class Stand:
             self.add_camera(camera)
 
     def free_slots(self) -> list[int]:
+        """Свободные места по возрастанию."""
         taken = {c.slot for c in self.cameras}
         return [s for s in range(1, MAX_SLOTS + 1) if s not in taken]
 
     def remove_camera(self, slot: int) -> None:
+        """Снять камеру с места; пустое место — без ошибки."""
         self.cameras = [c for c in self.cameras if c.slot != slot]
 
     def camera_at(self, slot: int) -> Camera | None:
+        """Камера на месте или None."""
         return next((c for c in self.cameras if c.slot == slot), None)
 
     def add_camera(self, camera: Camera) -> None:
+        """Поставить камеру на её место.
+
+        Raises:
+            ConfigError: все 8 мест заняты или место камеры уже занято.
+        """
         if not self.free_slots():
             raise ConfigError(f"Свободных мест нет: на стенде уже {MAX_SLOTS} камер")
         if camera.slot not in self.free_slots():
@@ -81,6 +96,8 @@ class Scenario:
 
 @dataclass(frozen=True)
 class Threshold:
+    """Порог «прошла / не прошла»: значение, единица и источник (печатается в протоколе)."""
+
     value: float
     unit: str
     source: str

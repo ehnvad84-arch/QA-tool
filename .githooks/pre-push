@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Проверки перед каждым push (решение директора 2026-11-03): линтер с закомментированным кодом
+# и обязательными docstring, правила комментирования, тесты. Подключение один раз на клон:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+unset VIRTUAL_ENV
+
+echo "pre-push: линтер и форматирование"
+uv run ruff check .
+uv run ruff format --check .
+
+echo "pre-push: правила комментирования (docs/rules/comments.md)"
+uv run python scripts/check_comments.py
+
+echo "pre-push: тесты"
+# на машине разработки без libegl1 Qt берёт библиотеку из кэша (AGENTS.md, раздел HOW)
+syslibs="$HOME/.cache/qa-tool-syslibs/root/usr/lib/x86_64-linux-gnu"
+[ -d "$syslibs" ] && export LD_LIBRARY_PATH="$syslibs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# на общем VPS тесты идут в песочнице qa-test, чтобы не мешать другим проектам
+runner=()
+[ -x "$HOME/bin/qa-limited" ] && runner=("$HOME/bin/qa-limited")
+"${runner[@]}" uv run pytest -q -p no:cacheprovider
+echo "pre-push: всё чисто"

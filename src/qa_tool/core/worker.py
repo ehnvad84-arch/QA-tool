@@ -29,6 +29,7 @@ STOPPED = "прогон остановлен"
 
 
 def resolve_registry(ref: str) -> Registry:
+    """Реестр по ссылке «модуль:имя»; вызываемая ссылка вызывается (так подгружаются модули)."""
     module_name, _, attr = ref.partition(":")
     target = getattr(importlib.import_module(module_name), attr)
     return target() if callable(target) and not isinstance(target, Registry) else target
@@ -36,6 +37,8 @@ def resolve_registry(ref: str) -> Registry:
 
 @dataclass
 class WorkerArgs:
+    """Всё, что рабочий процесс камеры получает при запуске (передаётся через spawn)."""
+
     camera: Camera
     password: str
     place: Place
@@ -47,6 +50,7 @@ class WorkerArgs:
 
 
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
+    """Отвечает ли камера на TCP-порт HTTP; две попытки, чтобы не путать сбой с пропажей."""
     return any(tcp_open(camera.address, camera.port, timeout) for _ in range(attempts))
 
 
@@ -64,6 +68,11 @@ def _now() -> str:
 
 
 def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
+    """Рабочий процесс одной камеры: выполняет фазы по команде координатора.
+
+    Связь с координатором — две очереди; формат сообщений описан в начале модуля.
+    Камера, пропавшая из сети, сообщает «lost» и ждёт снятия, а не выходит сама.
+    """
     registry = resolve_registry(args.registry_ref)
     slot = args.camera.slot
     ctx = CheckContext(args.camera, args.password, args.place, args.thresholds, dict(args.extra))
