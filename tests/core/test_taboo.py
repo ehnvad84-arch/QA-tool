@@ -252,3 +252,44 @@ def test_single_http_exit_blocks_before_network(monkeypatch):
     assert sent == []
     http.request("POST", "http://cam/api/image/brightness", content=b'{"value": 40}')
     assert len(sent) == 1
+
+
+# --- повторное ревью (R1, R3–R6) ----------------------------------------------------------------
+
+
+def test_soap_looking_json_still_checked_by_path(monkeypatch):
+    from qa_tool.drivers.camera import http
+
+    sent = []
+    monkeypatch.setattr(httpx, "request", lambda *a, **k: sent.append(a))
+    with pytest.raises(TabooViolation):
+        http.request(
+            "POST", "http://cam/api/users/set_password", content=b'{"Envelope": 1, "password": "x"}'
+        )
+    with pytest.raises(TabooViolation):
+        http.request(
+            "POST",
+            "http://cam/onvif/device_service",
+            content=("<!--" + "x" * 600 + "--><tds:SetHashingAlgorithm/>").encode(),
+        )
+    assert sent == []
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/users;jsessionid=1/set_password", "/api/users.json", "/api/network.xml"]
+)
+def test_path_params_and_extensions_closed(path):
+    with pytest.raises(TabooViolation):
+        check_http("POST", path)
+
+
+def test_verb_in_middle_of_path_is_write():
+    with pytest.raises(TabooViolation):
+        check_web_request("GET", "http://cam/cgi-bin/set/network/ip?value=1")
+
+
+@pytest.mark.parametrize(
+    "title", ["Автор: инженер ОТК (author)", "Режим cloudy для баланса белого"]
+)
+def test_author_and_cloudy_not_blocked(title):
+    check_web_request("POST", "http://cam/api/image/white_balance", '{"mode": "cloudy"}', title)

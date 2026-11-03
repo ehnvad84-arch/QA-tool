@@ -66,3 +66,25 @@ def test_find_cameras_fills_table(window, qtbot):
         responder.stop()
         for cam in fleet:
             cam.stop()
+
+
+def test_broken_stand_file_set_aside_window_opens(tmp_path, monkeypatch):
+    from qa_tool.gui import app as gui_app
+
+    path = tmp_path / "stand.yaml"
+    path.write_text("- это не набор настроек\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app, "default_stand_path", lambda: path)
+    state, message = gui_app.load_state()
+    assert "не прочитан" in message and state.stand.cameras == []
+    assert list(tmp_path.glob("stand.yaml.broken-*"))
+
+
+def test_find_button_reenabled_after_discovery_error(window, qtbot, monkeypatch):
+    def boom(**_kwargs):
+        raise ValueError("мусор в сети")
+
+    monkeypatch.setattr("qa_tool.gui.screens.cameras.discover", boom)
+    cameras = screen(window, CamerasScreen)
+    cameras.find_cameras()
+    qtbot.waitUntil(lambda: cameras.find_button.isEnabled(), timeout=5000)
+    assert "мусор в сети" in cameras.search_state.text()

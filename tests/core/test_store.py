@@ -61,3 +61,24 @@ def test_evidence_name_cannot_escape_folder(tmp_path):
     store.add_result(1, SPEC, result, started="t")
     assert not (tmp_path / "escape.txt").exists()
     assert list((store.evidence_root / "1").rglob("*escape.txt"))
+
+
+def test_windows_reserved_names_get_prefix():
+    assert safe_name("CON") == "_CON"
+    assert safe_name("nul.txt") == "_nul.txt"
+    assert safe_name("com1") == "_com1"
+
+
+def test_broken_run_skipped_and_readonly_open_does_not_write(tmp_path):
+    from qa_tool.gui.screens.protocols import list_runs
+
+    good = RunStore.create(make_stand(tmp_path), Scenario())
+    good.finish()
+    good.close()
+    broken = tmp_path / "runs" / "QA-20000101-001"
+    broken.mkdir()
+    (broken / "run.sqlite").write_bytes(b"not a database")
+    before = (broken / "run.sqlite").read_bytes()
+    runs = list_runs(tmp_path / "runs")
+    assert [r["id"] for r in runs] == [good.run_id]
+    assert (broken / "run.sqlite").read_bytes() == before

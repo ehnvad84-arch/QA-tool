@@ -77,3 +77,10 @@ def test_garbage_probe_matches_are_skipped():
     dtd = b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><x>&a;</x>'
     with pytest.raises(ValueError):  # discover() пропускает такие пакеты (ловит ValueError)
         parse_probe_matches(dtd)
+
+
+def test_username_with_xml_characters_is_escaped():
+    from qa_tool.drivers.camera.soap import SoapClient
+
+    header = SoapClient("a&b<c", "pw")._security_header()
+    assert "<wsse:Username>a&amp;b&lt;c</wsse:Username>" in header

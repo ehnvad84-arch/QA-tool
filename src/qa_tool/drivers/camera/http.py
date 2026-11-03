@@ -5,6 +5,8 @@
 tests/test_architecture.py не даёт импортировать httpx, requests и сокеты в обход этого модуля.
 """
 
+import re
+
 import httpx
 
 from qa_tool.core.taboo import check_http, check_onvif, check_web_request
@@ -12,9 +14,13 @@ from qa_tool.core.taboo import check_http, check_onvif, check_web_request
 TransportError = httpx.TransportError  # драйверы ловят сетевые сбои, не импортируя httpx
 
 
+_ENVELOPE = re.compile(r"<\s*(?:[\w.-]+:)?Envelope\b")
+
+
 def _is_soap(headers: dict[str, str], text: str) -> bool:
+    """SOAP — по Content-Type или по настоящему элементу Envelope, а не по слову в JSON."""
     content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
-    return "soap" in content_type.lower() or "Envelope" in text[:500]
+    return "soap" in content_type.lower() or bool(_ENVELOPE.search(text))
 
 
 def request(
@@ -37,6 +43,9 @@ def request(
     Returns:
         Ответ httpx.
 
+    Проверяются всегда путь (`check_http`) и операции ONVIF в теле (`check_onvif`);
+    не-SOAP запрос — ещё и по словам-признакам (`check_web_request`).
+
     Raises:
         TabooViolation: запрос меняет сеть, учётные записи или делает сброс —
             в сеть он не отправлен.
@@ -44,9 +53,9 @@ def request(
     """
     headers = headers or {}
     text = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
-    if _is_soap(headers, text):
-        check_onvif(text)  # в SOAP-конверте всегда есть Username/Password — словами не судим
-    else:
-        check_http(method, url)
+    check_http(method, url)
+    check_onvif(text)  # и в «не SOAP»: операцию нельзя протащить без конверта
+    if not _is_soap(headers, text):
+        # в SOAP-конверте всегда есть Username и Password — по словам его не судим
         check_web_request(method, url, text)
     return httpx.request(method, url, content=content, headers=headers, timeout=timeout)

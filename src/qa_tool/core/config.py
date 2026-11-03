@@ -12,19 +12,23 @@ _FORBIDDEN_CAMERA_KEYS = {"password", "passwd", "pwd", "pass", "secret", "пар
 
 def _read_yaml(path: Path) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except FileNotFoundError as e:
         raise ConfigError(f"Нет файла {path}") from e
     except yaml.YAMLError as e:
         raise ConfigError(f"{path.name}: ошибка разметки YAML — {e}") from e
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path.name}: ожидался набор настроек «ключ: значение»")
+    return data
 
 
 def load_stand(path: Path) -> Stand:
     """Прочитать stand.yaml.
 
     Raises:
-        ConfigError: нет файла, ошибка YAML, неизвестное место стенда, неверное место
-            камеры или пароль в файле (пароли — только в хранилище паролей).
+        ConfigError: нет файла, ошибка YAML, файл не словарь, неизвестное место
+            стенда, неверное место камеры или пароль в файле (пароли — только
+            в хранилище паролей).
     """
     data = _read_yaml(path)
     if _FORBIDDEN_CAMERA_KEYS & {str(k).lower() for k in data}:

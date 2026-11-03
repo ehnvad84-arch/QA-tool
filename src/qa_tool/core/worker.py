@@ -131,13 +131,16 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
             result = run_check(spec, ctx)
             if spec.resources and check_id not in args.sync_checks:
                 outbox.put(("release", slot, check_id))
+            # камера отвечала до этой проверки или в её начале (порт HTTP был открыт)
+            was_reachable = alive_checked or not result.data.get(UNREACHABLE)
             if not alive_checked:
                 unreachable_from_start = check_id == FIRST_CHECK and bool(
                     result.data.get(UNREACHABLE)
                 )
                 alive_checked = not unreachable_from_start
-            elif (
-                result.status in (Status.FAILED, Status.STAND_ERROR)
+            if (
+                was_reachable
+                and result.status in (Status.FAILED, Status.STAND_ERROR)
                 and liveness
                 and not camera_alive(args.camera)
             ):

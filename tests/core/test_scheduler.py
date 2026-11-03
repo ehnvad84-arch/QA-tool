@@ -218,3 +218,26 @@ def test_coordinator_freeze_extends_deadlines():
     runner.cams = {1: cam}
     runner._compensate_freeze(time.monotonic() - 30)  # координатор «спал» 30 с
     assert cam.running[1] >= 129.0
+
+
+def test_camera_lost_during_first_check_is_stand_error(tmp_path, fleet):
+    # первая проверка видит открытый порт, а к концу камера пропала: «нет связи», не задача
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+
+    def on_event(event):
+        if event.kind == "started" and event.slot == 2 and event.check_id == "FAKE-FAILS-1":
+            fleet[1].stop()
+
+    stand = make_stand(tmp_path, fleet[:2])
+    runner = Runner(
+        stand,
+        Scenario(checks=["FAKE-FAILS-1"]),
+        registry_ref=REF,
+        on_event=on_event,
+        extra={"trace_dir": str(trace_dir)},
+    )
+    store = runner.run()
+    rows = {r["slot"]: (r["status"], r["reason"]) for r in store.results()}
+    assert rows[2] == ("ошибка стенда", "нет связи")
+    assert rows[1][0] == "не прошла"

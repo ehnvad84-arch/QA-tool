@@ -82,6 +82,7 @@ class SoapClient:
             TabooViolation: операция запрещена — запрос не отправлен.
             CameraUnreachable: нет ответа.
             OnvifFault: SOAP Fault или ответ не SOAP.
+            ValueError: ответ с DTD или ENTITY — defusedxml его не разбирает.
         """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         envelope = (

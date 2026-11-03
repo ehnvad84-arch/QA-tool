@@ -61,3 +61,62 @@
 | W7 | warning | drivers/camera/discovery.py:63, 99; gui/screens/cameras.py:121 | Любое устройство в подсети роняет поиск (ValueError, EntitiesForbidden) | Ловить ValueError на каждый пакет |
 | W11 | warning | .github/workflows/ci.yml:38-41 | Snyk тихо пропускается, требование security.md п. 5 не выполняется | Падать без токена на PR в `main`; прогнать Snyk до мержа |
 | N2–N6, N11, N12, N15 | nit | см. review.md | Мелкие замечания по секретам, именам файлов, поиску, CI | см. review.md |
+
+---
+
+## Повторное ревью (после багфикса)
+
+**Вердикт:** fail без blocker. A06 провален на уровне warning: R1 и R2 в review.md. Правило security.md п. 5 (Snyk на каждом PR) не выполнено, это W11.
+
+Ревьюер: независимый ревьюер (Claude Opus 5.5) · Дифф: `d24811c~1..HEAD` · Дата: 2026-11-03
+
+### Базовый минимум
+
+- [x] Секретов в диффе нет: только тестовые `s3cret`, `admin`, `abc123`, `pw`.
+- [x] `.env` не в индексе, deny в `.claude/settings.json` на месте.
+- [x] Доступа к продакшну нет.
+- [x] Права в CI минимальны: `permissions: contents: read` (N12). Actions по-прежнему закреплены тегами, а не SHA.
+- [ ] Сканеры: Snyk не установлен и не запускался; в CI без `SNYK_TOKEN` он по-прежнему пропускается. pip-audit 2.10.1 запущен локально по `uv export --no-dev` — «No known vulnerabilities found».
+
+### Сканеры
+
+| Инструмент | Команда | Результат |
+|---|---|---|
+| Snyk — зависимости | `snyk test` | не запускался: Snyk не установлен |
+| Snyk — код | `snyk code test` | не запускался: Snyk не установлен |
+| pip-audit | `uvx pip-audit@2.10.1 --strict -r <uv export>` | уязвимостей не найдено |
+| agentshield | `agentshield scan --path .` | Grade C (63/100), 81 находка (14 critical), все про «prompt defense» в `.claude/rules/*.md` (симлинк на `docs/rules`); новый git-хук и код в находках не упомянуты |
+
+### Правила проекта
+
+| Правило | Результат | Где |
+|---|---|---|
+| Табу: каждый клиент к камере идёт через единую точку | pass с замечаниями (warning) | `http.py` + `probe.py` + тест архитектуры. Обходы прошлого ревью закрыты. Новые: SOAP-ветка пропускает проверку пути и слов (R1); тест архитектуры не видит `onvif`, `from urllib import request`, реэкспорт `httpx` (R2) |
+| Пароли только в keyring | pass | ключ «адрес:порт» (N2); stand.yaml проверяется и на верхнем уровне (N11) |
+| В протоколах и доказательствах вырезаются секреты | pass | шаблоны шире, `redact` в `run_check`, CLI и окне; остаток N3 (`token: …`, `api_key=`, `PHPSESSID=`) |
+| Ответы камер экранируются | pass | Excel: строки — тип `s`, тегов `<f>` в XML нет (W5); логин в XML экранируется (N6); зарезервированные имена Windows (N4) |
+| Только адреса стенда; WS-Discovery в своей подсети | pass с замечаниями | TTL 1; хост XAddrs с отправителем не сверяется (N5), N15 открыта |
+
+### OWASP Top 10 (2025)
+
+| Пункт | Результат | Где |
+|---|---|---|
+| A01 Broken Access Control | pass | без изменений; N5 (частично) и N15 |
+| A02 Security Misconfiguration | pass | `permissions` в CI; protocols открывает базу только для чтения |
+| A03 Software Supply Chain Failures | pass с замечаниями | pip-audit в CI и локально чист; `uv sync --locked`; Snyk не запускался, actions не по SHA |
+| A04 Cryptographic Failures | pass | без изменений |
+| A05 Injection | pass | формулы Excel и логин в XML закрыты (W5, N6) |
+| A06 Insecure Design | fail (warning) | R1: проверка в единой точке выбирается по эвристике SOAP, путь при этом не проверяется. R2: тест архитектуры обходится. Мелочи: R3–R6 |
+| A07 Identification and Authentication Failures | pass | N2 закрыта |
+| A08 Software or Data Integrity Failures | pass | без изменений |
+| A09 Security Logging and Alerting Failures | pass | очистка паролем в `run_check` и CLI (N3); код выхода процесса в причине |
+| A10 Mishandling of Exceptional Conditions | pass с замечаниями | W6 и W7 закрыты. Остаток R8: YAML не со словарём даёт AttributeError; `SoapClient.call` на DTD в ответе выдаёт ValueError вместо OnvifFault (C10, старый долг) |
+
+### Находки
+
+| # | Уровень | Где | Проблема | Фикс |
+|---|---|---|---|---|
+| R1 | warning | src/qa_tool/drivers/camera/http.py:15-17, 47-51 | `Envelope` в теле или `soap` в Content-Type отключают `check_http` и `check_web_request`; ONVIF после длинного префикса минует `check_onvif` | `check_http` всегда, `check_onvif` для любого XML, словами судить только не-SOAP |
+| R2 | warning | tests/test_architecture.py:8-11 | Не ловятся `onvif`, `from urllib import request`, `from http import client`, `import os, socket`, реэкспорт `httpx`, playwright | Разбор через `ast`, расширить список |
+| W11 | warning (не новое) | .github/workflows/ci.yml | Snyk без токена пропускается; security.md п. 5 не выполнено | Токен или решение директора о замене на pip-audit |
+| R3–R6 | nit | src/qa_tool/core/taboo.py | Остаточные обходы и ложные срабатывания | см. review.md |

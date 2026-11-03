@@ -26,7 +26,12 @@ def set_password(camera: Camera, password: str) -> None:
 
 
 def get_password(camera: Camera) -> str:
-    """Сначала переменная окружения (CI), потом системное хранилище паролей."""
+    """Пароль камеры: сначала переменная окружения (CI), потом системное хранилище паролей.
+
+    Raises:
+        ConfigError: пароль не задан нигде.
+        keyring.errors.KeyringError: хранилище паролей недоступно (нет Secret Service).
+    """
     password = (
         os.environ.get(_env_name(camera))
         or keyring.get_password(SERVICE, _key(camera))

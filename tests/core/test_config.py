@@ -78,3 +78,22 @@ def test_threshold_loads_with_source(tmp_path):
     )
     t = load_thresholds(path)["daynight.switch_s"]
     assert (t.value, t.unit, t.source) == (10.0, "с", "стартовое")
+
+
+@pytest.mark.parametrize("text", ["- 1\n- 2\n", "просто строка\n", "42\n"])
+def test_yaml_not_a_mapping_is_config_error(tmp_path, text):
+    path = tmp_path / "stand.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match="ключ: значение"):
+        load_stand(path)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["password: x\ncameras: []\n", "cameras:\n  - {slot: 1, address: a, username: u, pwd: x}\n"],
+)
+def test_password_under_any_name_rejected(tmp_path, text):
+    path = tmp_path / "stand.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match="пароль"):
+        load_stand(path)

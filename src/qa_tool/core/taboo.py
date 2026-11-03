@@ -120,6 +120,7 @@ def normalize_path(url_or_path: str) -> str:
         if decoded == path:
             break
         path = decoded
+    path = path.split(";", 1)[0]  # параметры пути («;jsessionid=…») к разделу не относятся
     normalized = posixpath.normpath("/" + path.replace("\\", "/")).lower()
     return "/" + normalized.lstrip("/")
 
@@ -134,7 +135,8 @@ def check_http(method: str, url_or_path: str) -> None:
         return
     normalized = normalize_path(url_or_path)
     for prefix in FORBIDDEN_HTTP_PREFIXES:
-        if normalized == prefix or normalized.startswith(prefix + "/"):
+        rest = normalized[len(prefix) :]
+        if normalized.startswith(prefix) and (not rest or rest[0] in "/."):  # «/api/users.json»
             raise TabooViolation(
                 f"{method.upper()} {url_or_path} запрещён: программа не меняет сетевые настройки, "
                 "логины и пароли камеры"
@@ -270,11 +272,17 @@ def words(*texts: str) -> list[str]:
     return _WORD.findall(_CAMEL.sub(r"\1 \2", joined).lower())
 
 
+# слова, которые начинаются с признака, но к сети и учёткам не относятся
+WEB_ALLOWED_WORDS = frozenset({"author", "authors", "cloudy", "portrait", "portraits"})
+
+
 def web_forbidden_word(*texts: str) -> str | None:
     """Первое слово-признак сети, учётных записей, сертификатов или сброса, иначе None."""
     joined = " ".join(t for t in texts if t)
     whole = _WORD.findall(joined.lower())  # «configurationData» целиком, без разбора camelCase
     for word in words(*texts) + whole:
+        if word in WEB_ALLOWED_WORDS:
+            continue
         if word in WEB_EXACT_WORDS or word.startswith(WEB_PREFIX_WORDS):
             return word
     return None
@@ -293,12 +301,18 @@ def is_write_request(method: str, url: str) -> bool:
     if method.upper() not in _SAFE_WEB_METHODS:
         return True
     path, query = _target(url)
-    last_segment = path.rsplit("/", 1)[-1]
-    return any(w in WRITE_VERBS for w in words(last_segment, query))
+    return any(w in WRITE_VERBS for w in words(path, query))  # глагол в любом месте пути
 
 
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:
-    """Для любого HTTP-запроса к камере и для перехвата запросов браузером при веб-обходе."""
+    """Не пропустить изменяющий запрос к сети, учётным записям, сертификатам или сбросу.
+
+    Применяется к каждому не-SOAP запросу через drivers/camera/http.py и к запросам
+    браузера при веб-обходе (этап 5). SOAP проверяется по операциям (`check_onvif`).
+
+    Raises:
+        TabooViolation: запрос меняет что-то на камере и содержит слово-признак.
+    """
     if not is_write_request(method, url):
         return
     path, query = _target(url)

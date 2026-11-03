@@ -55,7 +55,8 @@ class RunStore:
     """База прогона `run.sqlite` и папка доказательств.
 
     Соединение SQLite привязано к потоку, где создано: из другого потока база
-    открывается заново (`RunStore(run_dir)`). Пишет только координатор прогона.
+    открывается заново (`RunStore(run_dir)`). Пишет только координатор прогона;
+    `readonly=True` — для просмотра старых прогонов (экран «Протоколы»): файл не меняется.
     """
 
     def __init__(self, run_dir: Path, readonly: bool = False):
@@ -119,8 +120,10 @@ class RunStore:
         return folder.relative_to(self.run_dir).as_posix()
 
     def add_result(self, slot: int, spec: CheckSpec, result: CheckResult, started: str) -> None:
-        """Записать результат проверки; доказательства сохраняются в evidence/ с очисткой
-        имён и секретов.
+        """Записать результат проверки и доказательства в evidence/.
+
+        Имена файлов очищаются всегда; секреты вырезаются из текстовых доказательств,
+        двоичные (кадры, видео) пишутся как есть.
         """
         t = result.threshold
         self.db.execute(
