@@ -47,8 +47,9 @@ class CameraDialog(QDialog):
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.vendor = helped(
             QComboBox(),
-            "Производитель. Для «ruver» доступны проверки API и "
-            "веб-интерфейса, для остальных — ONVIF, поток и картинка.",
+            "Производитель. Любая камера проверяется по ONVIF, потоку, картинке и "
+            "веб-интерфейсу; если для производителя есть адаптер, добавляются проверки его "
+            "API. Нет в списке — «generic».",
             "cameras-add",
         )
         self.vendor.addItems(VENDORS)

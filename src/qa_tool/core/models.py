@@ -37,10 +37,6 @@ class Camera:
         if not self.address:
             raise ConfigError(f"Место {self.slot}: не указан адрес камеры")
 
-    @property
-    def is_ruver(self) -> bool:
-        return self.vendor.lower() == RUVER
-
 
 @dataclass
 class Stand:

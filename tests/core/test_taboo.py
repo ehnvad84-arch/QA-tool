@@ -3,7 +3,13 @@ import pytest
 
 from qa_tool.core.checks import CheckContext, Registry, Status, run_check
 from qa_tool.core.models import Camera, Place
-from qa_tool.core.taboo import FORBIDDEN_ONVIF, TabooViolation, check_http, check_onvif
+from qa_tool.core.taboo import (
+    FORBIDDEN_ONVIF,
+    TabooViolation,
+    check_http,
+    check_onvif,
+    check_web_request,
+)
 from qa_tool.drivers.camera.soap import SoapClient
 from tests.mock_camera import start_fleet
 
@@ -105,3 +111,44 @@ def test_check_breaking_taboo_is_stand_error_and_camera_untouched():
 
 def test_forbidden_list_covers_network_and_accounts():
     assert {"setnetworkinterfaces", "setdns", "createusers", "setuser"} <= FORBIDDEN_ONVIF
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "body", "title"),
+    [
+        ("POST", "http://cam/ISAPI/System/Network/interfaces/1", "", ""),  # Hikvision
+        (
+            "PUT",
+            "http://cam/cgi-bin/configManager.cgi?action=setConfig&Network.eth0.IPAddress=1",
+            "",
+            "",
+        ),
+        ("POST", "http://cam/axis-cgi/pwdgrp.cgi", "action=update&user=root", ""),  # Axis
+        ("POST", "http://cam/LAPI/V1.0/Channels/0/System/Users", "", ""),  # Uniview
+        ("POST", "http://cam/api/save", '{"dhcp": false}', ""),
+        ("POST", "http://cam/api/save", "", "Настройки сети"),
+        ("POST", "http://cam/api/save", "", "Пользователи"),
+        ("POST", "http://cam/cgi-bin/magicBox.cgi?action=reboot&factory=1", "", ""),
+        ("POST", "http://cam/api/firmware/upload", "", ""),
+    ],
+)
+def test_web_crawler_write_requests_on_risky_pages_blocked(method, url, body, title):
+    with pytest.raises(TabooViolation, match="не отправлен"):
+        check_web_request(method, url, body, title)
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "body", "title"),
+    [
+        ("GET", "http://cam/ISAPI/System/Network/interfaces/1", "", ""),
+        (
+            "POST",
+            "http://cam/ISAPI/Image/channels/1/color",
+            "<brightness>60</brightness>",
+            "Изображение",
+        ),
+        ("POST", "http://cam/api/image/brightness", '{"value": 55}', "Видео"),
+    ],
+)
+def test_web_crawler_reads_and_image_settings_allowed(method, url, body, title):
+    check_web_request(method, url, body, title)
