@@ -4,7 +4,7 @@ import importlib
 
 from qa_tool.core.checks import REGISTRY, Registry
 
-MODULES = ["qa_tool.checks.core.connect"]
+MODULES = ["qa_tool.checks.core.connect", "qa_tool.checks.onvif.onvif_tt"]
 
 
 def load_all() -> None:

@@ -121,6 +121,8 @@ class Runner:
                 sync_checks=self.sync_ids,
                 thresholds=self.thresholds,
                 extra=self.extra,
+                allow_writes=self.scenario.allow_writes,
+                allow_destructive=self.scenario.allow_destructive,
             )
             process = self._mp.Process(
                 target=worker_main, args=(args, inbox, self.outbox, self._stop), daemon=True

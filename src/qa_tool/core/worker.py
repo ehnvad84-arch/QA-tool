@@ -48,6 +48,8 @@ class WorkerArgs:
     sync_checks: set[str] = field(default_factory=set)
     thresholds: dict[str, Threshold] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    allow_writes: bool = False
+    allow_destructive: bool = False
 
 
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
@@ -76,7 +78,15 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
     """
     registry = resolve_registry(args.registry_ref)
     slot = args.camera.slot
-    ctx = CheckContext(args.camera, args.password, args.place, args.thresholds, dict(args.extra))
+    ctx = CheckContext(
+        args.camera,
+        args.password,
+        args.place,
+        args.thresholds,
+        dict(args.extra),
+        allow_writes=args.allow_writes,
+        allow_destructive=args.allow_destructive,
+    )
     by_phase: dict[Phase, list[tuple[str, str | None]]] = {}
     for check_id, skip in args.plan:
         by_phase.setdefault(registry.get(check_id).phase, []).append((check_id, skip))

@@ -44,7 +44,7 @@ def screen(window, cls):
 
 
 def test_run_eight_cameras_from_window(qtbot, tmp_path, fleet):
-    window = make_window(qtbot, tmp_path, fleet)
+    window = make_window(qtbot, tmp_path, fleet, checks=["CORE-CONNECT-1"])
     window.menu.setCurrentRow(3)
     run = screen(window, RunScreen)
     run.start_button.click()
@@ -93,7 +93,7 @@ def test_scenario_choices_saved(qtbot, tmp_path, fleet):
 def test_protocols_screen_opens_all_formats(qtbot, tmp_path, fleet):
     from qa_tool.gui.screens.protocols import ProtocolsScreen
 
-    window = make_window(qtbot, tmp_path, fleet[:2])
+    window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
     run = screen(window, RunScreen)
     run.start_button.click()
     qtbot.waitUntil(lambda: not window.state.running, timeout=60000)

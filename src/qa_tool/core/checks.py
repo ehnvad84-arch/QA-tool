@@ -108,6 +108,9 @@ class CheckContext:
     place: Place
     thresholds: dict[str, Threshold] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    # галочки сценария: составным проверкам (onvif-tt) решать, что из своего запускать
+    allow_writes: bool = False
+    allow_destructive: bool = False
 
 
 CheckFunc = Callable[[CheckContext], CheckResult]
