@@ -70,7 +70,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _publish(store) -> None:
-    """Протоколы по камерам и сводка (появятся в T12–T13)."""
+    from qa_tool.report.publish import publish
+
+    for path in publish(store):
+        print(f"  протокол: {path.name}")
 
 
 def cmd_discover(args: argparse.Namespace) -> int:

@@ -1,0 +1,202 @@
+"""Данные протокола из базы прогона — общие для HTML, PDF и Excel."""
+
+import json
+from dataclasses import dataclass, field
+
+from qa_tool import __version__
+from qa_tool.core.checks import Status
+from qa_tool.core.models import Place
+from qa_tool.core.secrets import redact
+from qa_tool.core.store import RunStore
+
+MODULE_TITLES = {
+    "core": "Связь",
+    "onvif": "ONVIF",
+    "api": "API",
+    "web": "Веб-интерфейс",
+    "io": "Интерфейсы",
+    "lens": "Объектив и фокус",
+    "daynight": "День/ночь и ИК",
+    "stream": "Поток и стресс",
+    "codec": "Кодеки",
+    "sdcard": "SD-карта",
+    "image": "Картинка",
+    "analytics": "Аналитика",
+}
+SEVERITY_ORDER = {"блокер": 0, "серьёзная": 1, "мелкая": 2}
+
+
+@dataclass
+class Row:
+    number: int
+    check_id: str
+    module: str
+    title: str
+    description: str
+    expected: str
+    actual: str
+    status: str
+    reason: str
+    threshold: str
+    severity: str
+    evidence: str
+
+
+@dataclass
+class Task:
+    number: int
+    title: str
+    module: str
+    severity: str
+    steps: list[str]
+    expected: str
+    actual: str
+    evidence: str
+
+
+@dataclass
+class Protocol:
+    protocol_id: str
+    run_id: str
+    started: str
+    finished: str
+    place: str
+    slot: int
+    address: str
+    vendor: str
+    passport: dict[str, str]
+    scenario: dict
+    version: str
+    rows: list[Row]
+    tasks: list[Task]
+    counts: dict[str, int]
+    modules: list[tuple[str, dict[str, int]]]
+    verdict: str
+    verdict_kind: str  # ok · fail · incomplete
+    camera_name: str = field(default="")
+
+
+def _threshold(row) -> str:
+    if row["threshold_value"] is None:
+        return ""
+    unit = f" {row['threshold_unit']}" if row["threshold_unit"] else ""
+    return f"{row['threshold_value']:g}{unit} ({row['threshold_source']})"
+
+
+def _counts(statuses: list[str]) -> dict[str, int]:
+    return {s.value: statuses.count(s.value) for s in Status}
+
+
+def verdict(counts: dict[str, int]) -> tuple[str, str]:
+    if counts[Status.STAND_ERROR.value]:
+        return "Испытания не завершены: есть ошибки стенда", "incomplete"
+    if counts[Status.FAILED.value]:
+        return f"Не соответствует: замечаний — {counts[Status.FAILED.value]}", "fail"
+    return "Соответствует проверенным требованиям", "ok"
+
+
+def build_protocol(store: RunStore, slot: int) -> Protocol:
+    run = store.run_info()
+    cam = next(c for c in store.cameras() if c["slot"] == slot)
+    passport = {k: cam[k] for k in ("manufacturer", "model", "firmware", "serial", "hardware")}
+    rows, tasks = [], []
+    for number, r in enumerate(store.results(slot=slot), start=1):
+        row = Row(
+            number=number,
+            check_id=r["check_id"],
+            module=MODULE_TITLES.get(r["module"], r["module"]),
+            title=r["title"],
+            description=r["description"],
+            expected=redact(r["expected"] or ""),
+            actual=redact(r["actual"] or ""),
+            status=r["status"],
+            reason=redact(r["reason"] or ""),
+            threshold=_threshold(r),
+            severity=r["severity"],
+            evidence=r["evidence_dir"] or "",
+        )
+        rows.append(row)
+    place = Place(run["place"]).title
+    model = (
+        " ".join(v for v in (passport["manufacturer"], passport["model"]) if v) or cam["address"]
+    )
+    failed = [r for r in rows if r.status == Status.FAILED.value]
+    failed.sort(key=lambda r: (SEVERITY_ORDER.get(r.severity, 9), r.number))
+    for number, row in enumerate(failed, start=1):
+        firmware = passport["firmware"] or "?"
+        title = f"[{row.check_id}] {row.title}" + (f": {row.reason}" if row.reason else "")
+        tasks.append(
+            Task(
+                number=number,
+                title=title,
+                module=row.module,
+                severity=row.severity,
+                steps=[
+                    f"Камера {model}, прошивка {firmware}, адрес {cam['address']}; "
+                    f"стенд — {place}.",
+                    row.description,
+                    f"Наблюдаемый результат: {row.actual or row.reason}.",
+                ],
+                expected=row.expected,
+                actual=row.actual or row.reason,
+                evidence=row.evidence,
+            )
+        )
+    counts = _counts([r.status for r in rows])
+    modules: dict[str, list[str]] = {}
+    for row in rows:
+        modules.setdefault(row.module, []).append(row.status)
+    text, kind = verdict(counts)
+    return Protocol(
+        protocol_id=store.protocol_id(slot),
+        run_id=store.run_id,
+        started=run["started"] or "",
+        finished=run["finished"] or "",
+        place=place,
+        slot=slot,
+        address=cam["address"],
+        vendor=cam["vendor"],
+        passport=passport,
+        scenario=json.loads(run["scenario"] or "{}"),
+        version=__version__,
+        rows=rows,
+        tasks=tasks,
+        counts=counts,
+        modules=[(m, _counts(s)) for m, s in modules.items()],
+        verdict=text,
+        verdict_kind=kind,
+        camera_name=model,
+    )
+
+
+@dataclass
+class Summary:
+    run_id: str
+    started: str
+    finished: str
+    place: str
+    version: str
+    protocols: list[Protocol]
+    checks: list[tuple[str, str]]  # (check_id, название) — строки матрицы
+    matrix: dict[str, dict[int, str]]  # check_id → место → статус
+
+
+def build_summary(store: RunStore) -> Summary:
+    protocols = [build_protocol(store, c["slot"]) for c in store.cameras()]
+    checks: dict[str, str] = {}
+    matrix: dict[str, dict[int, str]] = {}
+    for p in protocols:
+        for row in p.rows:
+            checks.setdefault(row.check_id, row.title)
+            matrix.setdefault(row.check_id, {})[p.slot] = row.status
+    run = store.run_info()
+    return Summary(
+        run_id=store.run_id,
+        started=run["started"] or "",
+        finished=run["finished"] or "",
+        place=Place(run["place"]).title,
+        version=__version__,
+        protocols=protocols,
+        checks=list(checks.items()),
+        matrix=matrix,
+    )

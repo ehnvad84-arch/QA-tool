@@ -104,8 +104,10 @@ def test_lost_camera_marked_stand_error_others_finish(tmp_path, fleet):
     trace_dir.mkdir()
 
     def on_event(event):
-        if event.kind == "result" and event.slot == 3:
-            fleet[2].stop()  # у камеры 3 пропала сеть
+        # сеть пропадает, пока идёт первая проверка камеры 3: она сама камеру не трогает
+        # и проходит, а проверка связи перед второй уже не проходит
+        if event.kind == "started" and event.slot == 3 and event.check_id == SLOW[0]:
+            fleet[2].stop()
 
     runner = Runner(
         make_stand(tmp_path, fleet),

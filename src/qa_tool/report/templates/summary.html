@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>Сводный отчёт {{ s.run_id }}</title>
+{% include "_style.html" %}
+</head><body>
+<h1>СВОДНЫЙ ОТЧЁТ ПРОГОНА № {{ s.run_id }}</h1>
+<p class="muted">Начат {{ s.started }} · окончен {{ s.finished }} · место стенда: {{ s.place }} · qa-tool {{ s.version }}</p>
+
+<h2>1. Камеры</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr><th>Место</th><th>Протокол</th><th>Камера</th><th>Прошивка</th><th>Прошла</th><th>Не прошла</th><th>Ошибка стенда</th><th>Пропущена</th><th>Заключение</th></tr>
+  {% for p in s.protocols %}
+  <tr>
+    <td>{{ p.slot }}</td><td>{{ p.protocol_id }}</td><td>{{ p.camera_name }}</td><td>{{ p.passport.firmware }}</td>
+    <td>{{ p.counts["прошла"] }}</td><td>{{ p.counts["не прошла"] }}</td><td>{{ p.counts["ошибка стенда"] }}</td><td>{{ p.counts["пропущена"] }}</td>
+    <td class="{{ p.verdict_kind }}">{{ p.verdict }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>2. Сравнение: проверка × камера</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr><th>Проверка</th>{% for p in s.protocols %}<th>{{ p.slot }}. {{ p.camera_name }}</th>{% endfor %}</tr>
+  {% for check_id, title in s.checks %}
+  <tr><td><b>{{ check_id }}</b><br>{{ title }}</td>
+    {% for p in s.protocols %}{% set st = s.matrix[check_id].get(p.slot, "—") %}
+    <td class="st-{{ st | replace(" ", "-") }}">{{ st }}</td>{% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>3. Задачи программистам по камерам</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr><th>Место</th><th>Камера</th><th>Задач</th><th>Из них блокеров</th></tr>
+  {% for p in s.protocols %}
+  <tr><td>{{ p.slot }}</td><td>{{ p.camera_name }}</td><td>{{ p.tasks | length }}</td>
+      <td>{{ p.tasks | selectattr("severity", "equalto", "блокер") | list | length }}</td></tr>
+  {% endfor %}
+</table>
+</body></html>

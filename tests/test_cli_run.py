@@ -30,6 +30,8 @@ def test_run_all_passed_creates_run_folder(tmp_path, fleet, monkeypatch, capsys)
     assert main(["run", "--stand", str(write_stand(tmp_path, fleet))]) == EXIT_OK
     runs = list((tmp_path / "runs").iterdir())
     assert len(runs) == 1 and (runs[0] / "run.sqlite").exists()
+    assert (runs[0] / "summary.html").exists()
+    assert all((runs[0] / f"protocol_{slot}.html").exists() for slot in range(1, 9))
     assert "место 8: CORE-CONNECT-1 прошла" in capsys.readouterr().out
 
 
