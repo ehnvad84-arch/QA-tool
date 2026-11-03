@@ -85,6 +85,10 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 continue
             if alive_checked and args.extra.get("liveness", True) and not camera_alive(args.camera):
                 outbox.put(("lost", slot, "нет связи"))
+                # не выходим сами: иначе координатор может увидеть «процесс умер» раньше,
+                # чем прочтёт «нет связи», и запишет не ту причину. Ждём, пока он нас снимет.
+                while inbox.get()[0] != "quit":
+                    pass
                 return
             if check_id in args.sync_checks:
                 outbox.put(("barrier", slot, check_id))
