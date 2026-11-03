@@ -40,7 +40,9 @@ def load_stand(path: Path) -> Stand:
             cameras.append(Camera(**raw))
         except TypeError as e:
             raise ConfigError(f"{path.name}, место {raw.get('slot')}: {e}") from e
-    return Stand(place=place, runs_dir=runs_dir, cameras=cameras)
+    return Stand(
+        place=place, runs_dir=runs_dir, cameras=cameras, interface=str(data.get("interface", ""))
+    )
 
 
 def load_scenario(path: Path | None) -> Scenario:

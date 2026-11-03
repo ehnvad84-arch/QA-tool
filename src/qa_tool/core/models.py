@@ -47,6 +47,7 @@ class Stand:
     place: Place
     runs_dir: Path
     cameras: list[Camera] = field(default_factory=list)
+    interface: str = ""  # IP сетевой карты, смотрящей в сеть камер; пусто — по умолчанию
 
     def __post_init__(self) -> None:
         cameras, self.cameras = self.cameras, []

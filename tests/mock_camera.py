@@ -169,12 +169,12 @@ class MockCamera:
 class DiscoveryResponder:
     """Отвечает на WS-Discovery Probe за все камеры парка."""
 
-    def __init__(self, cameras: list[MockCamera]):
+    def __init__(self, cameras: list[MockCamera], interface: str = "127.0.0.1"):
         self.cameras = cameras
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("", WSD_PORT))
-        membership = struct.pack("4s4s", socket.inet_aton(WSD_GROUP), socket.inet_aton("0.0.0.0"))
+        membership = struct.pack("4s4s", socket.inet_aton(WSD_GROUP), socket.inet_aton(interface))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
         self.sock.settimeout(0.5)
         self._stop = threading.Event()
