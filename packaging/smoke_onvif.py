@@ -88,4 +88,6 @@ def main(app: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # консоль Windows в CI — cp1252: русский текст протокола иначе роняет печать
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main(sys.argv[1:] or ["qa-tool"]))
