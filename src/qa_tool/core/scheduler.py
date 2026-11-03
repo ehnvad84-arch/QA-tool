@@ -23,13 +23,14 @@ FREEZE_GAP_S = 2.0  # цикл координатора крутится каж�
 class Event:
     """Событие прогона для окна и командной строки: фаза, старт и итог проверки, потеря камеры."""
 
-    kind: str  # вид события: phase, started, result, lost, finished
+    kind: str  # вид события: phase, started, result, done, lost, finished
     slot: int = 0
     check_id: str = ""
     title: str = ""
     status: str = ""
     detail: str = ""
     phase: int = 0
+    part: bool = False  # строка составной проверки: считается в итогах, но не в прогрессе
 
 
 @dataclass
@@ -207,9 +208,24 @@ class Runner:
         self.store.add_result(c.slot, spec, result, started)
         if PASSPORT_KEY in result.data:
             self.store.set_passport(c.slot, result.data[PASSPORT_KEY])
-        self.on_event(
-            Event("result", c.slot, check_id, spec.title, result.status.value, result.reason)
-        )
+        if result.children:
+            for child in result.children:
+                self.on_event(
+                    Event(
+                        "result",
+                        c.slot,
+                        child.check_id,
+                        child.title,
+                        child.result.status.value,
+                        child.result.reason,
+                        part=True,
+                    )
+                )
+            self.on_event(Event("done", c.slot, check_id, spec.title))
+        else:
+            self.on_event(
+                Event("result", c.slot, check_id, spec.title, result.status.value, result.reason)
+            )
 
     # --- ресурсы и барьеры --------------------------------------------------------------------
 

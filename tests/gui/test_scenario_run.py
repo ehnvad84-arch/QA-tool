@@ -124,3 +124,16 @@ def test_stress_duration_chosen_from_ten_minute_steps(qtbot, tmp_path, fleet):
     assert scenario.stress.itemText(values.index(240)) == "4 ч"
     scenario.stress.setCurrentIndex(values.index(40))
     assert load_scenario(tmp_path / "scenario.yaml").stress_minutes == 40
+
+
+def test_tile_counts_child_rows_but_progress_by_check(qtbot):
+    from qa_tool.gui.screens.run import Tile
+
+    create_app()
+    tile = Tile(1)
+    tile.reset(Camera(slot=1, address="a", username="u"), total=1)
+    tile.on_result("прошла", advance=False)
+    tile.on_result("не прошла", advance=False)
+    tile.advance()
+    assert tile.tally["прошла"] == 1 and tile.tally["не прошла"] == 1
+    assert tile.progress.value() == tile.progress.maximum() == 1

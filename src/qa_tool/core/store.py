@@ -122,33 +122,48 @@ class RunStore:
     def add_result(self, slot: int, spec: CheckSpec, result: CheckResult, started: str) -> None:
         """Записать результат проверки и доказательства в evidence/.
 
-        Имена файлов очищаются всегда; секреты вырезаются из текстовых доказательств,
-        двоичные (кадры, видео) пишутся как есть.
+        Составная проверка (есть `children`) пишется строками дочерних результатов: у каждой
+        свой ID, итог и доказательства; модуль и фаза — от родителя. Имена файлов очищаются
+        всегда; секреты вырезаются из текстов и текстовых доказательств, двоичные (кадры,
+        видео) пишутся как есть.
         """
-        t = result.threshold
-        self.db.execute(
-            "INSERT INTO results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                self.run_id,
-                slot,
-                spec.id,
-                spec.module,
-                spec.title,
-                spec.description,
-                int(spec.phase),
-                spec.severity.value,
-                result.status.value,
-                redact(result.reason),
-                redact(result.expected),
-                redact(result.actual),
-                t.value if t else None,
-                t.unit if t else None,
-                t.source if t else None,
-                self._save_evidence(slot, spec.id, result.evidence),
-                started,
-                result.duration_s,
-            ),
-        )
+        rows = [(spec.id, spec.title, spec.description, spec.severity.value, result)]
+        if result.children:
+            rows = [
+                (
+                    child.check_id,
+                    child.title,
+                    child.description or spec.description,
+                    (child.severity or spec.severity).value,
+                    child.result,
+                )
+                for child in result.children
+            ]
+        for check_id, title, description, severity, row in rows:
+            t = row.threshold
+            self.db.execute(
+                "INSERT INTO results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    self.run_id,
+                    slot,
+                    check_id,
+                    spec.module,
+                    title,
+                    description,
+                    int(spec.phase),
+                    severity,
+                    row.status.value,
+                    redact(row.reason),
+                    redact(row.expected),
+                    redact(row.actual),
+                    t.value if t else None,
+                    t.unit if t else None,
+                    t.source if t else None,
+                    self._save_evidence(slot, check_id, row.evidence),
+                    started,
+                    row.duration_s,
+                ),
+            )
         self.db.commit()
 
     def finish(self, state: str = "завершён") -> None:

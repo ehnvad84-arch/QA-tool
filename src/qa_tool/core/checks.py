@@ -71,6 +71,7 @@ class CheckResult:
     threshold: Threshold | None = None
     data: dict[str, Any] = field(default_factory=dict)
     duration_s: float = 0.0
+    children: list["ChildResult"] = field(default_factory=list)
 
     @classmethod
     def skipped(cls, reason: str) -> "CheckResult":
@@ -81,6 +82,21 @@ class CheckResult:
     def stand_error(cls, reason: str) -> "CheckResult":
         """Проверку не удалось довести до конца по вине стенда, а не камеры."""
         return cls(Status.STAND_ERROR, reason=reason)
+
+
+@dataclass
+class ChildResult:
+    """Один результат составной проверки — отдельная строка протокола со своим ID.
+
+    Составная проверка (например, прогон onvif-tt) выдаёт заранее неизвестный набор тестов:
+    регистрировать каждый в реестре нельзя, состав зависит от камеры.
+    """
+
+    check_id: str
+    title: str
+    result: CheckResult
+    description: str = ""
+    severity: "Severity | None" = None
 
 
 @dataclass
@@ -217,7 +233,11 @@ def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> Ch
         result = CheckResult.stand_error(
             redact(f"сбой проверки: {type(e).__name__}: {e}", [ctx.password])
         )
-    if result.status is Status.PASSED and not result.evidence:
+    if result.children:
+        for child in result.children:  # правило never.md — для каждой строки протокола
+            if child.result.status is Status.PASSED and not child.result.evidence:
+                child.result = CheckResult.stand_error("проверка не сохранила доказательство")
+    elif result.status is Status.PASSED and not result.evidence:
         result = CheckResult.stand_error("проверка не сохранила доказательство")
     result.duration_s = time.monotonic() - start
     return result

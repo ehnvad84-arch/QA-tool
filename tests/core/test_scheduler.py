@@ -243,3 +243,26 @@ def test_camera_lost_during_first_check_is_camera_defect(tmp_path, fleet):
     rows = {r["slot"]: (r["status"], r["reason"]) for r in store.results()}
     assert rows[2] == ("не прошла", LOST_DURING_CHECK)
     assert rows[1][0] == "не прошла"
+
+
+def test_composite_check_writes_child_rows_and_tasks(tmp_path, fleet):
+    from qa_tool.report.model import build_protocol
+
+    events = []
+    stand = make_stand(tmp_path, fleet[:1])
+    runner = Runner(
+        stand, Scenario(checks=["FAKE-COMPOSITE-1"]), registry_ref=REF, on_event=events.append
+    )
+    store = runner.run()
+    rows = {r["check_id"]: (r["status"], r["reason"]) for r in store.results()}
+    assert list(rows) == ["SUB-1", "SUB-2", "SUB-3"]
+    assert rows["SUB-1"][0] == "прошла"
+    assert rows["SUB-2"] == ("не прошла", "password=*** отказ")
+    assert rows["SUB-3"][0] == "ошибка стенда"  # «прошла» без доказательства
+    evidence = next((store.run_dir / "evidence" / "1" / "SUB-1").iterdir()).read_text()
+    assert "s3cret" not in evidence
+    protocol = build_protocol(store, 1)
+    assert [t.title.split("]")[0] for t in protocol.tasks] == ["[SUB-2"]
+    parts = [e for e in events if e.kind == "result"]
+    assert [e.check_id for e in parts] == ["SUB-1", "SUB-2", "SUB-3"] and all(e.part for e in parts)
+    assert [e.check_id for e in events if e.kind == "done"] == ["FAKE-COMPOSITE-1"]
