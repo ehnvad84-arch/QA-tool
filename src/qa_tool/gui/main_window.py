@@ -1,6 +1,9 @@
 """Главное окно: меню из пяти экранов слева, строка статуса стенда снизу."""
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -12,7 +15,8 @@ from PySide6.QtWidgets import (
 
 from qa_tool import __version__
 from qa_tool.core.models import MAX_SLOTS
-from qa_tool.gui.help import helped
+from qa_tool.gui.help import help_id_of, helped
+from qa_tool.gui.help_window import HelpWindow
 from qa_tool.gui.screens import SCREENS
 from qa_tool.gui.state import AppState
 
@@ -49,8 +53,26 @@ class MainWindow(QMainWindow):
             QLabel(), "Состояние стенда: место, сколько камер на местах, идёт ли прогон.", "index"
         )
         self.statusBar().addPermanentWidget(self.status, 1)
+        self.help_window: HelpWindow | None = None
+        f1 = QShortcut(QKeySequence(QKeySequence.StandardKey.HelpContents), self, self.show_help)
+        f1.setContext(Qt.ShortcutContext.ApplicationShortcut)  # F1 и в окнах-диалогах
         self.menu.setCurrentRow(1)  # начинаем с камер
         self.update_status()
+
+    def help_target(self):
+        """Элемент под мышью, иначе элемент в фокусе (кроме меню), иначе текущий экран."""
+        hovered = QApplication.widgetAt(QCursor.pos())
+        if hovered is not None:
+            return hovered
+        focused = QApplication.focusWidget()
+        if focused is not None and focused is not self.menu:
+            return focused
+        return self.current_screen()
+
+    def show_help(self, widget=None):
+        if self.help_window is None:
+            self.help_window = HelpWindow(self)
+        return self.help_window.show_topic(help_id_of(widget or self.help_target()))
 
     def show_screen(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
