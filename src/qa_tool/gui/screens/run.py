@@ -18,6 +18,7 @@ from qa_tool.core.checks import Status
 from qa_tool.core.config import load_thresholds
 from qa_tool.core.models import MAX_SLOTS, ConfigError
 from qa_tool.core.scheduler import Event, Runner
+from qa_tool.core.secrets import redact
 from qa_tool.gui.help import helped
 from qa_tool.gui.screens.base import Screen
 
@@ -154,6 +155,9 @@ class RunScreen(Screen):
                 store = self.runner.run()
             except ConfigError as e:
                 self.signals.failed.emit(str(e))
+                return
+            except Exception as e:  # иначе state.running навсегда True и «Начать» недоступна
+                self.signals.failed.emit(f"ошибка стенда: {type(e).__name__}: {redact(str(e))}")
                 return
             store.close()  # база SQLite привязана к потоку: окно откроет её заново у себя
             self.signals.finished.emit(store.run_dir)

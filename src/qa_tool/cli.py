@@ -43,6 +43,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from qa_tool.core.checks import Status
     from qa_tool.core.config import load_scenario, load_stand, load_thresholds
     from qa_tool.core.scheduler import Runner, summary_status
+    from qa_tool.core.secrets import redact
 
     try:
         stand = load_stand(args.stand)
@@ -56,16 +57,21 @@ def cmd_run(args: argparse.Namespace) -> int:
             if event.kind == "phase":
                 print(f"— фаза: {event.title}")
             elif event.kind == "result":
-                tail = f" — {event.detail}" if event.detail else ""
+                tail = f" — {redact(event.detail)}" if event.detail else ""
                 print(f"  место {event.slot}: {event.check_id} {event.status}{tail}")
             elif event.kind == "lost":
                 print(f"  место {event.slot}: {event.detail}")
 
         store = Runner(stand, scenario, thresholds, on_event=show).run()
+        _publish(store)
     except ConfigError as e:
         print(f"Ошибка конфигурации: {e}", file=sys.stderr)
         return EXIT_STAND
-    _publish(store)
+    except Exception as e:  # сбой стенда или программы — не «есть не прошла» (S11)
+        from qa_tool.core.secrets import redact
+
+        print(f"Ошибка стенда: {type(e).__name__}: {redact(str(e))}", file=sys.stderr)
+        return EXIT_STAND
     worst = summary_status(store)
     print(f"Прогон {store.run_id}: {worst.value if worst else 'проверок нет'} → {store.run_dir}")
     return {Status.STAND_ERROR: EXIT_STAND, Status.FAILED: EXIT_FAILED}.get(worst, EXIT_OK)

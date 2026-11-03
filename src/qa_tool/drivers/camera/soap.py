@@ -9,6 +9,7 @@ import hashlib
 import os
 from dataclasses import dataclass, field
 from xml.etree.ElementTree import Element
+from xml.sax.saxutils import escape
 
 from defusedxml import ElementTree
 
@@ -57,7 +58,7 @@ class SoapClient:
         digest = base64.b64encode(hashlib.sha1(raw).digest()).decode()
         return (
             f'<wsse:Security xmlns:wsse="{_WSSE}" xmlns:wsu="{_WSU}"><wsse:UsernameToken>'
-            f"<wsse:Username>{self.username}</wsse:Username>"
+            f"<wsse:Username>{escape(self.username)}</wsse:Username>"
             f'<wsse:Password Type="{_WSSE[:-4]}-username-token-profile-1.0#PasswordDigest">'
             f"{digest}</wsse:Password>"
             f"<wsse:Nonce>{base64.b64encode(nonce).decode()}</wsse:Nonce>"

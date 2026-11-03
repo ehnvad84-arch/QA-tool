@@ -127,7 +127,10 @@ def test_lost_camera_marked_stand_error_others_finish(tmp_path, fleet):
                 ("ошибка стенда", "нет связи")
             }
         else:
-            assert {r["status"] for r in rows} == {"прошла"}, slot
+            assert {r["status"] for r in rows} == {"прошла"}, (
+                slot,
+                [(r["check_id"], r["status"], r["reason"]) for r in rows],
+            )
     assert store.run_info()["state"] == "завершён"
 
 
@@ -146,3 +149,72 @@ def test_hung_check_removes_only_that_camera(tmp_path, fleet):
         rows = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=slot)}
         assert rows["FAKE-HANG-1"] == ("ошибка стенда", "проверка зависла (> 1 с)")
         assert rows["FAKE-NET-1"][0] == "ошибка стенда"
+
+
+def test_camera_lost_during_failing_check_is_stand_error_not_task(tmp_path, fleet):
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+
+    def on_event(event):
+        if event.kind == "started" and event.slot == 3 and event.check_id == "FAKE-FAILS-1":
+            fleet[2].stop()
+
+    stand = make_stand(tmp_path, fleet[:4])
+    runner = Runner(
+        stand,
+        Scenario(checks=["FAKE-SLOW-1", "FAKE-FAILS-1"]),
+        registry_ref=REF,
+        on_event=on_event,
+        extra={"trace_dir": str(trace_dir)},
+    )
+    store = runner.run()
+    lost = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=3)}
+    assert lost["FAKE-FAILS-1"] == ("ошибка стенда", "нет связи"), lost
+    alive = {r["check_id"]: r["status"] for r in store.results(slot=1)}
+    assert alive["FAKE-FAILS-1"] == "не прошла"
+
+
+def test_three_sync_checks_on_shared_light_with_vendor_filter_do_not_hang(tmp_path, fleet):
+    import threading
+
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+    cams = [
+        Camera(slot=1, address="127.0.0.1", port=fleet[0].port, username="admin", vendor="a"),
+        Camera(slot=2, address="127.0.0.1", port=fleet[1].port, username="admin", vendor="b"),
+    ]
+    stand = Stand(place=Place.COLOR_BOX, runs_dir=tmp_path / "runs", cameras=cams)
+    runner = Runner(
+        stand,
+        Scenario(checks=["FAKE-SYNC-X", "FAKE-SYNC-Y", "FAKE-SYNC-Z"]),
+        registry_ref=REF,
+        extra={"trace_dir": str(trace_dir)},
+    )
+    done = {}
+
+    def run():
+        store = runner.run()
+        done["rows"] = [dict(r) for r in store.results()]  # база привязана к потоку прогона
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=40)
+    if worker.is_alive():
+        runner.stop()
+        worker.join(timeout=20)
+        raise AssertionError("прогон завис на барьере синхронных проверок")
+    statuses = {(r["slot"], r["check_id"]): r["status"] for r in done["rows"]}
+    assert statuses[(2, "FAKE-SYNC-Y")] == "прошла"
+    assert (1, "FAKE-SYNC-Y") not in statuses
+    assert {statuses[(s, c)] for s in (1, 2) for c in ("FAKE-SYNC-X", "FAKE-SYNC-Z")} == {"прошла"}
+
+
+def test_coordinator_freeze_extends_deadlines():
+    import time
+    from types import SimpleNamespace
+
+    runner = Runner.__new__(Runner)
+    cam = SimpleNamespace(alive=True, running=("FAKE-SLOW-1", 100.0))
+    runner.cams = {1: cam}
+    runner._compensate_freeze(time.monotonic() - 30)  # координатор «спал» 30 с
+    assert cam.running[1] >= 129.0

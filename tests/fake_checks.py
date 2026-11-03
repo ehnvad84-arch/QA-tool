@@ -42,5 +42,21 @@ _register("FAKE-SLOW-2", 1.0)
 _register("FAKE-SLOW-3", 1.0)
 _register("FAKE-HANG-1", 30, timeout_s=1)
 
+
+def _fails_after(seconds: float):
+    def check(ctx):
+        time.sleep(seconds)
+        return CheckResult(Status.FAILED, reason="камера ответила ошибкой")
+
+    return check
+
+
+# после первой проверки (order 200): к этому моменту камера уже «отвечала»
+REGISTRY.check("FAKE-FAILS-1", "fake", "падает", "", order=200)(_fails_after(1.0))
+# три синхронные проверки на одном свете; средняя — только для производителя «b» (находка W9)
+_register("FAKE-SYNC-X", 0.1, phase=Phase.SYNC, resources={"light"}, order=1)
+_register("FAKE-SYNC-Y", 0.1, phase=Phase.SYNC, resources={"light"}, order=2, vendors={"b"})
+_register("FAKE-SYNC-Z", 0.1, phase=Phase.SYNC, resources={"light"}, order=3)
+
 MAIN = ["FAKE-NET-1", "FAKE-NET-2", "FAKE-SYNC-1", "FAKE-LIGHT-1", "FAKE-STRESS-1"]
 SLOW = ["FAKE-SLOW-1", "FAKE-SLOW-2", "FAKE-SLOW-3"]

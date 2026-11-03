@@ -61,3 +61,19 @@ def test_discovery_finds_all_mock_cameras_within_10s(fleet, how):
     assert {m.port for m in fleet} <= ports  # в сети могут быть и другие ONVIF-устройства
     first = next(c for c in found if c.port == fleet[0].port)
     assert (first.manufacturer, first.model) == ("Ruver", "MOCK-1")
+
+
+def test_garbage_probe_matches_are_skipped():
+    from qa_tool.drivers.camera.discovery import parse_probe_matches
+
+    bad_port = (
+        b'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+        b'xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"><s:Body><d:ProbeMatches>'
+        b"<d:ProbeMatch><d:XAddrs>http://10.0.0.5:99999/onvif</d:XAddrs></d:ProbeMatch>"
+        b"<d:ProbeMatch><d:XAddrs>http://10.0.0.6/onvif</d:XAddrs></d:ProbeMatch>"
+        b"</d:ProbeMatches></s:Body></s:Envelope>"
+    )
+    assert [c.address for c in parse_probe_matches(bad_port)] == ["10.0.0.6"]
+    dtd = b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><x>&a;</x>'
+    with pytest.raises(ValueError):  # discover() пропускает такие пакеты (ловит ValueError)
+        parse_probe_matches(dtd)

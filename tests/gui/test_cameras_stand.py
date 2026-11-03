@@ -34,7 +34,7 @@ def test_eight_cameras_placed_ninth_rejected(window, tmp_path, memory_keyring):
     text = (tmp_path / "stand.yaml").read_text(encoding="utf-8")
     assert "pw" not in text and "password" not in text
     assert len(load_stand(tmp_path / "stand.yaml").cameras) == 8
-    assert memory_keyring.store[("qa-tool", "10.0.0.3")] == "pw"
+    assert memory_keyring.store[("qa-tool", "10.0.0.3:80")] == "pw"
     assert cameras.slot_labels[3].text().startswith("10.0.0.3")
 
 

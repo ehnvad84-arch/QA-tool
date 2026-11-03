@@ -51,3 +51,17 @@ def test_discover_lists_cameras(fleet, capsys):
     assert main(["discover", "--interface", "127.0.0.1", "--timeout", "2"]) == EXIT_OK
     out = capsys.readouterr().out
     assert "MOCK-1" in out and "Ruver" in out
+
+
+def test_unexpected_error_is_stand_error_exit_2(tmp_path, fleet, monkeypatch, capsys):
+    from qa_tool.core import scheduler
+
+    set_passwords(monkeypatch)
+
+    def broken(self):
+        raise OSError("папка прогонов недоступна, password=s3cret")
+
+    monkeypatch.setattr(scheduler.Runner, "run", broken)
+    assert main(["run", "--stand", str(write_stand(tmp_path, fleet))]) == EXIT_STAND
+    err = capsys.readouterr().err
+    assert "Ошибка стенда" in err and "s3cret" not in err

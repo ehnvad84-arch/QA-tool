@@ -29,10 +29,17 @@ CREATE TABLE IF NOT EXISTS results (
 """
 
 
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{p}{i}" for p in ("COM", "LPT") for i in range(10)
+}
+
+
 def safe_name(name: str, limit: int = 80) -> str:
     """Имя файла из недоверенной строки: только буквы, цифры, точка, дефис, подчёркивание."""
     cleaned = re.sub(r"[^\w.-]", "_", name, flags=re.UNICODE).lstrip(".")
     cleaned = re.sub(r"\.{2,}", "_", cleaned)
+    if cleaned.split(".")[0].upper() in _WINDOWS_RESERVED:
+        cleaned = "_" + cleaned
     return (cleaned or "file")[:limit]
 
 
@@ -44,13 +51,18 @@ def next_run_id(runs_dir: Path, today: datetime.date | None = None) -> str:
 
 
 class RunStore:
-    def __init__(self, run_dir: Path):
+    def __init__(self, run_dir: Path, readonly: bool = False):
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.evidence_root = run_dir / "evidence"
-        self.db = sqlite3.connect(run_dir / "run.sqlite")
+        if readonly:
+            uri = (run_dir / "run.sqlite").resolve().as_uri() + "?mode=ro"
+            self.db = sqlite3.connect(uri, uri=True)
+        else:
+            self.db = sqlite3.connect(run_dir / "run.sqlite")
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(_SCHEMA)
+        if not readonly:
+            self.db.executescript(_SCHEMA)
 
     @classmethod
     def create(cls, stand: Stand, scenario: Scenario) -> "RunStore":

@@ -48,12 +48,16 @@ def _table(
 ):
     ws.append(headers)
     for cell in ws[1]:
+        cell.data_type = "s"
+    for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.fill = _HEADER_FILL
     for row in rows:
         ws.append(row)
     for column in ws.iter_cols(min_row=2):
         for cell in column:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"  # «=HYPERLINK(…)» из ответа камеры — текст, не формула
             cell.alignment = Alignment(wrap_text=True, vertical="top")
             if cell.value in _STATUS_FILL:
                 cell.fill = _STATUS_FILL[cell.value]

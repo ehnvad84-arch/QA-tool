@@ -15,13 +15,22 @@ def _env_name(camera: Camera) -> str:
     return f"QA_TOOL_PASSWORD_{camera.slot}"
 
 
+def _key(camera: Camera) -> str:
+    """Две камеры за одним адресом (NAT, разные порты) не делят пароль."""
+    return f"{camera.address}:{camera.port}"
+
+
 def set_password(camera: Camera, password: str) -> None:
-    keyring.set_password(SERVICE, camera.address, password)
+    keyring.set_password(SERVICE, _key(camera), password)
 
 
 def get_password(camera: Camera) -> str:
     """Сначала переменная окружения (CI), потом системное хранилище паролей."""
-    password = os.environ.get(_env_name(camera)) or keyring.get_password(SERVICE, camera.address)
+    password = (
+        os.environ.get(_env_name(camera))
+        or keyring.get_password(SERVICE, _key(camera))
+        or keyring.get_password(SERVICE, camera.address)  # ключ ранних версий — только адрес
+    )
     if password is None:
         raise ConfigError(f"Место {camera.slot}: не задан пароль камеры {camera.address}")
     return password
@@ -40,11 +49,22 @@ _PATTERNS = [
     ),
     # JSON: "password": "…", "token": "…"
     (
-        re.compile(r'(?i)("(?:password|passwd|token|session|session_id)"\s*:\s*")[^"]*(")'),
+        re.compile(
+            r'(?i)("(?:password|passwd|pwd|pass|token|access_token|refresh_token|session|'
+            r'session_id|sessionid|secret|auth)"\s*:\s*")[^"]*(")'
+        ),
         rf"\g<1>{MASK}\g<2>",
     ),
     # строка запроса и формы: password=…&
-    (re.compile(r"(?i)\b((?:password|passwd|token)=)[^&\s\"']+"), rf"\g<1>{MASK}"),
+    (
+        re.compile(
+            r"(?i)((?:^|[?&;\s_])(?:password|passwd|pwd|pass|token|access_token|sessionid|"
+            r"session_id|auth|secret)=)[^&\s\"']+"
+        ),
+        rf"\g<1>{MASK}",
+    ),
+    # логин и пароль в адресе: rtsp://user:pass@host
+    (re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://[^:/@\s]+:)[^@\s]+(@)"), rf"\g<1>{MASK}\g<2>"),
 ]
 
 

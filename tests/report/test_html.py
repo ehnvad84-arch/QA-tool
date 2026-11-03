@@ -105,3 +105,25 @@ def test_pdf_and_excel_published(store):
     camera = load_workbook(store.run_dir / "protocol_1.xlsx")
     assert camera.sheetnames == ["Сводка", "Проверки", "Задачи"]
     assert camera["Задачи"].max_row == 2  # заголовок + одна задача
+
+
+def test_camera_text_never_becomes_excel_formula(store):
+    from openpyxl import load_workbook
+
+    store.set_passport(
+        2,
+        {
+            "manufacturer": "Evil",
+            "model": "M",
+            "serial": "S",
+            "firmware": '=HYPERLINK("http://x","Открыть")',
+        },
+    )
+    publish(store)
+    cells = [
+        c
+        for row in load_workbook(store.run_dir / "protocol_2.xlsx")["Сводка"].iter_rows()
+        for c in row
+        if isinstance(c.value, str) and c.value.startswith("=")
+    ]
+    assert cells and all(c.data_type == "s" for c in cells)

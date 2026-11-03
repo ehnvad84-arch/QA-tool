@@ -11,3 +11,4 @@ build/
 dist/
 runs/
 packaging/icon.ico
+*.log

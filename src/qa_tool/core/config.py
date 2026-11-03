@@ -7,7 +7,7 @@ import yaml
 
 from qa_tool.core.models import Camera, ConfigError, Place, Scenario, Stand, Threshold
 
-_FORBIDDEN_CAMERA_KEYS = {"password", "пароль"}
+_FORBIDDEN_CAMERA_KEYS = {"password", "passwd", "pwd", "pass", "secret", "пароль"}
 
 
 def _read_yaml(path: Path) -> Any:
@@ -21,6 +21,8 @@ def _read_yaml(path: Path) -> Any:
 
 def load_stand(path: Path) -> Stand:
     data = _read_yaml(path)
+    if _FORBIDDEN_CAMERA_KEYS & {str(k).lower() for k in data}:
+        raise ConfigError(f"{path.name}: пароль в файле стенда хранить нельзя")
     try:
         place = Place(data.get("place", Place.COLOR_BOX))
     except ValueError as e:
@@ -31,7 +33,7 @@ def load_stand(path: Path) -> Stand:
         runs_dir = path.parent / runs_dir
     cameras = []
     for raw in data.get("cameras") or []:
-        if _FORBIDDEN_CAMERA_KEYS & set(raw):
+        if _FORBIDDEN_CAMERA_KEYS & {str(k).lower() for k in raw}:
             raise ConfigError(
                 f"{path.name}, место {raw.get('slot')}: пароль в файле хранить нельзя — "
                 "он задаётся в программе и лежит в системном хранилище паролей"

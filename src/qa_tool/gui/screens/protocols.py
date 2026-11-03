@@ -1,5 +1,6 @@
 """Экран «Протоколы»: прогоны из папки прогонов, протоколы камер и сводка в трёх форматах."""
 
+import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -24,7 +25,10 @@ def list_runs(runs_dir: Path) -> list[dict]:
     for run_dir in sorted(runs_dir.glob("QA-*"), reverse=True):
         if not (run_dir / "run.sqlite").exists():
             continue
-        store = RunStore(run_dir)
+        try:
+            store = RunStore(run_dir, readonly=True)
+        except sqlite3.Error:
+            continue  # битый или чужой файл — остальные прогоны всё равно показываем
         try:
             info = store.run_info()
             worst = summary_status(store)
@@ -42,6 +46,8 @@ def list_runs(runs_dir: Path) -> list[dict]:
                     "cameras": cameras,
                 }
             )
+        except (sqlite3.Error, KeyError, ValueError, TypeError):
+            continue
         finally:
             store.close()
     return runs

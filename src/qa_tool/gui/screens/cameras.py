@@ -118,8 +118,8 @@ class CamerasScreen(Screen):
         def work():
             try:
                 self.signals.done.emit(discover(timeout=3.0, interface=interface))
-            except OSError as e:
-                self.signals.failed.emit(str(e))
+            except Exception as e:  # любая ошибка — сообщение, а не залипшая кнопка
+                self.signals.failed.emit(f"{type(e).__name__}: {e}")
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -178,9 +178,14 @@ class CamerasScreen(Screen):
         """Поставить камеру на место; ConfigError — если мест нет или место занято."""
         if not self.state.stand.free_slots():
             raise ConfigError(NO_FREE_SLOTS)
-        self.state.stand.add_camera(camera)
+        if camera.slot not in self.state.stand.free_slots():
+            raise ConfigError(f"Место {camera.slot} уже занято")
         if password:
-            set_password(camera, password)
+            try:
+                set_password(camera, password)
+            except Exception as e:  # нет системного хранилища паролей и т. п.
+                raise ConfigError(f"Пароль не сохранён в хранилище паролей: {e}") from e
+        self.state.stand.add_camera(camera)
         self.state.save()
         self.refresh()
         self.notify()

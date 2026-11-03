@@ -56,11 +56,17 @@ def parse_probe_matches(data: bytes) -> list[FoundCamera]:
         if not xaddrs:
             continue
         url = urlparse(xaddrs[0])
+        try:
+            port = url.port or 80
+        except ValueError:  # «:99999» и прочий мусор от чужого устройства — пропускаем
+            continue
+        if not url.hostname:
+            continue
         scopes = (match.findtext("d:Scopes", default="", namespaces=_NS) or "").split()
         found.append(
             FoundCamera(
-                address=url.hostname or "",
-                port=url.port or 80,
+                address=url.hostname,
+                port=port,
                 xaddrs=xaddrs,
                 manufacturer=_scope_value(scopes, "name"),
                 model=_scope_value(scopes, "hardware"),
@@ -79,7 +85,7 @@ def discover(
     карты компьютера, смотрящей в сеть камер (пусто — карта по умолчанию).
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)  # только своя подсеть
     if interface:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
@@ -96,7 +102,7 @@ def discover(
                 break
             try:
                 matches = parse_probe_matches(data)
-            except ElementTree.ParseError:
+            except (ElementTree.ParseError, ValueError):  # битый XML, DTD, ENTITY (defusedxml)
                 continue  # чужой или битый пакет — пропускаем
             for camera in matches:
                 found.setdefault(camera.xaddrs[0], camera)

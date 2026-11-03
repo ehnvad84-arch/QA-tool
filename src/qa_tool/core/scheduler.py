@@ -16,6 +16,7 @@ from qa_tool.core.store import RunStore
 from qa_tool.core.worker import STOPPED, WorkerArgs, resolve_registry, worker_main
 
 DEFAULT_REGISTRY = "qa_tool.checks:registry"
+FREEZE_GAP_S = 2.0  # цикл координатора крутится каждые 0,2 с; дольше 2 с — значит, он стоял
 
 
 @dataclass
@@ -126,6 +127,7 @@ class Runner:
             c.phase_done = False
             c.inbox.put(("phase", int(phase)))
         stop_sent = False
+        last_tick = time.monotonic()
         while any(not c.phase_done for c in self._alive()):
             if self._stop.is_set() and not stop_sent:
                 self._abort_waiting()
@@ -133,9 +135,10 @@ class Runner:
             try:
                 message = self.outbox.get(timeout=0.2)
             except queue.Empty:
-                self._check_health()
-                continue
-            self._handle(message)
+                message = None
+            last_tick = self._compensate_freeze(last_tick)
+            if message is not None:
+                self._handle(message)
             self._check_health()
 
     # --- сообщения рабочих --------------------------------------------------------------------
@@ -201,6 +204,8 @@ class Runner:
         for r in [r for r, o in self.locks.items() if o == owner]:
             del self.locks[r]
         self._grant_locks()
+        for check_id in list(self.barriers):  # синхронная проверка могла ждать этот ресурс
+            self._try_barrier(check_id)
 
     def _participants(self, check_id: str) -> set[int]:
         return {
@@ -240,6 +245,18 @@ class Runner:
     def _alive(self) -> list[_Camera]:
         return [c for c in self.cams.values() if c.alive]
 
+    def _compensate_freeze(self, last_tick: float) -> float:
+        """Если координатор сам долго не получал процессорного времени (перегрузка компьютера,
+        подкачка), он не может судить о зависании проверок: сроки сдвигаются на время простоя.
+        Без этого одна заминка стенда превращала бы все идущие проверки в «зависшие»."""
+        now = time.monotonic()
+        gap = now - last_tick
+        if gap > FREEZE_GAP_S:
+            for c in self._alive():
+                if c.running:
+                    c.running = (c.running[0], c.running[1] + gap)
+        return now
+
     def _check_health(self) -> None:
         now = time.monotonic()
         for c in self._alive():
@@ -254,7 +271,12 @@ class Runner:
                 )
                 self._lose(c, "ошибка стенда: проверка зависла, камера снята с прогона")
             elif not c.process.is_alive():
-                self._lose(c, "ошибка стенда: рабочий процесс камеры завершился аварийно")
+                code = c.process.exitcode
+                hint = " — убит системой, возможно, не хватило памяти" if code == -9 else ""
+                self._lose(
+                    c,
+                    f"ошибка стенда: рабочий процесс камеры завершился аварийно (код {code}{hint})",
+                )
 
     def _lose(self, c: _Camera, reason: str) -> None:
         if c.process.is_alive():
