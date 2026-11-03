@@ -163,3 +163,7 @@ def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> Ch
         result = CheckResult.stand_error("проверка не сохранила доказательство")
     result.duration_s = time.monotonic() - start
     return result
+
+
+REGISTRY = Registry()
+"""Общий реестр: модули из qa_tool.checks регистрируют в него свои проверки."""
