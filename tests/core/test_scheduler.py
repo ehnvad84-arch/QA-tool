@@ -82,7 +82,8 @@ def test_stop_skips_unstarted_checks(tmp_path, fleet):
     runner = None
 
     def on_event(event):
-        if event.kind == "result":
+        # остановка во время первой проверки: у координатора целая секунда, чтобы успеть
+        if event.kind == "started":
             runner.stop()
 
     runner = Runner(

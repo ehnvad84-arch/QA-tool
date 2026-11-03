@@ -37,9 +37,9 @@ _register("FAKE-NET-2", 0.05)
 _register("FAKE-SYNC-1", 0.1, phase=Phase.SYNC, resources={"light"})
 _register("FAKE-LIGHT-1", 0.1, phase=Phase.SEQUENTIAL, resources={"light"})
 _register("FAKE-STRESS-1", 0.05, phase=Phase.STRESS)
-_register("FAKE-SLOW-1", 0.4)
-_register("FAKE-SLOW-2", 0.4)
-_register("FAKE-SLOW-3", 0.4)
+_register("FAKE-SLOW-1", 1.0)
+_register("FAKE-SLOW-2", 1.0)
+_register("FAKE-SLOW-3", 1.0)
 _register("FAKE-HANG-1", 30, timeout_s=1)
 
 MAIN = ["FAKE-NET-1", "FAKE-NET-2", "FAKE-SYNC-1", "FAKE-LIGHT-1", "FAKE-STRESS-1"]

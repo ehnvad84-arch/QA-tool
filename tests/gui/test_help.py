@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QWidget
 
 from qa_tool.gui.app import create_app
@@ -43,7 +44,7 @@ def test_f1_on_cameras_screen_opens_cameras_section(qtbot, tmp_path):
     assert "Камеры" in window.help_window.browser.toPlainText()
 
 
-def test_f1_key_uses_focused_element(qtbot, tmp_path, monkeypatch):
+def test_f1_shortcut_uses_focused_element(qtbot, tmp_path, monkeypatch):
     window = make_window(qtbot, tmp_path)
     window.menu.setCurrentRow(1)
     cameras = window.current_screen()
@@ -51,9 +52,10 @@ def test_f1_key_uses_focused_element(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "qa_tool.gui.main_window.QApplication.focusWidget", lambda: cameras.find_button
     )
-    window.activateWindow()
-    qtbot.waitUntil(window.isActiveWindow, timeout=3000)
-    qtbot.keyClick(window, Qt.Key.Key_F1)
+    # привязку F1 проверяем напрямую: доставка нажатия зависит от того, какое окно ОС активно
+    f1 = next(s for s in window.findChildren(QShortcut) if s.key() == QKeySequence(Qt.Key.Key_F1))
+    assert f1.context() == Qt.ShortcutContext.ApplicationShortcut
+    f1.activated.emit()
     assert window.help_window is not None and window.help_window.isVisible()
     assert window.help_window.current.help_id == "cameras-find"
     assert window.help_window.windowTitle() == "Справка — Поиск камер"
