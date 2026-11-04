@@ -5,6 +5,7 @@ from qa_tool.drivers.camera import http
 from qa_tool.drivers.camera.ruver import client as client_module
 from qa_tool.drivers.camera.ruver.client import (
     CallRefused,
+    LoginFailed,
     LoginRejected,
     NoFreeSession,
     Operation,
@@ -149,6 +150,18 @@ def test_expected_restart_does_not_lift_a_password_refusal(camera):
         pass
     client = client_for(camera, password="wrong")
     with pytest.raises(LoginRejected):
+        client._login()
+    client.expect_restart()
+    assert client._relogin_used is True
+
+
+def test_expected_restart_does_not_lift_a_lockout(camera, monkeypatch):
+    client = client_for(camera)
+    locked = http.Response(401, json={"errorCode": 2003})
+    created = http.Response(200, json={"sessionID": "s"})
+    answers = iter([created, locked])
+    monkeypatch.setattr(http, "request", lambda *a, **k: next(answers))
+    with pytest.raises(LoginFailed):
         client._login()
     client.expect_restart()
     assert client._relogin_used is True

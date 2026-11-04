@@ -410,6 +410,33 @@ def test_block_that_cannot_be_returned_is_left_changed(camera):
     assert LEFT_CHANGED in found.reason
 
 
+def test_stream_with_failed_snapshot_is_not_called_matching(camera):
+    camera.blocks_by_stream["secondary"] = [block(1, 900)]
+    dropped = []
+
+    def drop_first_read(logged):
+        wanted = logged.path == "/api/osd/block_positions" and "secondary" in logged.query
+        if wanted and not dropped:
+            dropped.append(logged)
+            return True
+        return False
+
+    camera.drops_answer_for = drop_first_read
+    found = rows_of(run(camera, allow_writes=True))[RESTORE_ID]
+    assert found.status is Status.STAND_ERROR
+    assert "сверка не закончена" in found.reason
+
+
+def test_stream_the_camera_does_not_have_is_not_a_problem(camera):
+    camera.absent_streams.add("preview")
+    assert rows_of(run(camera, allow_writes=True))[RESTORE_ID].status is Status.PASSED
+
+
+def test_block_without_coordinates_does_not_break_the_walk(camera):
+    camera.blocks_by_stream["secondary"] = [{"id": 1}]
+    assert rows_of(run(camera, allow_writes=True))[RESTORE_ID].status is Status.PASSED
+
+
 def test_setting_that_needs_reboot_is_not_written(camera):
     camera.reboot_needed.add(BRIGHTNESS)
     found = row(run(camera, allow_writes=True), "POST", BRIGHTNESS)
@@ -520,6 +547,25 @@ def test_lost_answer_without_reboot_is_stand_error(camera):
     extra = {"api_reboot_down_s": 0.05}
     found = row(run(camera, allow_destructive=True, extra=extra), "POST", "/api/service/reboot")
     assert found.status is Status.STAND_ERROR
+
+
+def test_one_lost_answer_is_not_a_reboot(camera):
+    camera.fake_reboot = True
+    lost = []
+
+    def lose_one_info(logged):
+        after_reboot = camera.sent("POST", "/api/service/reboot")
+        if after_reboot and logged.path == "/api/info" and not lost:
+            lost.append(logged)
+            return True
+        return False
+
+    camera.drops_answer_for = lose_one_info
+    extra = {"api_reboot_down_s": 0.1}
+    found = row(run(camera, allow_destructive=True, extra=extra), "POST", "/api/service/reboot")
+    assert lost
+    assert found.status is Status.FAILED
+    assert "не ушла в перезагрузку" in found.reason
 
 
 def test_reboot_without_answer_still_waits_for_the_camera(camera):

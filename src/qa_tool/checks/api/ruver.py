@@ -64,6 +64,8 @@ REBOOT = "/api/service/reboot"
 BLOCKS = "/api/osd/block_positions"
 SET_BLOCK = "/api/osd/set_block_position"
 STREAMS = ("primary", "secondary", "preview")
+NO_STREAM = object()  # такого потока у камеры нет, в отличие от сбоя чтения
+DOWN_MISSES = 2  # одиночный тайм-аут — ещё не уход в перезагрузку
 # Камера не ответила или повторный вход не удался. CallRefused сюда не входит: это ошибка программы.
 LOST = (http.TransportError, LoginRejected, LoginFailed, NoFreeSession)
 # Адрес → признак в ответе /api/hardware. Сверено на камере TMID-018 с прошивкой 0.6.14.
@@ -186,6 +188,7 @@ class Walk:
     wrote: bool = False  # что-то могло измениться: нужна сверка «до и после»
     features: dict[str, Any] = field(default_factory=dict)  # ответ /api/hardware
     blocks: dict[str, list] = field(default_factory=dict)  # надписи по потокам до записи
+    blocks_unread: list[str] = field(default_factory=list)  # потоки без снимка: сверить нельзя
 
     # --- общее ------------------------------------------------------------------------------
 
@@ -247,7 +250,12 @@ class Walk:
         for op in sorted(reads, key=lambda op: first.get(op.path, 2)):
             self._row(op, self._read(op))
         if self.ctx.allow_writes:
-            self.blocks = {s: b for s in STREAMS if (b := self._blocks_of(s)) is not None}
+            for stream in STREAMS:
+                found = self._blocks_of(stream)
+                if isinstance(found, list):
+                    self.blocks[stream] = found
+                elif found is not NO_STREAM:
+                    self.blocks_unread.append(stream)
 
     def _absent(self, op: Operation) -> str:
         """Причина пропуска, если функции операции у этой модели нет; пусто — функция есть."""
@@ -530,29 +538,33 @@ class Walk:
             if isinstance(before, dict) and op.setting in before:
                 self._return_value(op, read_op, before[op.setting])
 
-    def _blocks_of(self, stream: str) -> list | None:
-        """Надписи потока; None — у этой камеры потока нет или чтение не удалось."""
+    def _blocks_of(self, stream: str) -> Any:
+        """Надписи потока; `NO_STREAM` — потока у камеры нет; None — чтение не удалось."""
         read_op = self.api.get("GET", BLOCKS)
         try:
             response = self.client.call(read_op, query={"stream_id": stream})
+            if response.status_code in (400, 404):
+                return NO_STREAM
             blocks = response.json()["overlayBlocks"] if response.status_code == 200 else None
         except (ValueError, KeyError, TypeError, *LOST):
             return None
         return blocks if isinstance(blocks, list) else None
 
-    def _moved_blocks(self) -> list[tuple[str, dict]]:
-        """Надписи, стоящие не там, где до записи: (поток, положение до записи)."""
-        moved = []
+    def _moved_blocks(self) -> tuple[list[tuple[str, dict]], list[str]]:
+        """Надписи не на месте: (поток, положение до записи); и потоки, которые не прочитаны."""
+        moved, unread = [], list(self.blocks_unread)
         for stream, before in self.blocks.items():
-            now = _by_id(self._blocks_of(stream) or [])
-            for block in before if now else []:
+            found = self._blocks_of(stream)
+            now = _by_id(found) if isinstance(found, list) else None
+            if now is None:
+                unread.append(stream)
+                continue
+            for block in before:
                 current = now.get(block.get("id")) if isinstance(block, dict) else None
-                if current and (current.get("x"), current.get("y")) != (
-                    block.get("x"),
-                    block.get("y"),
-                ):
+                has_place = current and "x" in block and "y" in block
+                if has_place and (current.get("x"), current.get("y")) != (block["x"], block["y"]):
                     moved.append((stream, block))
-        return moved
+        return moved, unread
 
     def _return_blocks(self, moved: list[tuple[str, dict]]) -> None:
         """Вернуть сдвинутые надписи по снимку «до»; сдвиг остаётся задачей программистам."""
@@ -597,7 +609,7 @@ class Walk:
         changed, unread = self._read_again()
         first = list(changed)
         self._repair(changed)
-        moved = self._moved_blocks()
+        moved, _ = self._moved_blocks()
         if moved:
             self._return_blocks(moved)
         if changed or moved:
@@ -605,10 +617,9 @@ class Walk:
         repaired = [path for path in first if path not in changed and path not in unread]
         self._settle_rows(changed, unread)
         lines = [f"{path}: {', '.join(fields)}" for path, fields in changed.items()]
-        lines += [
-            f"{BLOCKS}?stream_id={stream}: надпись №{block['id']}"
-            for stream, block in self._moved_blocks()
-        ]
+        left, streams = self._moved_blocks()
+        lines += [f"{BLOCKS}?stream_id={stream}: надпись №{b['id']}" for stream, b in left]
+        unread = [*unread, *(f"{BLOCKS}?stream_id={stream}" for stream in streams)]
         expected = "настройки после записи совпадают с обходом чтения до неё"
         text = "\n".join(
             ["Разошлись:", *lines, "Не прочитаны:", *unread, "Вернулись при сверке:", *repaired]
@@ -724,8 +735,10 @@ class Walk:
         extra = self.ctx.extra
         poll = float(extra.get("api_reboot_poll_s", REBOOT_POLL_S))
         limit = time.monotonic() + float(extra.get("api_reboot_down_s", REBOOT_DOWN_S))
-        while self._answers(info):
-            if time.monotonic() > limit:
+        misses = 0
+        while misses < DOWN_MISSES:
+            misses = 0 if self._reachable(info) else misses + 1
+            if misses < DOWN_MISSES and time.monotonic() > limit:
                 return NOT_DOWN
             time.sleep(poll)
         wait_s = float(extra.get("api_reboot_wait_s", REBOOT_WAIT_S))
@@ -736,14 +749,22 @@ class Walk:
             time.sleep(poll)
         return f"камера не вернулась за {wait_s:g} с"
 
-    def _answers(self, info: Operation) -> bool:
-        """Отвечает ли служба API; отказ при повторном входе тоже значит, что она жива."""
+    def _reachable(self, info: Operation) -> bool:
+        """Есть ли связь со службой API: любой ответ, даже отказ при входе, значит, что есть."""
         try:
-            return self.client.call(info).status_code == 200
+            self.client.call(info)
         except http.TransportError:
             return False
         except LOST:
             return True
+        return True
+
+    def _answers(self, info: Operation) -> bool:
+        """Вернулась ли служба API: чтение отвечает 200."""
+        try:
+            return self.client.call(info).status_code == 200
+        except LOST:
+            return False
 
     # --- итог -------------------------------------------------------------------------------
 

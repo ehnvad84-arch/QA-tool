@@ -77,6 +77,7 @@ class MockRuver:
     down_s: float = 0.15
     blocks_by_stream: dict[str, list] = field(default_factory=dict)  # надписи других потоков
     refuses_block_return: bool = False
+    absent_streams: set[str] = field(default_factory=set)  # чтение надписей отвечает 400
     fake_reboot: bool = False  # отвечает 200, но не перезагружается
     drops_reboot_answer: bool = False  # уходит в перезагрузку, не ответив
     drops_answer_for: Callable[[Logged], bool] | None = None  # значение применено, ответ потерян
@@ -222,6 +223,8 @@ class MockRuver:
             self._down_until = time.monotonic() + self.down_s
             return 200, None
         stream = parse_qs(query).get("stream_id", ["primary"])[0]
+        if path == "/api/osd/block_positions" and stream in self.absent_streams:
+            return 400, {"errorCode": 3, "errorDescription": "Invalid parameter"}
         if path == "/api/osd/block_positions" and stream in self.blocks_by_stream:
             return 200, {"overlayBlocks": self.blocks_by_stream[stream]}
         if path == "/api/osd/set_block_position":

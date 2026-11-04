@@ -168,7 +168,7 @@ class RuverClient:
         self.timeout = timeout
         self.session_id = ""
         self._relogin_used = False
-        self._password_rejected = False
+        self._login_refused = False
 
     def __enter__(self) -> "RuverClient":
         try:
@@ -219,9 +219,10 @@ class RuverClient:
         if answer.status_code == 409:
             raise NoFreeSession("нет свободного сеанса: на камере заняты все сеансы")
         if code == 2003:
+            self._login_refused = True
             raise LoginFailed("камера заблокировала вход: превышено число попыток")
         if answer.status_code in (401, 404):
-            self._password_rejected = True
+            self._login_refused = True
             raise LoginRejected(f"камера не приняла логин или пароль (код {code})")
         raise LoginFailed(f"вход не состоялся: код {answer.status_code}")
 
@@ -238,10 +239,10 @@ class RuverClient:
     def expect_restart(self) -> None:
         """Разрешить ещё один повторный вход: служба API камеры перезапускается ожидаемо.
 
-        Пароль уже подтверждён, а сеанс закрывает сама камера. После отказа в пароле вход
-        не разрешается: он расходует попытки.
+        Пароль уже подтверждён, а сеанс закрывает сама камера. После отказа в пароле или
+        блокировки вход не разрешается: он расходует попытки.
         """
-        self._relogin_used = self._password_rejected
+        self._relogin_used = self._login_refused
 
     def _check_allowed(self, op: Operation) -> None:
         if self.api.get(op.method, op.path) != op:
