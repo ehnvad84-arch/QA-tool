@@ -15,6 +15,7 @@ Profiles Conformance (они же — строки матрицы `profiles.py`)
 """
 
 from urllib.parse import urlsplit, urlunsplit
+from xml.sax.saxutils import escape
 
 from defusedxml import ElementTree
 
@@ -93,7 +94,7 @@ def stream_uri(soap: SoapClient, media2_url: str, profile: str) -> str:
     answer = soap.call(
         media2_url,
         "<tr2:GetStreamUri><tr2:Protocol>RTSP</tr2:Protocol>"
-        f"<tr2:ProfileToken>{profile}</tr2:ProfileToken></tr2:GetStreamUri>",
+        f"<tr2:ProfileToken>{escape(profile)}</tr2:ProfileToken></tr2:GetStreamUri>",
     )
     return next(((e.text or "").strip() for e in answer.iter() if _local(e.tag) == "Uri"), "")
 
@@ -318,7 +319,7 @@ def analytics_modules(ctx: CheckContext) -> CheckResult:
         answer = soap.call(services["media2"], "<tr2:GetAnalyticsConfigurations/>")
         configs = _tokens(answer, "Configurations")
         for token in configs:
-            body = f"<tan:ConfigurationToken>{token}</tan:ConfigurationToken>"
+            body = f"<tan:ConfigurationToken>{escape(token)}</tan:ConfigurationToken>"
             supported = _module_types(
                 soap.call(
                     services["analytics"],

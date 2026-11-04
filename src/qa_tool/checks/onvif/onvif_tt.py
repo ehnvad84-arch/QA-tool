@@ -274,7 +274,10 @@ def _run(ctx: CheckContext, proxy: TabooProxy, writes: bool) -> CheckResult:
     try:
         with tempfile.TemporaryDirectory(prefix="qa-tool-ott-") as folder:
             report = Path(folder) / "report.json"
-            timeout_s = float(ctx.extra.get("onvif_tt_timeout_s", MODULE_TIMEOUT_S))
+            # выше предела планировщик снимет процесс раньше, и настройки не восстановятся
+            timeout_s = min(
+                float(ctx.extra.get("onvif_tt_timeout_s", MODULE_TIMEOUT_S)), MODULE_TIMEOUT_S
+            )
             try:
                 tail = run_onvif_tt(ctx, proxy, report, timeout_s, writes)
             except subprocess.TimeoutExpired:

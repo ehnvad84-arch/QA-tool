@@ -34,8 +34,15 @@ SERVICE_KEYS = {
 }
 
 
-def service_urls(soap: SoapClient, camera: Camera) -> dict[str, str]:
+def service_urls(
+    soap: SoapClient, camera: Camera, foreign: list[str] | None = None
+) -> dict[str, str]:
     """Адреса служб камеры по GetServices; адрес на чужом хосте отброшен (security.md).
+
+    Args:
+        soap: клиент ONVIF камеры.
+        camera: камера со стенда.
+        foreign: сюда дописываются имена отброшенных служб — для причины в протоколе.
 
     Raises:
         CameraUnreachable, OnvifFault: GetServices не прошёл.
@@ -50,8 +57,12 @@ def service_urls(soap: SoapClient, camera: Camera) -> dict[str, str]:
         namespace = next((c.text or "" for c in service if c.tag.endswith("}Namespace")), "")
         url = next((c.text or "" for c in service if c.tag.endswith("}XAddr")), "").strip()
         key = SERVICE_KEYS.get(namespace.strip())
-        if key and key != "device" and urlsplit(url).hostname == camera.address:
+        if not key or key == "device":
+            continue
+        if urlsplit(url).hostname == camera.address:
             out[key] = url
+        elif foreign is not None:
+            foreign.append(key)
     return out
 
 

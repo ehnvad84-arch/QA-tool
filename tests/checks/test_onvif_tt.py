@@ -200,3 +200,28 @@ def test_path_for_onvif_tt_has_no_ffprobe(tmp_path):
     (with_ffprobe / ("ffprobe.exe" if os.name == "nt" else "ffprobe")).write_text("")
     path = os.pathsep.join([str(with_ffprobe), str(plain)])
     assert onvif_tt.path_without_ffprobe(path) == str(plain)
+
+
+def test_timeout_above_module_limit_is_capped(mock, monkeypatch):
+    # больший тайм-аут планировщик снял бы вместе с процессом — до восстановления настроек
+    seen = {}
+
+    def hang(command, env, timeout, **kwargs):
+        seen["timeout"] = timeout
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(onvif_tt.subprocess, "run", hang)
+    run_check(SPEC, ctx_for(mock, onvif_tt_timeout_s=onvif_tt.MODULE_TIMEOUT_S * 10))
+    assert seen["timeout"] == onvif_tt.MODULE_TIMEOUT_S
+
+
+def test_every_changing_doorcontrol_test_is_excluded():
+    from onvif_tt import registry
+
+    registry.discover()
+    changing = {
+        i
+        for i, impl in registry.REGISTRY.items()
+        if impl.requires_writes and i.startswith("DOORCONTROL")
+    }
+    assert changing and changing <= set(EXCLUDED)  # новая версия onvif-tt — сверить

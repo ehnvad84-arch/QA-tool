@@ -191,3 +191,32 @@ def test_outside_recording_without_onvif_time_is_reported():
     stats = {"seconds": 12.0, "frames": 120, "keyframes": 2, "codec": "h264"}
     rec = {"start": "2026-11-04T08:00:00Z", "end": "2026-11-04T09:00:00Z"}
     assert "нет времени кадров" in replay.outside_recording(stats, rec)
+
+
+def test_record_time_above_limit_is_capped(monkeypatch):
+    # большее время планировщик снял бы вместе с процессом — до возврата режимов записи
+    seen = {}
+
+    def record(_soap, _url, seconds):
+        seen["seconds"] = seconds
+        return []
+
+    monkeypatch.setattr(replay, "record_for_a_while", record)
+    cam = start()
+    try:
+        ctx = ctx_for(cam, writes=True)
+        ctx.extra["replay_record_s"] = replay.DEFAULT_RECORD_S * 10
+        run_check(SPEC, ctx)
+        assert seen["seconds"] == replay.DEFAULT_RECORD_S
+    finally:
+        cam.stop()
+
+
+def test_services_on_foreign_host_are_named_in_skip_reason():
+    cam = start(foreign_services=("search",))
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.SKIPPED
+        assert "на чужом хосте" in result.reason and "search" in result.reason
+    finally:
+        cam.stop()

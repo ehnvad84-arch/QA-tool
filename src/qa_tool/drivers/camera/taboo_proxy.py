@@ -122,28 +122,27 @@ class TabooProxy:
         RTSP и прочие схемы не трогаются.
         """
 
-        def to_proxy(match: re.Match) -> str:
-            scheme, host, port, path = (
-                match.group(1),
-                match.group(2),
-                match.group(3),
-                match.group(4),
-            )
-            if host.lower() == self.camera_address.lower():
-                target = int(port) if port else (443 if scheme.lower() == "https" else 80)
-                return f"{self.base_url}/_port/{target}{path or ''}"
-            return match.group(0)
-
         def foreign_in_field(match: re.Match) -> str:
-            def to_foreign(url: re.Match) -> str:
-                if url.group(0).startswith(self.base_url):
-                    return url.group(0)
-                return f"{self.base_url}{_FOREIGN}/{url.group(2)}{url.group(4) or ''}"
+            return match.group(1) + _HTTP_URL.sub(self._to_foreign, match.group(3)) + match.group(4)
 
-            return match.group(1) + _HTTP_URL.sub(to_foreign, match.group(3)) + match.group(4)
-
-        text = _HTTP_URL.sub(to_proxy, text)
+        text = _HTTP_URL.sub(self._to_proxy, text)
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
+
+    def rewrite_location(self, location: str) -> str:
+        """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ."""
+        return _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
+
+    def _to_proxy(self, match: re.Match) -> str:
+        scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
+        if host.lower() == self.camera_address.lower():
+            target = int(port) if port else (443 if scheme.lower() == "https" else 80)
+            return f"{self.base_url}/_port/{target}{path or ''}"
+        return match.group(0)
+
+    def _to_foreign(self, url: re.Match) -> str:
+        if url.group(0).startswith(self.base_url):
+            return url.group(0)
+        return f"{self.base_url}{_FOREIGN}/{url.group(2)}{url.group(4) or ''}"
 
     # --- обработка запросов -------------------------------------------------------------------
 
@@ -180,7 +179,12 @@ class TabooProxy:
                 content_type = response.headers.get("content-type", "")
                 if any(t in content_type for t in ("xml", "soap", "json", "html", "text")):
                     charset = response.encoding or "utf-8"
-                    content = proxy.rewrite(content.decode(charset, "replace")).encode(charset)
+                    # U+FFFD от битых байт однобайтовая кодировка обратно не примет
+                    text = proxy.rewrite(content.decode(charset, "replace"))
+                    content = text.encode(charset, "replace")
+                if "location" in response.headers:
+                    location = response.headers["location"]
+                    response.headers["location"] = proxy.rewrite_location(location)
                 self._reply(response.status_code, content, response.headers)
 
             def _reply(self, status: int, content: bytes, headers=None) -> None:

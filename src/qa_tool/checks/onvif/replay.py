@@ -320,11 +320,13 @@ def replay(ctx: CheckContext) -> CheckResult:
         "время кадров — в пределах записи"
     )
     try:
-        services = service_urls(soap, ctx.camera)
+        foreign: list[str] = []
+        services = service_urls(soap, ctx.camera, foreign)
         if not {"search", "replay"} <= services.keys():
-            return CheckResult.skipped(
-                "камера не объявляет поиск и воспроизведение записей (Profile G)"
-            )
+            reason = "камера не объявляет поиск и воспроизведение записей (Profile G)"
+            if foreign:
+                reason += f"; службы на чужом хосте отброшены: {', '.join(foreign)}"
+            return CheckResult.skipped(reason)
         recordings = find_recordings(soap, services["search"])
         if not recordings:
             if not ctx.allow_writes:
@@ -341,7 +343,8 @@ def replay(ctx: CheckContext) -> CheckResult:
             left_changed = record_for_a_while(
                 soap,
                 services["recording"],
-                float(ctx.extra.get("replay_record_s", DEFAULT_RECORD_S)),
+                # дольше планировщик снимет процесс, и режимы записи не вернутся
+                min(float(ctx.extra.get("replay_record_s", DEFAULT_RECORD_S)), DEFAULT_RECORD_S),
             )
             if left_changed:
                 return CheckResult(

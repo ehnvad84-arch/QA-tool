@@ -9,6 +9,9 @@ RTSP (`rtsp://user:пароль@хост`): пароль виден в спис�
 берётся из ответа камеры без подмены — учётные данные могут уйти на чужой адрес. Посредник
 табу RTSP не видит. Видеопоток вместо них проверяет RUV-S-STREAM-1 своим RTSP-клиентом;
 список сверяется с метками onvif-tt тестом при каждом обновлении версии.
+
+Изменяющие тесты doorcontrol могут выполнить команду у настоящей двери, а вернуть её состояние
+снимок настроек не умеет (AD-3): служба бывает у устройств Profile D, QA-tool их не проверяет.
 """
 
 NO_FFPROBE = (
@@ -28,6 +31,11 @@ FFPROBE_TESTS = (
     "LOCAL-RTSS-RTSP-KEEPALIVE",
 )
 
+NO_DOOR_RESTORE = (
+    "выполняет команду двери, вернуть её состояние после теста нельзя; Profile D не проверяется"
+)
+DOOR_TESTS = tuple(f"DOORCONTROL-3-1-{n}" for n in range(19, 25))
+
 EXCLUDED = {
     "LOCAL-DISCOVERY-PROBE": "сверяет адрес WS-Discovery с адресом подключения (через посредника "
     "это 127.0.0.1); поиск камер проверяет QA-tool",
@@ -36,3 +44,4 @@ EXCLUDED = {
     "127.0.0.1)",
 }
 EXCLUDED.update(dict.fromkeys(FFPROBE_TESTS, NO_FFPROBE))
+EXCLUDED.update(dict.fromkeys(DOOR_TESTS, NO_DOOR_RESTORE))

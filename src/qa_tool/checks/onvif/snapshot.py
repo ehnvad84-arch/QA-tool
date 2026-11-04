@@ -12,6 +12,7 @@
 
 from dataclasses import dataclass, field
 from xml.etree.ElementTree import Element, tostring
+from xml.sax.saxutils import escape
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.onvif_generic import service_urls
@@ -109,7 +110,7 @@ class SnapshotTaker:
         mode = _text(answer, "DateTimeType", "NTP")
         dst = _text(answer, "DaylightSavings", "false")
         tz = _text(answer, "TZ")
-        zone = f"<tds:TimeZone><tt:TZ>{tz}</tt:TZ></tds:TimeZone>" if tz else ""
+        zone = f"<tds:TimeZone><tt:TZ>{escape(tz)}</tt:TZ></tds:TimeZone>" if tz else ""
         # В режиме Manual камера хранит своё время: вернуть «как было» нельзя — время идёт;
         # ставим текущее время UTC компьютера стенда, режим и часовой пояс — исходные.
         utc = ""
@@ -125,8 +126,9 @@ class SnapshotTaker:
                 "</tt:Time></tds:UTCDateTime>"
             )
         body = (
-            f"<tds:SetSystemDateAndTime><tds:DateTimeType>{mode}</tds:DateTimeType>"
-            f"<tds:DaylightSavings>{dst}</tds:DaylightSavings>{zone}{utc}</tds:SetSystemDateAndTime>"
+            f"<tds:SetSystemDateAndTime><tds:DateTimeType>{escape(mode)}</tds:DateTimeType>"
+            f"<tds:DaylightSavings>{escape(dst)}</tds:DaylightSavings>{zone}{utc}"
+            "</tds:SetSystemDateAndTime>"
         )
         return [
             Item(
@@ -146,16 +148,17 @@ class SnapshotTaker:
             properties = next((e for e in relay if _local(e.tag) == "Properties"), None)
             if not token or properties is None:
                 continue
+            safe = escape(token)
             restore = [
                 (
                     services["device"],
-                    f"<tds:SetRelayOutputSettings><tds:RelayOutputToken>{token}"
+                    f"<tds:SetRelayOutputSettings><tds:RelayOutputToken>{safe}"
                     f"</tds:RelayOutputToken><tds:Properties>{_inner(properties)}</tds:Properties>"
                     "</tds:SetRelayOutputSettings>",
                 ),
                 (
                     services["device"],
-                    f"<tds:SetRelayOutputState><tds:RelayOutputToken>{token}</tds:RelayOutputToken>"
+                    f"<tds:SetRelayOutputState><tds:RelayOutputToken>{safe}</tds:RelayOutputToken>"
                     "<tds:LogicalState>inactive</tds:LogicalState></tds:SetRelayOutputState>",
                 ),
             ]
@@ -179,16 +182,16 @@ class SnapshotTaker:
         url = services["imaging"]
         items = []
         for token in self._video_sources(services):
+            source = f"<timg:VideoSourceToken>{escape(token)}</timg:VideoSourceToken>"
             read = (
                 url,
-                f"<timg:GetImagingSettings><timg:VideoSourceToken>{token}</timg:VideoSourceToken>"
-                "</timg:GetImagingSettings>",
+                f"<timg:GetImagingSettings>{source}</timg:GetImagingSettings>",
             )
             settings = _find_all(self.soap.call(*read), "ImagingSettings")[0]
             restore = [
                 (
                     url,
-                    f"<timg:SetImagingSettings><timg:VideoSourceToken>{token}</timg:VideoSourceToken>"
+                    f"<timg:SetImagingSettings>{source}"
                     f"<timg:ImagingSettings>{_inner(settings)}</timg:ImagingSettings>"
                     "<timg:ForcePersistence>true</timg:ForcePersistence></timg:SetImagingSettings>",
                 )
@@ -196,17 +199,16 @@ class SnapshotTaker:
             if _text(settings, "AutoFocusMode") == "MANUAL":
                 status = self.soap.call(
                     url,
-                    f"<timg:GetStatus><timg:VideoSourceToken>{token}</timg:VideoSourceToken>"
-                    "</timg:GetStatus>",
+                    f"<timg:GetStatus>{source}</timg:GetStatus>",
                 )
                 position = _text(status, "Position")
                 if position:
                     restore.append(
                         (
                             url,
-                            f"<timg:Move><timg:VideoSourceToken>{token}</timg:VideoSourceToken>"
+                            f"<timg:Move>{source}"
                             "<timg:Focus><tt:Absolute><tt:Position>"
-                            f"{position}</tt:Position></tt:Absolute></timg:Focus></timg:Move>",
+                            f"{escape(position)}</tt:Position></tt:Absolute></timg:Focus></timg:Move>",
                         )
                     )
             items.append(Item(f"изображение и фокус {token}", restore, read, canonical(settings)))
@@ -241,15 +243,16 @@ class SnapshotTaker:
         )
         for profile in profiles:
             token = profile.get("token", "")
+            safe = escape(token)
             read = (
                 url,
-                f"<tptz:GetStatus><tptz:ProfileToken>{token}</tptz:ProfileToken></tptz:GetStatus>",
+                f"<tptz:GetStatus><tptz:ProfileToken>{safe}</tptz:ProfileToken></tptz:GetStatus>",
             )
             positions = _find_all(self.soap.call(*read), "Position")
             if not positions:
                 continue
             body = (
-                f"<tptz:AbsoluteMove><tptz:ProfileToken>{token}</tptz:ProfileToken>"
+                f"<tptz:AbsoluteMove><tptz:ProfileToken>{safe}</tptz:ProfileToken>"
                 f"<tptz:Position>{_inner(positions[0])}</tptz:Position></tptz:AbsoluteMove>"
             )
             items.append(
