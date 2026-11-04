@@ -97,6 +97,8 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
+    replay_host: str = ""  # GetReplayUri отдаёт этот, внутренний адрес камеры (NAT)
     recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
     clock_offset_s: float = 0.0  # часы камеры отличаются от часов стенда
     storage_fault: bool = False  # камера не умеет GetStorageConfigurations
@@ -291,6 +293,9 @@ class OnvifServices:
             return None
         token = _text(request, "RecordingToken")
         uri = f"{self.rtsp_url}/replay/{token}"
+        if self.state.replay_host:
+            port = self.rtsp_url.rsplit(":", 1)[1]
+            uri = f"rtsp://{self.state.replay_host}:{port}/replay/{token}"
         return f"<trp:GetReplayUriResponse><trp:Uri>{uri}</trp:Uri></trp:GetReplayUriResponse>"
 
     # --- События (PullPoint) ---------------------------------------------------------------------

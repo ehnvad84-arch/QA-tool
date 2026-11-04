@@ -1,5 +1,5 @@
-"""Минимальный RTSP-клиент для чтения потоков камеры: метаданные ONVIF (Profile M), дальше —
-архив Profile G (T10).
+"""Минимальный RTSP-клиент для чтения потоков камеры: метаданные ONVIF (Profile M) и архив
+Profile G.
 
 Зачем свой клиент, а не ffmpeg: ffmpeg не разбирает дорожку `vnd.onvif.metadata`, не умеет
 заголовок `Require: onvif-replay` и берёт логин и пароль только в адресе — тогда они видны в
@@ -21,6 +21,7 @@ import re
 import socket
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -28,7 +29,11 @@ from qa_tool.core.taboo import check_rtsp
 
 
 class RtspError(ConnectionError):
-    """Ответ RTSP не 2xx или соединение оборвалось."""
+    """Ответ RTSP не 2xx (код — в `status`) или соединение оборвалось (`status` = 0)."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -43,20 +48,29 @@ class Response:
 
 @dataclass
 class Track:
-    """Дорожка из SDP: тип (video, audio, application), кодек и адрес для SETUP."""
+    """Дорожка из SDP: тип (video, audio, application), кодек, адрес для SETUP и частота
+    меток времени RTP, Гц (из rtpmap; для видео по RFC 3551 почти всегда 90 000)."""
 
     media: str
     encoding: str
     control: str
+    clock_rate: int = 90_000
 
 
 @dataclass(frozen=True)
 class RtpPacket:
-    """Пакет RTP из канала interleaved: канал, бит маркера, полезная нагрузка без заголовка."""
+    """Пакет RTP из канала interleaved.
+
+    `payload` — без заголовка; `timestamp` — метка времени RTP; `extension` — расширение
+    заголовка целиком (профиль, длина, данные) или пусто: в архиве ONVIF в нём время кадра
+    и признак ключевого кадра.
+    """
 
     channel: int
     marker: bool
     payload: bytes
+    timestamp: int = 0
+    extension: bytes = b""
 
 
 @dataclass
@@ -68,6 +82,9 @@ class RtspClient:
         user, password: учётные данные камеры.
         timeout: тайм-аут сети на одну операцию, с.
         extra_headers: добавляются к каждому запросу (например, `Require: onvif-replay`).
+
+    `exchanges` — строки «метод адрес → код» для доказательств протокола; учётных данных в них
+    нет: адрес очищен от логина, заголовок Authorization не записывается.
     """
 
     url: str
@@ -81,6 +98,7 @@ class RtspClient:
     _session: str = ""
     _challenge: dict[str, str] = field(default_factory=dict, repr=False)
     _nc: int = 0
+    exchanges: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.url)
@@ -173,8 +191,7 @@ class RtspClient:
             if first == b"$":
                 head = self._file.read(3)
                 data = self._file.read(struct.unpack("!H", head[1:3])[0])
-                marker = len(data) > 1 and bool(data[1] & 0x80)
-                return RtpPacket(head[0], marker, _rtp_payload(data))
+                return _rtp_packet(head[0], data)
             if first not in b"\r\n":
                 break
         line = (first + self._file.readline()).decode("latin-1").strip()
@@ -208,8 +225,11 @@ class RtspClient:
         if response.status == 401 and self.user:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
             response = self._send(method, uri, headers or {})
+        self.exchanges.append(f"{method} {uri} → {response.status} {response.reason}".strip())
         if not 200 <= response.status < 300:
-            raise RtspError(f"{method} → {response.status} {response.reason}".strip())
+            raise RtspError(
+                f"{method} → {response.status} {response.reason}".strip(), response.status
+            )
         return response
 
     # --- сценарий чтения -----------------------------------------------------------------------
@@ -242,8 +262,18 @@ class RtspClient:
         """
         self.request("PLAY", self.url, {"Range": "npt=0-", **(headers or {})})
 
-    def read_packets(self, seconds: float, limit: int = 10_000) -> list[RtpPacket]:
+    def read_packets(
+        self,
+        seconds: float,
+        limit: int = 10_000,
+        until: Callable[[RtpPacket], bool] | None = None,
+    ) -> list[RtpPacket]:
         """Пакеты RTP за `seconds` секунд или до `limit` штук; RTCP-каналы тоже попадают.
+
+        Args:
+            seconds: наибольшее время чтения, с.
+            limit: наибольшее число пакетов.
+            until: вызывается на каждый пакет; True — пакет последний, чтение закончено.
 
         Остановка по тишине: если камера ничего не шлёт дольше тайм-аута соединения,
         чтение заканчивается раньше срока — после этого сессию можно только закрыть.
@@ -256,6 +286,8 @@ class RtspClient:
                 frame = self._read_frame()
                 if isinstance(frame, RtpPacket):  # ответы на keep-alive не нужны
                     packets.append(frame)
+                    if until is not None and until(frame):
+                        break
         except (TimeoutError, RtspError):
             pass  # тишина дольше тайм-аута или обрыв — вернуть то, что успело прийти
         return packets
@@ -266,15 +298,19 @@ def _parse_challenge(header: str) -> dict[str, str]:
     return {"scheme": scheme, **dict(re.findall(r'(\w+)="?([^",]*)"?', header))}
 
 
-def _rtp_payload(packet: bytes) -> bytes:
-    """Полезная нагрузка RTP (RFC 3550 §5.1): без заголовка, CSRC и расширения."""
+def _rtp_packet(channel: int, packet: bytes) -> RtpPacket:
+    """Разбор пакета RTP (RFC 3550 §5.1): маркер, метка времени, расширение, полезная нагрузка."""
     if len(packet) < 12:
-        return b""
+        return RtpPacket(channel, False, b"")
+    marker = bool(packet[1] & 0x80)
+    timestamp = struct.unpack("!I", packet[4:8])[0]
     offset = 12 + 4 * (packet[0] & 0x0F)
-    # расширение заголовка: в архиве ONVIF (Profile G) в нём метка времени кадра
+    extension = b""
+    # расширение заголовка: в архиве ONVIF (Profile G) в нём время кадра и признак ключевого
     if packet[0] & 0x10 and len(packet) >= offset + 4:
-        offset += 4 + 4 * struct.unpack("!H", packet[offset + 2 : offset + 4])[0]
-    return packet[offset:]
+        end = offset + 4 + 4 * struct.unpack("!H", packet[offset + 2 : offset + 4])[0]
+        extension, offset = packet[offset:end], end
+    return RtpPacket(channel, marker, packet[offset:], timestamp, extension)
 
 
 def parse_sdp(sdp: str, base: str) -> list[Track]:
@@ -285,7 +321,11 @@ def parse_sdp(sdp: str, base: str) -> list[Track]:
         if line.startswith("m="):
             tracks.append(Track(line[2:].split()[0], "", base))
         elif tracks and line.startswith("a=rtpmap:"):
-            tracks[-1].encoding = line.split(" ", 1)[-1].split("/")[0]
+            encoding, _, rest = line.split(" ", 1)[-1].partition("/")
+            tracks[-1].encoding = encoding
+            rate = rest.split("/")[0]
+            if rate.isdigit() and int(rate):
+                tracks[-1].clock_rate = int(rate)
         elif tracks and line.startswith("a=control:"):
             control = line[len("a=control:") :]
             if "://" in control:

@@ -3,23 +3,26 @@
 Главный пробел готовых средств: камера с одним Profile S показывает картинку в любом
 регистраторе, но запись с SD-карты по ONVIF может не отдать. Поэтому архив не только ищется
 (FindRecordings → GetRecordingSearchResults) и не только даёт адрес (GetReplayUri), а
-**проигрывается** не меньше порога `onvif.replay_min_s` (по умолчанию 10 с) встроенным ffprobe.
+**проигрывается** не меньше порога `onvif.replay_min_s` (по умолчанию 10 с).
 
 Нет записей: с галочкой «изменяющие» программа включает запись по ONVIF на
 `replay_record_s` (по умолчанию 120 с; решение директора 2026-11-03) и возвращает задания
 записи в исходный режим; без галочки — «пропущена». Сеть и учётные записи не трогаются.
 
-Ограничение до T10: ffprobe не умеет передавать логин и пароль RTSP иначе как в адресе,
-поэтому на время проигрывания они видны в списке процессов компьютера стенда; в протокол и
-журнал они не попадают (redact). Окончательный способ проигрывания (ffmpeg или свой
-RTSP-клиент с заголовком `Require: onvif-replay`) выбирается на живой камере в T10.
+Проигрывает свой RTSP-клиент (`drivers/camera/rtsp.py`), а не ffprobe: архиву ONVIF нужен
+заголовок `Require: onvif-replay` и время в `Range: clock=…` (ONVIF Streaming Specification,
+раздел о воспроизведении), а ffprobe передаёт пароль только в адресе — тогда он виден в списке
+процессов компьютера стенда. Камера, которая заголовок не понимает (551), получает повтор без
+него. Длительность считается по меткам времени RTP, ключевые кадры — по типу кадра в видео и
+по признаку ключевого кадра в расширении заголовка RTP архива ONVIF.
 """
 
+import datetime
 import json
-import subprocess
 import time
-from urllib.parse import quote, urlsplit, urlunsplit
 
+from qa_tool.checks.onvif.metadata import to_stand_address
+from qa_tool.checks.onvif.storage import parse_time
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -31,13 +34,18 @@ from qa_tool.core.checks import (
 )
 from qa_tool.core.models import Threshold
 from qa_tool.drivers.camera.onvif_generic import service_urls
+from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, Track
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
-from qa_tool.tools import tool_path
 
 CHECK_ID = "RUV-G-REPLAY-1"
 THRESHOLD_KEY = "onvif.replay_min_s"
 DEFAULT_MIN_S = Threshold(10.0, "с", "стартовое значение (спека этапа 2)")
 DEFAULT_RECORD_S = 120.0
+REPLAY_HEADERS = {"Require": "onvif-replay"}
+OPTION_NOT_SUPPORTED = 551  # RFC 2326 §11.3.14: камера не знает заголовка Require
+ONVIF_EXTENSION = b"\xab\xac"  # профиль расширения RTP архива ONVIF: NTP-время и флаги C/E/D
+START_DELAY_S = 20.0  # запас на поиск места в архиве камерой до первого кадра
+NTP_EPOCH = datetime.datetime(1900, 1, 1, tzinfo=datetime.UTC)
 
 
 def _texts(element, name: str) -> list[str]:
@@ -121,58 +129,115 @@ def replay_uri(soap: SoapClient, replay_url: str, recording: str) -> str:
     return (_texts(answer, "Uri") or [""])[0]
 
 
-def play(uri: str, user: str, password: str, seconds: float) -> dict:
-    """Проиграть архив ffprobe-ом: длительность по меткам времени, кодек, ключевые кадры.
+def is_keyframe(encoding: str, payload: bytes) -> bool:
+    """Пакет несёт начало ключевого кадра (H.264 IDR, H.265 IRAP, любой кадр JPEG).
+
+    Разбирается только первый байт упаковки: одиночный NAL, начало FU (RFC 6184 §5.8,
+    RFC 7798 §4.4.3) и первый NAL агрегации (STAP-A, AP) — так кадры камер и пакуются.
+    """
+    codec = encoding.upper()
+    if codec == "JPEG":
+        return True
+    if codec == "H264" and payload:
+        kind = payload[0] & 0x1F
+        if kind == 28 and len(payload) > 1:  # FU-A: важен только первый фрагмент
+            return bool(payload[1] & 0x80) and payload[1] & 0x1F == 5
+        if kind == 24 and len(payload) > 3:  # STAP-A: размер (2 байта), потом NAL
+            kind = payload[3] & 0x1F
+        return kind == 5
+    if codec in ("H265", "HEVC") and len(payload) > 1:
+        kind = (payload[0] >> 1) & 0x3F
+        if kind == 49 and len(payload) > 2:  # FU
+            return bool(payload[2] & 0x80) and 16 <= payload[2] & 0x3F <= 21
+        if kind == 48 and len(payload) > 4:  # AP
+            kind = (payload[4] >> 1) & 0x3F
+        return 16 <= kind <= 21
+    return False
+
+
+def onvif_frame_info(extension: bytes) -> tuple[datetime.datetime, bool] | None:
+    """Время кадра (NTP, UTC) и признак ключевого кадра из расширения RTP архива ONVIF."""
+    if len(extension) < 13 or extension[:2] != ONVIF_EXTENSION:
+        return None
+    seconds, fraction = int.from_bytes(extension[4:8]), int.from_bytes(extension[8:12])
+    moment = NTP_EPOCH + datetime.timedelta(seconds=seconds + fraction / 2**32)
+    return moment, bool(extension[12] & 0x80)
+
+
+def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
+    """Итог проигрывания дорожки: длительность по меткам RTP, кадры, ключевые, время архива."""
+    video = [p for p in packets if p.channel == channel]
+    elapsed, previous = 0, None
+    for packet in video:
+        if previous is not None:
+            step = (packet.timestamp - previous) % 2**32
+            if step < 2**31:  # метки идут вперёд; «назад» — переупорядоченный пакет
+                elapsed += step
+        previous = packet.timestamp
+    keyframes = 0
+    moments = []
+    for packet in video:
+        info = onvif_frame_info(packet.extension)
+        if info:
+            moments.append(info[0])
+        if (info and info[1]) or is_keyframe(track.encoding, packet.payload):
+            keyframes += 1
+    stats = {
+        "seconds": round(elapsed / track.clock_rate, 2),
+        "frames": sum(p.marker for p in video),
+        "keyframes": keyframes,
+        "codec": track.encoding.lower(),
+    }
+    if moments:
+        stats["archive"] = f"{min(moments):%Y-%m-%d %H:%M:%S} — {max(moments):%H:%M:%S} UTC"
+    return stats
+
+
+def play(client: RtspClient, seconds: float, start: datetime.datetime | None) -> tuple[str, dict]:
+    """Проиграть архив: видеодорожка с места `start`, пока не наберётся `seconds` секунд.
+
+    Returns:
+        SDP потока и итог (`summarize`).
 
     Raises:
-        FileNotFoundError: нет ffprobe.
-        subprocess.CalledProcessError, subprocess.TimeoutExpired: поток не открылся или завис.
+        OSError, RtspError: поток не открылся; ValueError — в архиве нет видеодорожки.
     """
-    ffprobe = tool_path("ffprobe")
-    if ffprobe is None:
-        raise FileNotFoundError("ffprobe не найден")
-    parts = urlsplit(uri)
-    if user and not parts.username:
-        netloc = f"{quote(user, safe='')}:{quote(password, safe='')}@{parts.netloc}"
-        uri = urlunsplit(parts._replace(netloc=netloc))
-    done = subprocess.run(
-        # +1 с к порогу: читаем чуть дольше нужного, но не ждём конца архива; -timeout (мкс) —
-        # камера, переставшая слать данные, не вешает проверку до общего тайм-аута
-        [
-            ffprobe,
-            "-v",
-            "error",
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            "15000000",
-            "-read_intervals",
-            f"%+{seconds + 1:g}",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "packet=pts_time,flags",
-            "-show_entries",
-            "stream=codec_name,width,height",
-            "-of",
-            "json",
-            uri,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=seconds + 40,
-        check=True,
-    )
-    data = json.loads(done.stdout or "{}")
-    times = [float(p["pts_time"]) for p in data.get("packets", []) if p.get("pts_time")]
-    stream = (data.get("streams") or [{}])[0]
-    return {
-        "seconds": round(max(times) - min(times), 2) if times else 0.0,
-        "frames": len(times),
-        "keyframes": sum("K" in p.get("flags", "") for p in data.get("packets", [])),
-        "codec": stream.get("codec_name", ""),
-        "size": f"{stream.get('width', '?')}×{stream.get('height', '?')}",
-    }
+    try:
+        sdp, tracks = client.describe()
+    except RtspError as e:
+        if e.status != OPTION_NOT_SUPPORTED:
+            raise
+        client.extra_headers.pop("Require", None)
+        sdp, tracks = client.describe()
+    track = next((t for t in tracks if t.media == "video"), None)
+    if track is None:
+        raise ValueError("в описании архива (SDP) нет видеодорожки")
+    client.setup(track, channel=0)
+    # время в Range — абсолютное (clock), как требует ONVIF для архива; без него — с начала
+    client.play({"Range": f"clock={start:%Y%m%dT%H%M%SZ}-"} if start else None)
+    goal = (seconds + 0.5) * track.clock_rate
+    clock = {"elapsed": 0, "last": None}
+
+    def enough(packet: RtpPacket) -> bool:
+        if packet.channel != 0:
+            return False
+        if clock["last"] is not None:
+            step = (packet.timestamp - clock["last"]) % 2**32
+            clock["elapsed"] += step if step < 2**31 else 0
+        clock["last"] = packet.timestamp
+        return packet.marker and clock["elapsed"] >= goal
+
+    packets = client.read_packets(seconds + START_DELAY_S, limit=200_000, until=enough)
+    return sdp, summarize(packets, track, 0)
+
+
+def start_point(recording: dict, seconds: float) -> datetime.datetime | None:
+    """Откуда проигрывать: за `seconds` + 10 с до конца записи, но не раньше её начала."""
+    begin, end = parse_time(recording["start"]), parse_time(recording["end"])
+    if end is None:
+        return begin
+    point = end - datetime.timedelta(seconds=seconds + 10)
+    return max(point, begin) if begin else point
 
 
 @REGISTRY.check(
@@ -236,44 +301,44 @@ def replay(ctx: CheckContext) -> CheckResult:
             evidence=_soap_evidence(soap),
             threshold=minimum,
         )
+    evidence = _soap_evidence(soap)
     if not uri.startswith("rtsp://"):
         return CheckResult(
             Status.FAILED,
             reason=f"GetReplayUri вернул не RTSP-адрес: {uri!r}",
             expected=expected,
-            evidence=_soap_evidence(soap),
+            evidence=evidence,
             threshold=minimum,
         )
-    try:
-        stats = play(uri, ctx.camera.username, ctx.password, minimum.value)
-    except FileNotFoundError as e:
-        return CheckResult.stand_error(str(e))
-    except subprocess.TimeoutExpired:
-        return CheckResult(
-            Status.FAILED,
-            reason="архив не проигрался: поток завис",
-            expected=expected,
-            evidence=_soap_evidence(soap),
-            threshold=minimum,
-        )
-    except (subprocess.CalledProcessError, ValueError) as e:
-        detail = getattr(e, "stderr", "") or str(e)
-        return CheckResult(
-            Status.FAILED,
-            reason=f"архив не открывается: {detail.strip()[-300:]}",
-            expected=expected,
-            evidence=_soap_evidence(soap),
-            threshold=minimum,
-        )
-    actual = (
-        f"{stats['seconds']:g} с, кадров {stats['frames']}, ключевых {stats['keyframes']}, "
-        f"{stats['codec']} {stats['size']}; запись {latest['token']} "
-        f"({latest['start']} — {latest['end']})"
+    client = RtspClient(
+        to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
+        ctx.camera.username,
+        ctx.password,
+        timeout=10,
+        extra_headers=dict(REPLAY_HEADERS),
     )
-    evidence = [
-        *_soap_evidence(soap),
+    try:
+        with client:
+            sdp, stats = play(client, minimum.value, start_point(latest, minimum.value))
+        evidence.append(Evidence("sdp.txt", sdp))
+    except (OSError, RtspError, ValueError) as e:
+        return CheckResult(
+            Status.FAILED,
+            reason=f"архив не открывается: {e}",
+            expected=expected,
+            evidence=[*evidence, Evidence("rtsp.txt", "\n".join(client.exchanges))],
+            threshold=minimum,
+        )
+    evidence += [
+        Evidence("rtsp.txt", "\n".join(client.exchanges)),
         Evidence("replay.json", json.dumps(stats, ensure_ascii=False)),
     ]
+    actual = (
+        f"{stats['seconds']:g} с, кадров {stats['frames']}, ключевых {stats['keyframes']}, "
+        f"{stats['codec']}; запись {latest['token']} ({latest['start']} — {latest['end']})"
+    )
+    if "archive" in stats:
+        actual += f"; время кадров архива {stats['archive']}"
     if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"]:
         reason = (
             f"архив отдан, но проиграно {stats['seconds']:g} с"

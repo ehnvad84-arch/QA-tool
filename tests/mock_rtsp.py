@@ -4,12 +4,15 @@
 отдаётся по RTP поверх TCP (interleaved, RFC 2326 §10.12), упаковка — RFC 6184 (одиночные
 NAL и FU-A). Пути: `/live` — видео по кругу и, если `metadata`, вторая дорожка с XML
 MetadataStream раз в 0,5 с (ONVIF Streaming, vnd.onvif.metadata — так отдают метаданные камеры
-Profile M); `/metadata` — только метаданные; `/replay/<запись>` — 12 с и тишина, как конец архива. Канал interleaved каждой
-дорожки — тот, что попросил клиент в SETUP.
+Profile M); `/metadata` — только метаданные; `/replay/<запись>` — 12 с и тишина, как конец
+архива, с расширением RTP архива ONVIF (время кадра, признак ключевого кадра). Канал interleaved
+каждой дорожки — тот, что попросил клиент в SETUP. `require_unsupported` — камера без поддержки
+`Require: onvif-replay`: на такой запрос отвечает 551, как велит RFC 2326.
 UDP не поддерживается: клиент получает 461 и должен просить TCP — так ведут себя многие камеры.
 """
 
 import base64
+import datetime
 import hashlib
 import os
 import shutil
@@ -25,6 +28,15 @@ SECONDS = 12
 WIDTH, HEIGHT = 320, 240
 CACHE = Path(os.environ.get("QA_TOOL_TEST_CACHE", Path.home() / ".cache" / "qa-tool-test"))
 MTU_PAYLOAD = 1400
+NTP_EPOCH = datetime.datetime(1900, 1, 1, tzinfo=datetime.UTC)
+
+
+def onvif_extension(moment: datetime.datetime, clean: bool) -> bytes:
+    """Расширение RTP архива ONVIF: профиль 0xABAC, 3 слова — NTP-время, флаги C/E/D, CSeq."""
+    ntp = (moment - NTP_EPOCH).total_seconds()
+    seconds, fraction = int(ntp), int((ntp % 1) * 2**32)
+    flags = 0x80 if clean else 0
+    return b"\xab\xac\x00\x03" + struct.pack("!IIBBH", seconds, fraction, flags, 0, 0)
 
 
 def find_ffmpeg() -> str | None:
@@ -124,17 +136,19 @@ class _Session:
         self.stop = threading.Event()
         self.seq = {"video": 1, "metadata": 1}
 
-    def _send(self, kind: str, payload: bytes, marker: bool, timestamp: int, pt: int) -> None:
+    def _send(
+        self, kind: str, payload: bytes, marker: bool, timestamp: int, pt: int, ext: bytes = b""
+    ) -> None:
         header = struct.pack(
             "!BBHII",
-            0x80,
+            0x90 if ext else 0x80,
             (0x80 if marker else 0) | pt,
             self.seq[kind] & 0xFFFF,
             timestamp & 0xFFFFFFFF,
             0x51A0C0DE if kind == "video" else 0x3E7AD47A,
         )
         self.seq[kind] += 1
-        packet = header + payload
+        packet = header + ext + payload
         channel = self.channels[kind]
         self.write(b"$" + bytes([channel]) + struct.pack("!H", len(packet)) + packet)
 
@@ -148,6 +162,7 @@ class _Session:
         replay = self.path.startswith("/replay")
         index = 0
         started = time.monotonic()
+        archive_start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60)
         while not self.stop.is_set():
             if index >= len(self.frames):
                 if replay:
@@ -157,9 +172,13 @@ class _Session:
             timestamp = (
                 int(index * 90000 / FPS) if replay else int((time.monotonic() - started) * 90000)
             )
+            ext = b""
+            if replay:
+                moment = archive_start + datetime.timedelta(seconds=index / FPS)
+                ext = onvif_extension(moment, any(nal[0] & 0x1F == 5 for nal in frame))
             for n, nal in enumerate(frame):
                 for payload, marker in rtp_packets(nal, n == len(frame) - 1):
-                    self._send("video", payload, marker, timestamp, 96)
+                    self._send("video", payload, marker, timestamp, 96, ext)
             index += 1
             self.stop.wait(1 / FPS)
 
@@ -183,8 +202,10 @@ class _Session:
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
-    def __init__(self, metadata: bool = True):
+    def __init__(self, metadata: bool = True, require_unsupported: bool = False):
         self.metadata = metadata
+        self.require_unsupported = require_unsupported
+        self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
         self.sprop = ",".join(base64.b64encode(x).decode() for x in (sps, pps) if x)
@@ -258,7 +279,14 @@ class MockRtspServer:
                         path = "/" + url.split("://", 1)[-1].split("/", 1)[-1].split("?")[0]
                         path, _, track = path.partition("/track")
                         server.requests.append(f"{method} {path}")
+                        server.headers.append((method, path, headers))
                         cseq = headers.get("cseq", "0")
+                        if server.require_unsupported and "require" in headers:
+                            write(
+                                f"RTSP/1.0 551 Option not supported\r\nCSeq: {cseq}\r\n"
+                                f"Unsupported: {headers['require']}\r\n\r\n".encode()
+                            )
+                            continue
                         extra, body = "", ""
                         if method == "OPTIONS":
                             extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n"

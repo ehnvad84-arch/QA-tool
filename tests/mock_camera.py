@@ -78,7 +78,8 @@ class MockCamera:
         self.requests: list[str] = []
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.rtsp = MockRtspServer(
-            metadata="M" in self.state.profiles and self.state.metadata_stream
+            metadata="M" in self.state.profiles and self.state.metadata_stream,
+            require_unsupported=self.state.replay_require_unsupported,
         )
         self._threads: list[threading.Thread] = []
 
