@@ -112,6 +112,7 @@ class SlotRow(QWidget):
         self.maker.setText(view.maker)
         self.percent.setText(f"{view.percent} %")
         self.summary.setText(view.summary)
+        self.summary.setToolTip(view.summary)  # длинная причина в строке обрезается
         set_prop(self.dot, "tone", view.dot.value)
 
 
