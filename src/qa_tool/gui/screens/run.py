@@ -8,6 +8,7 @@
 """
 
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -64,6 +65,18 @@ def plain(text: str = "", role: str = "", wrap: bool = False) -> QLabel:
     return label
 
 
+def safe_tip(text: str) -> str:
+    """Подсказка из текста камеры: Qt сам распознаёт в подсказках HTML, поэтому экранируем."""
+    return f"<span>{escape(text)}</span>" if text else ""
+
+
+def plain_warning(parent: QWidget, title: str, text: str) -> None:
+    """Предупреждение с текстом камеры: QMessageBox.warning тоже распознаёт в нём HTML."""
+    box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.exec()
+
+
 def discard(widget: QWidget) -> None:
     """Убрать строку сразу: deleteLater удаляет её только в следующем проходе цикла событий,
     и до того старая строка просвечивает под новой."""
@@ -112,7 +125,7 @@ class SlotRow(QWidget):
         self.maker.setText(view.maker)
         self.percent.setText(f"{view.percent} %")
         self.summary.setText(view.summary)
-        self.summary.setToolTip(view.summary)  # длинная причина в строке обрезается
+        self.summary.setToolTip(safe_tip(view.summary))  # длинная причина в строке обрезается
         set_prop(self.dot, "tone", view.dot.value)
 
 
@@ -227,7 +240,7 @@ class StepLog(QFrame):
             line.setSpacing(10)
             title = plain(step.label, wrap=True)
             if step.reason:
-                title.setToolTip(step.reason)
+                title.setToolTip(safe_tip(step.reason))
             state = plain(step.state)
             state.setProperty("state", step.state)
             line.addWidget(plain(step.time or "—", role="time"))
@@ -311,7 +324,7 @@ class TaskPanel(QFrame):
             top.addWidget(title, 1)
             box.addLayout(top)
             reason = plain(task.reason or task.check_id, role="muted", wrap=True)
-            reason.setToolTip(task.reason)
+            reason.setToolTip(safe_tip(task.reason))
             reason.setStyleSheet("font-size: 13px;")
             box.addWidget(reason)
             self.cards.insertWidget(self.cards.count() - 1, card)
@@ -414,6 +427,8 @@ class RunScreen(Screen):
         self._card_timer.setInterval(CARD_REFRESH_MS)
         self._card_timer.timeout.connect(self._show_card)
         self.control = None
+        self.showing_run = False  # на экране итог прогона, а не ожидание
+        self.warn = plain_warning  # тесты подставляют запись вместо окошка
         self.refresh()
 
     def bind_run(self, control) -> None:
@@ -427,6 +442,18 @@ class RunScreen(Screen):
     def refresh(self) -> None:
         if self.state.running:
             return
+        if self.showing_run and self._same_cameras():
+            # итог прогона остаётся на экране и после перехода в другой раздел
+            self._update_protocol_link()
+            return
+        self.showing_run = False
+        self._reset()
+
+    def _same_cameras(self) -> bool:
+        stand = self.state.stand
+        return all(v.camera == stand.camera_at(n) for n, v in self.view.slots.items())
+
+    def _reset(self) -> None:
         registry = self.state.registry()
         for slot in range(1, MAX_SLOTS + 1):
             cam = self.state.stand.camera_at(slot)
@@ -440,7 +467,9 @@ class RunScreen(Screen):
         self._show_card()
 
     def _on_started(self) -> None:
-        self.refresh()
+        # state.running уже True, поэтому не refresh(): новый прогон начинается с чистого экрана
+        self.showing_run = True
+        self._reset()
         self._update_protocol_link()
 
     def _on_event(self, event) -> None:
@@ -459,10 +488,11 @@ class RunScreen(Screen):
     def _on_published(self, store, error: str) -> None:
         self._update_protocol_link()
         if error:
-            QMessageBox.warning(self, "Прогон", error)
+            self.warn(self, "Прогон", error)
 
     def _on_failed(self, error: str) -> None:
-        QMessageBox.warning(self, "Прогон", error)
+        self.showing_run = False
+        self.warn(self, "Прогон", error)
 
     def _show_card(self) -> None:
         slot = self.cameras.selected_slot()
@@ -473,7 +503,7 @@ class RunScreen(Screen):
         """HTML-протокол выбранной камеры последнего прогона, если он выпущен."""
         store = self.control.last_store if self.control else None
         slot = self.cameras.selected_slot()
-        if store is None or slot is None or self.state.running:
+        if store is None or slot is None or self.state.running or not self.showing_run:
             return None
         path = store.run_dir / f"protocol_{slot}.html"
         return path if path.exists() else None

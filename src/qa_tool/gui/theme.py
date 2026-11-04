@@ -249,6 +249,7 @@ QPushButton:hover {{ border-color: {p.accent}; }}
 QPushButton:disabled {{ color: {p.muted}; }}
 QPushButton[role="primary"] {{
     background: {p.accent}; color: {p.on_accent}; border: none; font-weight: bold; }}
+QPushButton[role="primary"]:disabled {{ background: {p.skipped_bg}; color: {p.muted}; }}
 QPushButton[role="link"] {{
     background: transparent; border: none; color: {p.accent}; text-decoration: underline;
     padding: 0; text-align: left; }}

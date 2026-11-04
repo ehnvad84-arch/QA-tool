@@ -12,7 +12,7 @@ from enum import StrEnum
 from qa_tool.core.checks import Status
 from qa_tool.core.models import Camera
 from qa_tool.core.scheduler import Event
-from qa_tool.core.worker import LOST_DURING_CHECK
+from qa_tool.core.worker import LOST_DURING_CHECK, STOPPED
 from qa_tool.report.model import SEVERITY_ORDER
 
 RUNNING = "идёт"
@@ -71,7 +71,6 @@ class Task:
     title: str
     severity: str
     reason: str
-    order: int
 
 
 @dataclass
@@ -91,6 +90,12 @@ class SlotView:
     stopped_responding: bool = False
     lost_reason: str = ""
     first_stand_error: str = ""
+    stopped: int = 0  # проверки, пропущенные из-за остановки прогона
+
+    @property
+    def complete(self) -> bool:
+        """Весь план выполнен; камера может закончить раньше остальных."""
+        return self.total > 0 and self.done >= self.total and not self.stopped
 
     @property
     def maker(self) -> str:
@@ -107,10 +112,11 @@ class SlotView:
 
     @property
     def percent(self) -> int:
-        """Сколько проверок сценария выполнено, в процентах (составная — одна проверка)."""
-        if self.finished and not self.lost_reason:
-            return 100
-        return min(100, round(100 * self.done / self.total)) if self.total else 0
+        """Сколько проверок сценария выполнено, в процентах (составная — одна проверка).
+
+        Пропущенные из-за остановки не считаются: иначе остановленный прогон показывал бы 100 %.
+        """
+        return min(100, round(100 * (self.done - self.stopped) / self.total)) if self.total else 0
 
     @property
     def dot(self) -> Dot:
@@ -121,9 +127,9 @@ class SlotView:
             return Dot.FAILED
         if self.lost_reason or self.counts[Status.STAND_ERROR.value]:
             return Dot.STAND
-        if self.finished:
+        if self.complete:
             return Dot.OK
-        return Dot.RUNNING if self.started else Dot.IDLE
+        return Dot.RUNNING if self.started and not self.finished else Dot.IDLE
 
     @property
     def summary(self) -> str:
@@ -141,6 +147,8 @@ class SlotView:
             return self.lost_reason
         if stand:
             return f"ошибка стенда: {self.first_stand_error}"
+        if self.finished and not self.complete:
+            return "остановлен, ошибок нет"
         if not self.started:
             return "ожидание"
         if not self.done and not any(self.counts.values()):
@@ -148,8 +156,8 @@ class SlotView:
         return "ошибок нет"
 
     def sorted_tasks(self) -> list[Task]:
-        """Задачи в порядке таблицы задач протокола: по важности, затем по порядку появления."""
-        return sorted(self.tasks, key=lambda t: (SEVERITY_ORDER.get(t.severity, 9), t.order))
+        """Задачи как в таблице протокола: по важности, внутри неё — по ID проверки."""
+        return sorted(self.tasks, key=lambda t: (SEVERITY_ORDER.get(t.severity, 9), t.check_id))
 
 
 class RunView:
@@ -159,7 +167,6 @@ class RunView:
         self.slots = {n: SlotView(n) for n in range(1, slots + 1)}
         self.phase = ""
         self.finished = False
-        self._order = 0
 
     def reset(self, slot: int, camera: Camera | None, total: int) -> None:
         """Начать место заново перед прогоном: камера стенда и число проверок её плана."""
@@ -202,15 +209,14 @@ class RunView:
     def _result(self, view: SlotView, event: Event) -> None:
         view.started = True
         view.counts[event.status] = view.counts.get(event.status, 0) + 1
+        if event.status == Status.SKIPPED.value and event.detail == STOPPED:
+            view.stopped += 1
         if event.status == Status.STAND_ERROR.value and not view.first_stand_error:
             view.first_stand_error = event.detail
         if event.status == Status.FAILED.value:
             if event.detail == LOST_DURING_CHECK:
                 view.stopped_responding = True
-            self._order += 1
-            view.tasks.append(
-                Task(event.check_id, event.title, event.severity, event.detail, self._order)
-            )
+            view.tasks.append(Task(event.check_id, event.title, event.severity, event.detail))
         step = self._running(view)
         if event.part:
             if step is not None:

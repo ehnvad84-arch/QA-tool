@@ -2,7 +2,7 @@ from datetime import datetime
 
 from qa_tool.core.models import Camera, Scenario
 from qa_tool.core.scheduler import Event, Runner
-from qa_tool.core.worker import LOST_DURING_CHECK
+from qa_tool.core.worker import LOST_DURING_CHECK, STOPPED
 from qa_tool.gui.run_view import Dot, RunView, plural
 from tests.core.test_scheduler import REF, fleet, make_stand  # noqa: F401 — фикстура fleet
 
@@ -50,6 +50,12 @@ def test_s1_slot_states_before_during_after():
         33,
         "ошибок нет",
     )
+    feed(
+        view,
+        Event("result", 1, "A", "а", "прошла"),
+        Event("result", 1, "B", "б", "прошла"),
+    )
+    assert (slot.dot, slot.percent) == (Dot.OK, 100)  # закончила раньше остальных камер
     feed(view, Event("finished"))
     assert (slot.dot, slot.percent) == (Dot.OK, 100)
 
@@ -149,3 +155,33 @@ def test_task_order_matches_protocol(tmp_path, fleet):  # noqa: F811 — фик�
     protocol = [t.title.split("]")[0].lstrip("[") for t in build_protocol(store, 1).tasks]
     assert [t.check_id for t in slot.sorted_tasks()] == protocol == ["SUB-2", "FAKE-FAILS-1"]
     assert slot.model == "Фейк <b>FK-1</b>" and slot.percent == 100
+
+
+def test_stopped_run_is_not_shown_as_finished_without_errors():
+    slot = feed(
+        view_with(),
+        Event("result", 1, "A", "а", "прошла"),
+        Event("result", 1, "B", "б", "пропущена", STOPPED),
+        Event("result", 1, "C", "в", "пропущена", STOPPED),
+        Event("finished"),
+    )
+    assert (slot.dot, slot.percent, slot.summary) == (Dot.IDLE, 33, "остановлен, ошибок нет")
+
+
+def test_skipped_by_scenario_is_still_a_finished_camera():
+    slot = feed(
+        view_with(total=2),
+        Event("result", 1, "A", "а", "прошла"),
+        Event("result", 1, "B", "б", "пропущена", "не разрешено сценарием"),
+        Event("finished"),
+    )
+    assert (slot.dot, slot.percent, slot.summary) == (Dot.OK, 100, "ошибок нет")
+
+
+def test_tasks_of_one_severity_are_ordered_by_check_id():
+    slot = feed(
+        view_with(),
+        Event("result", 1, "Z-1", "я", "не прошла", severity="мелкая"),
+        Event("result", 1, "A-1", "а", "не прошла", severity="мелкая"),
+    )
+    assert [t.check_id for t in slot.sorted_tasks()] == ["A-1", "Z-1"]

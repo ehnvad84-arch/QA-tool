@@ -1,9 +1,10 @@
 import pytest
 from PySide6.QtCore import Qt
 
+from qa_tool.core.models import Camera
 from qa_tool.gui.app import create_app
 from qa_tool.gui.main_window import MainWindow, format_elapsed, stop_question
-from qa_tool.gui.screens.run import RunScreen
+from qa_tool.gui.screens.run import RunScreen, safe_tip
 from qa_tool.gui.state import AppState
 from tests.fake_checks import SLOW
 from tests.gui.test_scenario_run import fleet, make_window, screen  # noqa: F401 — фикстура
@@ -177,3 +178,94 @@ def test_s13_question_defaults_to_keep_running(qtbot):
     assert box.defaultButton().text() == "Продолжить прогон"
     assert box.escapeButton() is box.defaultButton()
     assert "Остановить и закрыть" in [b.text() for b in box.buttons()]
+
+
+def run_card(qtbot, tmp_path, fleet):  # noqa: F811
+    window = make_window(qtbot, tmp_path, fleet, registry_ref=FAKE, checks=CARD_CHECKS)
+    window.run_block.start_button.click()
+    finish(qtbot, window)
+    return window, screen(window, RunScreen)
+
+
+def test_second_run_starts_from_clean_screen(qtbot, tmp_path, fleet):  # noqa: F811
+    window, run = run_card(qtbot, tmp_path, fleet[:1])
+    first = dict(run.view.slots[1].counts)
+    window.run_block.start_button.click()
+    assert run.view.slots[1].percent == 0 and not run.view.slots[1].steps
+    finish(qtbot, window)
+    assert run.view.slots[1].counts == first
+    assert len(run.view.slots[1].tasks) == 2
+
+
+def test_run_started_from_other_screen_shows_cameras_added_there(qtbot, tmp_path, fleet):  # noqa: F811
+    create_app()
+    window = make_window(qtbot, tmp_path, [], registry_ref=FAKE, checks=["FAKE-NET-1"])
+    run = screen(window, RunScreen)
+    assert not run.cameras.rows
+    window.menu.setCurrentRow(1)
+    m = fleet[0]
+    window.state.stand.add_camera(
+        Camera(slot=1, address="127.0.0.1", port=m.port, rtsp_port=m.rtsp_port, username="admin")
+    )
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    window.run_block.update_view()
+    window.run_block.start_button.click()
+    window.run_control.runner.extra["trace_dir"] = str(trace)
+    assert list(run.cameras.rows) == [1]
+    finish(qtbot, window)
+    window.menu.setCurrentRow(3)
+    assert list(run.cameras.rows) == [1] and run.view.slots[1].done
+
+
+def test_result_survives_switching_screens(qtbot, tmp_path, fleet):  # noqa: F811
+    window, run = run_card(qtbot, tmp_path, fleet[:1])
+    window.menu.setCurrentRow(0)
+    window.menu.setCurrentRow(3)
+    assert run.view.slots[1].tasks and run.card.tasks.titles
+    assert run.card.tasks.protocol_link.isEnabled()
+
+
+def test_changed_stand_clears_old_result(qtbot, tmp_path, fleet):  # noqa: F811
+    window, run = run_card(qtbot, tmp_path, fleet[:1])
+    window.state.stand.remove_camera(1)
+    window.menu.setCurrentRow(0)
+    window.menu.setCurrentRow(3)
+    assert not run.cameras.rows and run.protocol_path() is None
+
+
+def test_failed_publishing_does_not_offer_previous_protocol(
+    qtbot,
+    tmp_path,
+    fleet,  # noqa: F811
+    monkeypatch,
+):
+    window, run = run_card(qtbot, tmp_path, fleet[:1])
+    run.warn = lambda *_: None
+    monkeypatch.setattr("qa_tool.report.publish.publish", lambda _store: 1 / 0)
+    window.run_block.start_button.click()
+    finish(qtbot, window)
+    assert run.protocol_path() is None
+    assert not run.card.tasks.protocol_link.isEnabled()
+    assert "протоколы не выпущены" in window.run_block.status.text()
+
+
+def test_s11_camera_text_in_tooltips_and_warnings_stays_text(qtbot):
+    create_app()
+    assert safe_tip("<h1 style='color:red'>x</h1>") == (
+        "<span>&lt;h1 style=&#x27;color:red&#x27;&gt;x&lt;/h1&gt;</span>"
+    )
+    assert safe_tip("") == ""
+
+
+def test_s13_run_ended_while_question_was_open(qtbot, tmp_path, fleet):  # noqa: F811
+    window, _ = running_window(qtbot, tmp_path, fleet[:1])
+
+    def finished_meanwhile(_parent, _closing):
+        window.run_control.stop()
+        finish(qtbot, window)
+        return True
+
+    window.ask_stop = finished_meanwhile
+    assert window.close() is True
+    assert not window.close_after_run

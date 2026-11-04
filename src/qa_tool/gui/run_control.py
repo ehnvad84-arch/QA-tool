@@ -68,6 +68,7 @@ class RunControl(QObject):
         )
         state.running = True
         self.stop_requested = False
+        self.last_store = None  # иначе при сбое выпуска окно открыло бы протокол прошлого прогона
         self.started_at = time.monotonic()
         self.started.emit()
         runner = self.runner

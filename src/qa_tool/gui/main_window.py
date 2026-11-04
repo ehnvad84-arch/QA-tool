@@ -143,7 +143,7 @@ class RunBlock(QFrame):
 
     def _failed(self, error: str) -> None:
         self.timer.stop()
-        self.result = f"Прогон не запущен: {error}"
+        self.result = f"Прогон не выполнен: {error}"
         self.update_view()
 
     def update_view(self) -> None:
@@ -271,6 +271,9 @@ class MainWindow(QMainWindow):
         if self.close_after_run:
             return  # уже закрываемся: повторный крестик не мешает выпуску протоколов
         if self.ask_stop(self, True):
+            if not self.run_control.running:  # прогон закончился, пока был открыт вопрос
+                event.accept()
+                return
             self.close_after_run = True
             self.run_control.stop()
 
