@@ -169,15 +169,24 @@ class SoapClient:
         host = urlsplit(url).netloc
         if host in _clock_offsets:
             return False
+        difference = self.camera_clock_difference_s(url)
+        if difference is None:
+            return False
+        _clock_offsets[host] = datetime.timedelta(seconds=difference)
+        return abs(difference) > CLOCK_TOLERANCE_S
+
+    def camera_clock_difference_s(self, url: str) -> float | None:
+        """На сколько секунд часы камеры впереди часов стенда; None — камера не сказала.
+
+        Запрос без пароля: попытку входа он не тратит.
+        """
         body = "<s:Body><tds:GetSystemDateAndTime/></s:Body>"
         request = f"<s:Envelope {_ENVELOPE_XMLNS}>{body}</s:Envelope>"
         try:
             camera_now = _camera_utc(self._post(url, request))
         except (CameraUnreachable, OnvifFault, ValueError):
-            return False
-        offset = camera_now - datetime.datetime.now(datetime.UTC)
-        _clock_offsets[host] = offset
-        return abs(offset.total_seconds()) > CLOCK_TOLERANCE_S
+            return None
+        return (camera_now - datetime.datetime.now(datetime.UTC)).total_seconds()
 
     def _post(self, url: str, envelope: str) -> Element:
         try:
@@ -206,7 +215,14 @@ class SoapClient:
             reason = fault.findtext(".//s:Text", default="", namespaces=NS)
             code = fault.findtext(".//s:Subcode/s:Value", default="", namespaces=NS)
             raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code)
+        # SOAP 1.1 и страницы ошибок веб-сервера: разбираются как XML, но это не SOAP 1.2. Код и
+        # статус нужны и здесь: иначе опечатка в пароле выглядит дефектом, и проверки камеры
+        # продолжают тратить попытки входа до блокировки.
+        legacy = next((e for e in root.iter() if e.tag.split("}")[-1] == "faultcode"), None)
+        if legacy is not None:
+            code = (legacy.text or "").strip()
+            raise OnvifFault(f"{code} (SOAP 1.1)", response.status_code, code)
         body_el = root.find("s:Body", NS)
         if body_el is None or not len(body_el):
-            raise OnvifFault("пустой ответ")
+            raise OnvifFault(f"пустой ответ (HTTP {response.status_code})", response.status_code)
         return body_el[0]

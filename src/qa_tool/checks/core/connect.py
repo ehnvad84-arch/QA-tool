@@ -12,7 +12,12 @@ from qa_tool.core.checks import (
 )
 from qa_tool.drivers.camera.onvif_generic import OnvifCamera
 from qa_tool.drivers.camera.probe import RtspProbe, rtsp_probe, tcp_open
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
+from qa_tool.drivers.camera.soap import (
+    CLOCK_TOLERANCE_S,
+    CameraUnreachable,
+    OnvifFault,
+    credentials_rejected,
+)
 
 PASSPORT_KEY = "passport"
 
@@ -70,10 +75,17 @@ def connect(ctx: CheckContext) -> CheckResult:
             # Камеру с одним лишь открытым паролем (WS-Security PasswordText) от неверного пароля
             # не отличить, не послав его открытым текстом. Поэтому снимаем и её: 150 тестов
             # с возможно неверным паролем заблокировали бы вход на камере.
-            result = CheckResult.stand_error(
+            reason = (
                 f"камера не приняла логин или пароль места {cam.slot} — проверьте их на экране "
                 f"«Камеры»; если они верны, камера принимает другой способ входа ({e})"
             )
+            difference = driver.soap.camera_clock_difference_s(driver.device_url)
+            if difference is not None and abs(difference) > CLOCK_TOLERANCE_S:
+                reason = (
+                    f"часы камеры расходятся с компьютером стенда на {abs(difference):.0f} с: "
+                    f"камера могла отказать из-за этого; {reason}"
+                )
+            result = CheckResult.stand_error(reason)
             result.data[CREDENTIALS_REJECTED] = True
             result.evidence = _exchanges(driver)
             return result

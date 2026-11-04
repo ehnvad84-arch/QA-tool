@@ -294,3 +294,15 @@ def test_connect_check_runs_even_if_scenario_left_it_out(tmp_path, fleet, monkey
     store = Runner(stand, Scenario(checks=["RUV-S-STREAM-1"])).run()
     rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
     assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
+
+
+def test_typo_in_password_on_html_401_camera_costs_one_login(tmp_path, fleet, monkeypatch):
+    # иначе проверки камеры продолжали бы входить с неверным паролем до её блокировки
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    fleet[0].auth_reply = "http401page"
+    fleet[0].requests.clear()
+    stand = make_stand(tmp_path, fleet[:1])
+    store = Runner(stand, Scenario(checks=["CORE-CONNECT-1", "RUV-S-STREAM-1"])).run()
+    rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
+    assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
+    assert fleet[0].requests.count("GetDeviceInformation") == 1

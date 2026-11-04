@@ -141,9 +141,13 @@ class TabooProxy:
             location = f"http:{location}"
         rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
         parts = urlsplit(rewritten)
-        if (parts.scheme or parts.netloc) and not rewritten.startswith(self.base_url):
+        if (parts.scheme or parts.netloc) and not self._is_proxy_url(rewritten):
             return f"{self.base_url}{_FOREIGN}/"
         return rewritten
+
+    def _is_proxy_url(self, url: str) -> bool:
+        # не startswith: «http://посредник@чужой-хост/» начинается с адреса посредника
+        return urlsplit(url).netloc == urlsplit(self.base_url).netloc
 
     def _to_proxy(self, match: re.Match) -> str:
         scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
@@ -153,7 +157,7 @@ class TabooProxy:
         return match.group(0)
 
     def _to_foreign(self, url: re.Match) -> str:
-        if url.group(0).startswith(self.base_url):
+        if self._is_proxy_url(url.group(0)):
             return url.group(0)
         host = quote(url.group(2), safe="[]:.-_")  # заголовок Location — только ASCII
         return f"{self.base_url}{_FOREIGN}/{host}{url.group(4) or ''}"
@@ -220,11 +224,11 @@ class TabooProxy:
         return Handler
 
 
-# http(s)://хост[:порт][/путь] — хост без пользователя и пароля в адресе; схема в адресе
-# без учёта регистра (RFC 3986 §3.1): «HTTP://камера/…» иначе ушёл бы к камере мимо табу
+# http(s)://[кто@]хост[:порт][/путь]; схема без учёта регистра (RFC 3986 §3.1): «HTTP://камера/…»
+# иначе ушёл бы к камере мимо табу. Хост — любые символы, кроме разделителей текста вокруг адреса.
 _HTTP_URL = re.compile(
     # пустая или любая часть до «@» — клиент её отбрасывает и идёт на хост после неё
-    r"\b(https?)://(?:[^/@\s<\"']*@)?([^/:?#@\s<\"'\[\]]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?"
+    r"\b(https?)://(?:[^/@\s<>\"']*@)?([^/:?#@\s<>\"'\[\](),;]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?"
     r"(/[^\s<\"']*)?",
     re.IGNORECASE,
 )
