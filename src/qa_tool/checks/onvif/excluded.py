@@ -9,6 +9,12 @@ RTSP (`rtsp://user:пароль@хост`): пароль виден в спис�
 берётся из ответа камеры без подмены — учётные данные могут уйти на чужой адрес. Посредник
 табу RTSP не видит. Видеопоток вместо них проверяет RUV-S-STREAM-1 своим RTSP-клиентом;
 список сверяется с метками onvif-tt тестом при каждом обновлении версии.
+
+Изменяющие тесты doorcontrol могут выполнить команду у настоящей двери, а вернуть её состояние
+снимок настроек не умеет (AD-3): служба бывает у устройств Profile D, QA-tool их не проверяет.
+
+FALSE_FAILURES — дефекты самих тестов закреплённой версии: они падают на исправной камере и дали бы
+ложные задачи программистам. Править onvif-tt здесь нельзя (never.md); решение директора 2026-11-04.
 """
 
 NO_FFPROBE = (
@@ -28,6 +34,20 @@ FFPROBE_TESTS = (
     "LOCAL-RTSS-RTSP-KEEPALIVE",
 )
 
+NO_DOOR_RESTORE = (
+    "выполняет команду двери, вернуть её состояние после теста нельзя; Profile D не проверяется"
+)
+DOOR_TESTS = tuple(f"DOORCONTROL-3-1-{n}" for n in range(19, 25))
+
+FALSE_FAILURES = {
+    "DEVICEIO-5-1-1": "тест onvif-tt читает атрибут token у строк ответа DeviceIO и падает на "
+    "исправной камере",
+    "LOCAL-AUTH-WRONG-PASSWORD-REJECTED": "тест onvif-tt ждёт отказ при подключении и падает на "
+    "камере, которая проверяет пароль при первом обращении к службе",
+    "LOCAL-NETWORK-GET-DEFAULT-GATEWAY": "тест onvif-tt считает ошибкой пустой шлюз, а схема ONVIF "
+    "его допускает",
+}
+
 EXCLUDED = {
     "LOCAL-DISCOVERY-PROBE": "сверяет адрес WS-Discovery с адресом подключения (через посредника "
     "это 127.0.0.1); поиск камер проверяет QA-tool",
@@ -36,3 +56,5 @@ EXCLUDED = {
     "127.0.0.1)",
 }
 EXCLUDED.update(dict.fromkeys(FFPROBE_TESTS, NO_FFPROBE))
+EXCLUDED.update(dict.fromkeys(DOOR_TESTS, NO_DOOR_RESTORE))
+EXCLUDED.update(FALSE_FAILURES)

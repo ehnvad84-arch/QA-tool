@@ -286,3 +286,22 @@ def test_events_carry_passport_severity_and_clean_reasons(tmp_path, fleet):
     assert results["SUB-2"].severity == "блокер"
     assert results["SUB-2"].detail == "password=*** отказ"
     assert results["SUB-1"].severity == results["FAKE-NET-1"].severity != ""
+
+
+def test_wrong_password_skips_other_checks_instead_of_false_failures(tmp_path, fleet, monkeypatch):
+    # решение директора 2026-11-03: неверный пароль — ошибка стенда, задач программистам нет
+    from qa_tool.report.model import build_protocol
+
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    stand = make_stand(tmp_path, fleet[:2])
+    runner = Runner(stand, Scenario(checks=["CORE-CONNECT-1", "RUV-S-STREAM-1"]))
+    store = runner.run()
+    bad = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=1)}
+    assert bad["CORE-CONNECT-1"][0] == "ошибка стенда"
+    assert bad["RUV-S-STREAM-1"] == (
+        "пропущена",
+        "камера не приняла логин или пароль (см. CORE-CONNECT-1)",
+    )
+    assert build_protocol(store, 1).tasks == []
+    good = {r["check_id"]: r["status"] for r in store.results(slot=2)}
+    assert good == {"CORE-CONNECT-1": "прошла", "RUV-S-STREAM-1": "прошла"}

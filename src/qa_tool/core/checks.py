@@ -22,6 +22,9 @@ PREVIOUS_RESULTS = "previous_results"
 UNREACHABLE = "unreachable"
 """Ключ в CheckResult.data: камера не ответила по сети (не ошибка проверки, а отсутствие связи)."""
 
+CREDENTIALS_REJECTED = "credentials_rejected"
+"""Ключ в CheckResult.data: камера не приняла логин или пароль места — ошибка стенда."""
+
 
 class Status(StrEnum):
     """Итог проверки. «Ошибка стенда» и «пропущена» в задачи программистам не попадают."""

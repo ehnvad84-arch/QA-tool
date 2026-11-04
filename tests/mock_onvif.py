@@ -105,6 +105,7 @@ class OnvifState:
     storage_fault: bool = False  # камера не умеет GetStorageConfigurations
     metadata_stream: bool = True  # Profile M объявлен, но в потоке нет дорожки метаданных
     analytics_modules: tuple[str, ...] = ("tt:CellMotionEngine",)  # настроенные модули
+    foreign_services: tuple[str, ...] = ()  # эти службы отдают внутренний адрес камеры (NAT)
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
@@ -123,6 +124,9 @@ class OnvifServices:
 
     # --- Device -------------------------------------------------------------------------------
 
+    def _service_host(self, name: str) -> str:
+        return "http://10.9.9.9" if name in self.state.foreign_services else self.base_url
+
     def op_GetServices(self, _request) -> str:  # noqa: N802
         services = ["device", "media", "media2", "events", "imaging", "ptz", "deviceio"]
         if "G" in self.state.profiles:
@@ -131,7 +135,7 @@ class OnvifServices:
             services.append("analytics")
         items = "".join(
             f"<tds:Service><tds:Namespace>{SERVICE_NS[name]}</tds:Namespace>"
-            f"<tds:XAddr>{self.base_url}/{name}_service</tds:XAddr>"
+            f"<tds:XAddr>{self._service_host(name)}/{name}_service</tds:XAddr>"
             "<tds:Version><tt:Major>2</tt:Major><tt:Minor>60</tt:Minor></tds:Version></tds:Service>"
             for name in services
         )

@@ -1,3 +1,5 @@
+from xml.etree import ElementTree
+
 import pytest
 
 from qa_tool.checks import load_all
@@ -95,3 +97,14 @@ def test_foreign_host_replaced_by_stand_address():
     assert fix("rtsp://192.168.1.10/live", "10.0.0.5", 554) == "rtsp://10.0.0.5:554/live"
     assert fix("rtsp://192.168.1.10:8554/a?b=1", "10.0.0.5", 554) == "rtsp://10.0.0.5:8554/a?b=1"
     assert fix("rtsp://10.0.0.5/live", "10.0.0.5", 554) == "rtsp://10.0.0.5/live"
+
+
+def test_profile_token_from_camera_is_escaped_in_request():
+    class Soap:
+        def call(self, _url, body):
+            self.body = body
+            return ElementTree.fromstring("<a><Uri>rtsp://x/</Uri></a>")
+
+    soap = Soap()
+    assert metadata.stream_uri(soap, "m2", "a&b<c>") == "rtsp://x/"
+    assert "a&amp;b&lt;c&gt;" in soap.body and "a&b<c>" not in soap.body

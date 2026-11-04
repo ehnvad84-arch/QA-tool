@@ -1,6 +1,7 @@
 """CORE-CONNECT-1: камера доступна по сети, ONVIF отвечает, паспорт — в шапку протокола."""
 
 from qa_tool.core.checks import (
+    CREDENTIALS_REJECTED,
     REGISTRY,
     UNREACHABLE,
     CheckContext,
@@ -60,10 +61,12 @@ def connect(ctx: CheckContext) -> CheckResult:
         if NOT_AUTHORIZED in str(e):
             # Решение директора 2026-11-03: неверный логин или пароль — ошибка настройки
             # стенда и подключения, а не дефект камеры; задачи программистам нет.
-            return CheckResult.stand_error(
+            result = CheckResult.stand_error(
                 f"камера не приняла логин или пароль места {cam.slot} — проверьте их на экране "
                 f"«Камеры» ({e})"
             )
+            result.data[CREDENTIALS_REJECTED] = True
+            return result
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
     except CameraUnreachable as e:

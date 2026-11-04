@@ -119,3 +119,55 @@ def test_long_poll_longer_than_default_http_timeout_passes():
         p.stop()
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def answering():
+    """Камера с заданным ответом: `answering(тело, заголовки)` — посредник к ней."""
+    servers, proxies = [], []
+
+    def start(content: bytes, status=200, **headers):
+        class Canned(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(status)
+                for key, value in headers.items():
+                    self.send_header(key.replace("_", "-"), value)
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Canned)
+        threading.Thread(target=server.serve_forever, args=(0.1,), daemon=True).start()
+        servers.append(server)
+        proxies.append(TabooProxy("127.0.0.1", server.server_address[1]).start())
+        return proxies[-1], server.server_address[1]
+
+    yield start
+    for p in proxies:
+        p.stop()
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def test_undecodable_answer_in_single_byte_charset_still_reaches_client(answering):
+    # 0x98 — единственный байт вне windows-1251: декодируется в U+FFFD, а обратно не кодируется
+    proxy, _ = answering(b"<a>\x98</a>", Content_Type="text/xml; charset=windows-1251")
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.status_code == 200 and r.content.startswith(b"<a>")
+
+
+def test_redirect_to_camera_stays_behind_proxy(answering):
+    proxy, _ = answering(b"", status=302, Location="http://127.0.0.1:8080/onvif/x")
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.headers["location"] == f"{proxy.base_url}/_port/8080/onvif/x"
+
+
+def test_redirect_to_foreign_host_goes_to_refusal(answering):
+    proxy, _ = answering(b"", status=302, Location="http://10.9.9.9/onvif/x")
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert "10.9.9.9" in r.headers["location"]
+    assert r.headers["location"].startswith(f"{proxy.base_url}/_foreign/")

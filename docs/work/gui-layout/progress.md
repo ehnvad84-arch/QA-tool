@@ -9,7 +9,7 @@
 - Этап: 2 — разработка (Гейт 1 пройден 2026-11-04)
 - Последнее сделанное: 2026-11-04 директор выбрал вариант D «три колонки»; спека и план T1–T9 написаны; Гейт 1: «да» + тёмная тема (S12) и защита от закрытия (S13)
 - Следующий шаг: T1
-- Важно знать: ветка от feature/onvif (c09f377); после squash этапа 2 в main — `git rebase --onto main c09f377` (основа этой ветки); worktree ~/projects/QA-tool-gui-layout; макет — ui/run-screen-d.png
+- Важно знать: ветка от feature/onvif (c09f377); feature/onvif влита merge-коммитом 2026-11-04; после squash этапа 2 в main — влить main в эту ветку; worktree ~/projects/QA-tool-gui-layout; макет — ui/run-screen-d.png
 
 ## Журнал
 

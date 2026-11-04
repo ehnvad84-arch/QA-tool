@@ -1,3 +1,5 @@
+from xml.etree.ElementTree import fromstring
+
 import pytest
 
 from qa_tool.checks.onvif.snapshot import SnapshotTaker
@@ -63,3 +65,45 @@ def test_failed_restore_reported_as_camera_left_changed(mock):
     restored, problems = t.restore(snap)
     assert restored == [] and len(problems) == len(snap.items)
     assert any(p.startswith("дата и время") for p in problems)
+
+
+HOSTILE = "a&b<c>"
+HOSTILE_XML = "a&amp;b&lt;c&gt;"
+ANSWERS = {
+    "tds:GetSystemDateAndTime": f"<a><DateTimeType>{HOSTILE_XML}</DateTimeType>"
+    f"<DaylightSavings>{HOSTILE_XML}</DaylightSavings><TZ>{HOSTILE_XML}</TZ></a>",
+    "tds:GetRelayOutputs": f'<a><RelayOutputs token="{HOSTILE_XML}"><Properties/></RelayOutputs></a>',
+    "trt:GetVideoSources": f'<a><VideoSources token="{HOSTILE_XML}"/></a>',
+    "timg:GetImagingSettings": "<a><ImagingSettings><AutoFocusMode>MANUAL</AutoFocusMode>"
+    "</ImagingSettings></a>",
+    "timg:GetStatus": f"<a><Position>{HOSTILE_XML}</Position></a>",
+    "tptz:GetConfigurations": "<a/>",
+    "tr2:GetProfiles": f'<a><Profiles token="{HOSTILE_XML}"/></a>',
+    "tptz:GetStatus": '<a><Position><PanTilt x="0" y="0"/></Position></a>',
+}
+
+
+class CannedSoap:
+    """Отвечает заготовками и запоминает тела запросов."""
+
+    def __init__(self):
+        self.bodies = []
+
+    def call(self, _url, body):
+        self.bodies.append(body)
+        return fromstring(ANSWERS[body[1:].split(">")[0].rstrip("/")])
+
+
+def test_values_from_camera_are_escaped_in_requests_to_it():
+    soap = CannedSoap()
+    snapshot = SnapshotTaker(Camera(slot=1, address="127.0.0.1", username="admin"), soap)
+    services = {"device": "d", "media": "m", "media2": "m2", "imaging": "i", "ptz": "p"}
+    items = (
+        snapshot._datetime(services)
+        + snapshot._relays(services)
+        + snapshot._imaging(services)
+        + snapshot._ptz(services)
+    )
+    bodies = soap.bodies + [body for item in items for _, body in item.restore]
+    assert sum(HOSTILE_XML in body for body in bodies) >= 7
+    assert not [body for body in bodies if HOSTILE in body]

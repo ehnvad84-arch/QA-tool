@@ -38,6 +38,14 @@ NS = {
 _ENVELOPE_XMLNS = " ".join(f'xmlns:{prefix}="{uri}"' for prefix, uri in NS.items())
 _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
 _WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+# Камеры на gSOAP сравнивают эти адреса точно: при другом типе пароль считается открытым текстом,
+# дайджест с ним не совпадает, и правильный пароль получает wsse:FailedAuthentication.
+_TOKEN_PROFILE = (
+    "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0"
+)
+_SOAP_MESSAGE_SECURITY = (
+    "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0"
+)
 
 
 class CameraUnreachable(ConnectionError):
@@ -75,9 +83,9 @@ class SoapClient:
         return (
             f'<wsse:Security xmlns:wsse="{_WSSE}" xmlns:wsu="{_WSU}"><wsse:UsernameToken>'
             f"<wsse:Username>{escape(self.username)}</wsse:Username>"
-            f'<wsse:Password Type="{_WSSE[:-4]}-username-token-profile-1.0#PasswordDigest">'
-            f"{digest}</wsse:Password>"
-            f"<wsse:Nonce>{base64.b64encode(nonce).decode()}</wsse:Nonce>"
+            f'<wsse:Password Type="{_TOKEN_PROFILE}#PasswordDigest">{digest}</wsse:Password>'
+            f'<wsse:Nonce EncodingType="{_SOAP_MESSAGE_SECURITY}#Base64Binary">'
+            f"{base64.b64encode(nonce).decode()}</wsse:Nonce>"
             f"<wsu:Created>{created}</wsu:Created>"
             "</wsse:UsernameToken></wsse:Security>"
         )

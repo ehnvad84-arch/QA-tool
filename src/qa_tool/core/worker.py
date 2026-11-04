@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qa_tool.core.checks import (
+    CREDENTIALS_REJECTED,
     PREVIOUS_RESULTS,
     UNREACHABLE,
     CheckContext,
@@ -93,6 +94,9 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
         by_phase.setdefault(registry.get(check_id).phase, []).append((check_id, skip))
     alive_checked = False  # камера отвечала хотя бы раз — дальше пропажа = «нет связи»
     unreachable_from_start = False
+    # Решение директора 2026-11-03: неверный логин или пароль — ошибка стенда. Остальные
+    # проверки с ним всё равно получили бы отказ и стали бы ложными «не прошла» с задачами.
+    rejected_from_start = False
 
     previous = ctx.extra.setdefault(PREVIOUS_RESULTS, {})
 
@@ -127,6 +131,10 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 reason = f"камера не на связи с начала прогона (см. {FIRST_CHECK})"
                 send_result(check_id, CheckResult.skipped(reason), started)
                 continue
+            if rejected_from_start:
+                reason = f"камера не приняла логин или пароль (см. {FIRST_CHECK})"
+                send_result(check_id, CheckResult.skipped(reason), started)
+                continue
             liveness = args.extra.get("liveness", True)
             if alive_checked and liveness and not camera_alive(args.camera):
                 lost()
@@ -155,6 +163,9 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                     result.data.get(UNREACHABLE)
                 )
                 alive_checked = not unreachable_from_start
+                rejected_from_start = check_id == FIRST_CHECK and bool(
+                    result.data.get(CREDENTIALS_REJECTED)
+                )
             if (
                 was_reachable
                 and result.status in (Status.FAILED, Status.STAND_ERROR)

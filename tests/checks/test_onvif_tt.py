@@ -33,7 +33,7 @@ def ctx_for(mock, **extra):
 def test_onvif_tt_runs_through_proxy_one_row_per_test(mock):
     result = run_check(SPEC, ctx_for(mock))
     ids = {c.check_id for c in result.children}
-    assert len(ids) > 100  # 161 тест onvif-tt: три исключены и добавлены строками «пропущена»
+    assert len(ids) > 100  # исключённые тесты onvif-tt добавлены строками «пропущена»
     assert set(EXCLUDED) <= ids
     statuses = {c.result.status for c in result.children}
     assert Status.PASSED in statuses and Status.SKIPPED in statuses
@@ -200,3 +200,28 @@ def test_path_for_onvif_tt_has_no_ffprobe(tmp_path):
     (with_ffprobe / ("ffprobe.exe" if os.name == "nt" else "ffprobe")).write_text("")
     path = os.pathsep.join([str(with_ffprobe), str(plain)])
     assert onvif_tt.path_without_ffprobe(path) == str(plain)
+
+
+def test_timeout_above_module_limit_is_capped(mock, monkeypatch):
+    # больший тайм-аут планировщик снял бы вместе с процессом — до восстановления настроек
+    seen = {}
+
+    def hang(command, env, timeout, **kwargs):
+        seen["timeout"] = timeout
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(onvif_tt.subprocess, "run", hang)
+    run_check(SPEC, ctx_for(mock, onvif_tt_timeout_s=onvif_tt.MODULE_TIMEOUT_S * 10))
+    assert seen["timeout"] == onvif_tt.MODULE_TIMEOUT_S
+
+
+def test_every_changing_doorcontrol_test_is_excluded():
+    from onvif_tt import registry
+
+    registry.discover()
+    changing = {
+        i
+        for i, impl in registry.REGISTRY.items()
+        if impl.requires_writes and i.startswith("DOORCONTROL")
+    }
+    assert changing and changing <= set(EXCLUDED)  # новая версия onvif-tt — сверить

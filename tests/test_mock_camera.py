@@ -5,7 +5,7 @@ import socket
 
 import httpx
 
-from tests.mock_camera import password_digest, start_fleet
+from tests.mock_camera import PASSWORD_DIGEST_TYPE, password_digest, start_fleet
 
 
 def soap(operation: str, password: str = "admin") -> bytes:
@@ -17,7 +17,8 @@ def soap(operation: str, password: str = "admin") -> bytes:
         '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
         f'<s:Header><wsse:Security xmlns:wsse="{wsse}" xmlns:wsu="{wsu}"><wsse:UsernameToken>'
         "<wsse:Username>admin</wsse:Username>"
-        f"<wsse:Password>{password_digest(nonce, created, password)}</wsse:Password>"
+        f'<wsse:Password Type="{PASSWORD_DIGEST_TYPE}">'
+        f"{password_digest(nonce, created, password)}</wsse:Password>"
         f"<wsse:Nonce>{base64.b64encode(nonce).decode()}</wsse:Nonce>"
         f"<wsu:Created>{created}</wsu:Created>"
         "</wsse:UsernameToken></wsse:Security></s:Header>"
