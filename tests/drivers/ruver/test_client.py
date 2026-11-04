@@ -144,5 +144,15 @@ def test_expected_restart_allows_one_more_login(camera):
     assert camera.login_attempts == 2
 
 
+def test_expected_restart_does_not_lift_a_password_refusal(camera):
+    with pytest.raises(LoginRejected), client_for(camera, password="wrong") as client:
+        pass
+    client = client_for(camera, password="wrong")
+    with pytest.raises(LoginRejected):
+        client._login()
+    client.expect_restart()
+    assert client._relogin_used is True
+
+
 def test_map_file_is_in_the_package():
     assert client_module.MAP_FILE.exists()

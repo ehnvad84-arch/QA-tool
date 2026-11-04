@@ -168,6 +168,7 @@ class RuverClient:
         self.timeout = timeout
         self.session_id = ""
         self._relogin_used = False
+        self._password_rejected = False
 
     def __enter__(self) -> "RuverClient":
         try:
@@ -220,6 +221,7 @@ class RuverClient:
         if code == 2003:
             raise LoginFailed("камера заблокировала вход: превышено число попыток")
         if answer.status_code in (401, 404):
+            self._password_rejected = True
             raise LoginRejected(f"камера не приняла логин или пароль (код {code})")
         raise LoginFailed(f"вход не состоялся: код {answer.status_code}")
 
@@ -236,10 +238,10 @@ class RuverClient:
     def expect_restart(self) -> None:
         """Разрешить ещё один повторный вход: служба API камеры перезапускается ожидаемо.
 
-        Пароль уже подтверждён, а сеанс закрывает сама камера. Отказ в пароле всё равно
-        не повторяется: после него вход больше не пробуется.
+        Пароль уже подтверждён, а сеанс закрывает сама камера. После отказа в пароле вход
+        не разрешается: он расходует попытки.
         """
-        self._relogin_used = False
+        self._relogin_used = self._password_rejected
 
     def _check_allowed(self, op: Operation) -> None:
         if self.api.get(op.method, op.path) != op:
@@ -251,12 +253,18 @@ class RuverClient:
         if op.kind == DESTRUCTIVE and not self.allow_destructive:
             raise CallRefused(f"{op.method} {op.path}: разрушающие проверки не разрешены")
 
-    def call(self, op: Operation, body: dict[str, Any] | None = None) -> http.Response:
+    def call(
+        self,
+        op: Operation,
+        body: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+    ) -> http.Response:
         """Вызвать операцию карты в открытом сеансе.
 
         Args:
             op: операция из карты; параметры адреса берутся из неё.
             body: тело JSON; по умолчанию — тело из карты.
+            query: параметры адреса вместо параметров из карты.
 
         Returns:
             Ответ камеры с любым кодом: что он значит, решает проверка.
@@ -268,7 +276,8 @@ class RuverClient:
             http.TransportError: камера не ответила.
         """
         self._check_allowed(op)
-        url = self.base + op.path + (f"?{urlencode(op.query)}" if op.query else "")
+        parameters = op.query if query is None else query
+        url = self.base + op.path + (f"?{urlencode(parameters)}" if parameters else "")
         payload = body if body is not None else op.body
         content = json.dumps(payload) if payload is not None else b""
 

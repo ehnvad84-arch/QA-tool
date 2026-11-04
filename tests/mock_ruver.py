@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from qa_tool.drivers.camera.ruver.client import READ, WRITE, load_map
 
@@ -75,6 +75,9 @@ class MockRuver:
     busy_writes_left: int = 1  # сколько записей подряд она отказывает
     restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
     down_s: float = 0.15
+    blocks_by_stream: dict[str, list] = field(default_factory=dict)  # надписи других потоков
+    refuses_block_return: bool = False
+    fake_reboot: bool = False  # отвечает 200, но не перезагружается
     drops_reboot_answer: bool = False  # уходит в перезагрузку, не ответив
     drops_answer_for: Callable[[Logged], bool] | None = None  # значение применено, ответ потерян
     expire_session_after: int = 0  # сеанс закрывается по времени после N запросов
@@ -180,7 +183,9 @@ class MockRuver:
             self.state[path][name] = side_value
         return 200, None
 
-    def answer(self, method: str, path: str, session: str, body: Any) -> tuple[int, Any]:
+    def answer(
+        self, method: str, path: str, session: str, body: Any, query: str = ""
+    ) -> tuple[int, Any]:
         """Ответ камеры: (код, тело): JSON, байты или None — пустое тело."""
         if (method, path) == ("GET", "/api/auth/create_session"):
             return self._create_session()
@@ -210,12 +215,20 @@ class MockRuver:
             self.sessions.clear()
             return 200, b"settings"
         if path == "/api/service/reboot":
+            if self.fake_reboot:
+                return 200, None
             self.reboots += 1
             self.sessions.clear()
+            self._down_until = time.monotonic() + self.down_s
             return 200, None
+        stream = parse_qs(query).get("stream_id", ["primary"])[0]
+        if path == "/api/osd/block_positions" and stream in self.blocks_by_stream:
+            return 200, {"overlayBlocks": self.blocks_by_stream[stream]}
         if path == "/api/osd/set_block_position":
-            blocks = self.state["/api/osd/block_positions"]["overlayBlocks"]
-            for block in blocks:
+            if self.refuses_block_return:
+                return 400, {"errorCode": 1003, "errorDescription": "Bad parameter"}
+            state = self.state["/api/osd/block_positions"]["overlayBlocks"]
+            for block in self.blocks_by_stream.get(stream, state):
                 if block.get("id") == (body or {}).get("id"):
                     block |= {"x": body["x"], "y": body["y"]}
             return 200, None
@@ -225,6 +238,8 @@ class MockRuver:
             return 200, b"\xff\xd8binary"
         if path in self.corrupt:
             return 200, {}
+        if path in self.state and self.state[path] is None:
+            return 200, b"null"  # так прошивка 0.6.14 отдаёт пустой список
         return 200, self.state.get(path)
 
     def _handler(self):
@@ -246,7 +261,9 @@ class MockRuver:
                     mock.requests.append(logged)
                     if mock.on_request:
                         mock.on_request(mock, logged)
-                    status, payload = mock.answer(self.command, parts.path, session, body)
+                    status, payload = mock.answer(
+                        self.command, parts.path, session, body, parts.query
+                    )
                 if parts.path in mock.slow:
                     time.sleep(mock.slow_s)
                 if mock.drops_answer_for and mock.drops_answer_for(logged):

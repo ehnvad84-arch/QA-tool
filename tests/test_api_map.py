@@ -119,7 +119,8 @@ def test_every_taboo_operation_is_stopped_by_the_taboo_itself():
 def test_everything_the_program_calls_passes_the_taboo():
     for op in [*of_kind(READ), *of_kind(WRITE), *of_kind(DESTRUCTIVE), *of_kind(RETURN_ONLY)]:
         check_http(op.method, op.path)
-        check_web_request(op.method, op.path, json.dumps(op.body or {op.setting: 1}))
+        body = {"id": 1, "x": 1, "y": 1} if op.kind == RETURN_ONLY else {op.setting: 1}
+        check_web_request(op.method, op.path, json.dumps(op.body or body))
 
 
 def test_auth_addresses_stay_out_of_the_walk():

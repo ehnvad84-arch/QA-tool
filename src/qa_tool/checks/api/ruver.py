@@ -51,7 +51,6 @@ from qa_tool.drivers.camera.ruver.client import (
     NoFreeSession,
     Operation,
     RuverClient,
-    RuverError,
     load_map,
 )
 
@@ -64,7 +63,9 @@ EXPORT = "/api/service/export_settings"
 REBOOT = "/api/service/reboot"
 BLOCKS = "/api/osd/block_positions"
 SET_BLOCK = "/api/osd/set_block_position"
-LOST = (http.TransportError, RuverError)  # камера не ответила или повторный вход не удался
+STREAMS = ("primary", "secondary", "preview")
+# Камера не ответила или повторный вход не удался. CallRefused сюда не входит: это ошибка программы.
+LOST = (http.TransportError, LoginRejected, LoginFailed, NoFreeSession)
 # Адрес → признак в ответе /api/hardware. Сверено на камере TMID-018 с прошивкой 0.6.14.
 FEATURES = {
     "/api/lte": "lteSupport",
@@ -77,10 +78,13 @@ FEATURES = {
     "/api/image/exposure/iris_enable": "irisSupport",
 }
 LEFT_CHANGED = "камера осталась изменённой"
+NOT_DOWN = "камера не ушла в перезагрузку"
+NOT_RETURNED = "значение не вернулось"
 PER_OPERATION_S = 3.0  # обычно 0,1 с; запас на медленную камеру и тайм-ауты отдельных запросов
 RESERVE_S = 300.0  # возврат значений и сверка уже после предела времени
 REBOOT_WAIT_S = 180.0  # камера «Рувер» поднимается за 1–2 минуты
 REBOOT_POLL_S = 3.0
+REBOOT_DOWN_S = 60.0  # за это время камера должна уйти в перезагрузку; на камере не измерено
 RETURN_PAUSE_S = 2.0
 OUTAGE_WATCH_S = 6.0  # на 0.6.14 обрыв начинается в первую секунду после экспорта
 OUTAGE_LIMIT_S = 30.0  # на 0.6.14 служба возвращается за 3 с
@@ -157,9 +161,10 @@ def changed_fields(before: Any, after: Any, prefix: str = "") -> list[str]:
 
 def _by_id(items: list) -> dict | None:
     """Элементы списка по `id`; None — список не из таких элементов."""
-    if not all(isinstance(item, dict) and "id" in item for item in items):
+    if not all(isinstance(item, dict) and isinstance(item.get("id"), int | str) for item in items):
         return None
-    return {item["id"]: item for item in items}
+    found = {item["id"]: item for item in items}
+    return found if len(found) == len(items) else None  # одинаковые id скрыли бы разницу
 
 
 def _canonical(items: list) -> list[str]:
@@ -180,6 +185,7 @@ class Walk:
     firmware: str = ""
     wrote: bool = False  # что-то могло измениться: нужна сверка «до и после»
     features: dict[str, Any] = field(default_factory=dict)  # ответ /api/hardware
+    blocks: dict[str, list] = field(default_factory=dict)  # надписи по потокам до записи
 
     # --- общее ------------------------------------------------------------------------------
 
@@ -240,6 +246,8 @@ class Walk:
         first = {INFO: 0, HARDWARE: 1}
         for op in sorted(reads, key=lambda op: first.get(op.path, 2)):
             self._row(op, self._read(op))
+        if self.ctx.allow_writes:
+            self.blocks = {s: b for s in STREAMS if (b := self._blocks_of(s)) is not None}
 
     def _absent(self, op: Operation) -> str:
         """Причина пропуска, если функции операции у этой модели нет; пусто — функция есть."""
@@ -379,7 +387,7 @@ class Walk:
             return
         if LEFT_CHANGED in result.reason:
             # от неверной точки отсчёта строка показала бы ложное «значение изменилось»
-            reason = "значение не вернулось: вне пределов не проверялось"
+            reason = f"{NOT_RETURNED}: вне пределов не проверялось"
             self._row(op, CheckResult.skipped(reason), "-LIMIT")
             return
         self._row(op, self._try_outside(op, read_op, original, outside), "-LIMIT")
@@ -485,7 +493,13 @@ class Walk:
         changed: dict[str, list[str]] = {}
         unread: list[str] = []
         for op in self.api.operations:
-            if op.kind != READ or op.live or op.id not in self.before:
+            if op.kind != READ or op.live or op.binary or op.schema is None:
+                continue
+            if op.id not in self.before:
+                # первое чтение не удалось: снимка нет, и «совпало» здесь было бы неправдой
+                row = self.rows.get(op.id)
+                if row and row.result.status in (Status.FAILED, Status.STAND_ERROR):
+                    unread.append(op.path)
                 continue
             if time.monotonic() > self.hard_deadline:
                 unread.append(op.path)
@@ -516,27 +530,47 @@ class Walk:
             if isinstance(before, dict) and op.setting in before:
                 self._return_value(op, read_op, before[op.setting])
 
-    def _return_blocks(self) -> None:
-        """Вернуть сдвинутые надписи по снимку «до»; сдвиг остаётся задачей программистам."""
-        read_op, op = self.api.get("GET", BLOCKS), self.api.get("POST", SET_BLOCK)
-        moved: list[int] = []
-        problem = ""
+    def _blocks_of(self, stream: str) -> list | None:
+        """Надписи потока; None — у этой камеры потока нет или чтение не удалось."""
+        read_op = self.api.get("GET", BLOCKS)
         try:
-            now = {
-                block["id"]: block for block in self.client.call(read_op).json()["overlayBlocks"]
-            }
-            for block in self.before[read_op.id]["overlayBlocks"]:
-                current = now.get(block["id"])
-                if current and (current["x"], current["y"]) != (block["x"], block["y"]):
-                    body = {"id": block["id"], "x": block["x"], "y": block["y"]}
-                    if not self.client.call(op, body).is_success:
-                        problem = "камера отказала в возврате"
-                    moved.append(block["id"])
-        except (ValueError, KeyError, TypeError, *LOST) as e:
-            problem = f"положение не прочитано: {type(e).__name__}"
-        ids = ", ".join(str(block) for block in moved)
-        reason = f"после записи настроек сдвинулись надписи: блоки {ids or '?'}"
-        text = f"{reason}\n{problem or 'положение возвращено, итог — в строке сверки'}"
+            response = self.client.call(read_op, query={"stream_id": stream})
+            blocks = response.json()["overlayBlocks"] if response.status_code == 200 else None
+        except (ValueError, KeyError, TypeError, *LOST):
+            return None
+        return blocks if isinstance(blocks, list) else None
+
+    def _moved_blocks(self) -> list[tuple[str, dict]]:
+        """Надписи, стоящие не там, где до записи: (поток, положение до записи)."""
+        moved = []
+        for stream, before in self.blocks.items():
+            now = _by_id(self._blocks_of(stream) or [])
+            for block in before if now else []:
+                current = now.get(block.get("id")) if isinstance(block, dict) else None
+                if current and (current.get("x"), current.get("y")) != (
+                    block.get("x"),
+                    block.get("y"),
+                ):
+                    moved.append((stream, block))
+        return moved
+
+    def _return_blocks(self, moved: list[tuple[str, dict]]) -> None:
+        """Вернуть сдвинутые надписи по снимку «до»; сдвиг остаётся задачей программистам."""
+        op = self.api.get("POST", SET_BLOCK)
+        problems = []
+        for stream, block in moved:
+            body = {"id": block["id"], "x": block["x"], "y": block["y"]}
+            try:
+                response = self.client.call(op, body, {"stream_id": stream})
+                if not response.is_success:
+                    problems.append(f"{stream}: код {response.status_code}")
+            except LOST as e:
+                problems.append(f"{stream}: {type(e).__name__}")
+        names = ", ".join(f"{stream} №{block['id']}" for stream, block in moved)
+        reason = f"после записи настроек сдвинулись надписи: {names}"
+        text = (
+            f"{reason}\n{'; '.join(problems) or 'запрос возврата принят, итог — в строке сверки'}"
+        )
         evidence = [Evidence(f"{op.id}.txt", self._clean(text))]
         self._row(op, self._failed(reason, "запись настроек не двигает надписи", evidence))
 
@@ -553,20 +587,28 @@ class Walk:
                 if row and LEFT_CHANGED in row.result.reason:
                     text = row.result.reason.replace(LEFT_CHANGED, "вернулось только при сверке")
                     row.result.reason = row.result.actual = text
+                elif row and NOT_RETURNED in row.result.reason:
+                    row.result.reason = row.result.reason.replace(
+                        NOT_RETURNED, "значение вернулось только при сверке"
+                    )
 
     def verify(self) -> None:
         """Строка сверки: настройки после записи совпали со снимком «до» (S6)."""
         changed, unread = self._read_again()
-        repaired: list[str] = []
-        if changed:
-            first = list(changed)
-            self._repair(changed)
-            if BLOCKS in changed:
-                self._return_blocks()
+        first = list(changed)
+        self._repair(changed)
+        moved = self._moved_blocks()
+        if moved:
+            self._return_blocks(moved)
+        if changed or moved:
             changed, unread = self._read_again()
-            repaired = [path for path in first if path not in changed and path not in unread]
+        repaired = [path for path in first if path not in changed and path not in unread]
         self._settle_rows(changed, unread)
         lines = [f"{path}: {', '.join(fields)}" for path, fields in changed.items()]
+        lines += [
+            f"{BLOCKS}?stream_id={stream}: надпись №{block['id']}"
+            for stream, block in self._moved_blocks()
+        ]
         expected = "настройки после записи совпадают с обходом чтения до неё"
         text = "\n".join(
             ["Разошлись:", *lines, "Не прочитаны:", *unread, "Вернулись при сверке:", *repaired]
@@ -642,40 +684,66 @@ class Walk:
         expected = "камера выполнила операцию"
         try:
             response = self.client.call(op)
+        except http.NOT_SENT as e:
+            return CheckResult.stand_error(f"запрос не отправлен: {type(e).__name__}")
         except LOST as e:
-            if op.path != REBOOT:
+            if op.path != REBOOT or not isinstance(e, http.TransportError):
                 return CheckResult.stand_error(f"камера не ответила: {type(e).__name__}: {e}")
-            # камера может уйти в перезагрузку, не успев ответить: судить надо по её возвращению
+            # камера может уйти в перезагрузку, не успев ответить: судить надо по её уходу
             note = f"{op.method} {op.path}\n\nответа нет: {type(e).__name__}"
             evidence = [Evidence(f"{op.id}.txt", self._clean(note))]
-            if self._came_back():
-                return CheckResult(
-                    Status.PASSED, expected=expected, actual="вернулась", evidence=evidence
-                )
-            return self._failed(f"камера не вернулась за {REBOOT_WAIT_S:g} с", expected, evidence)
+            problem = self._came_back()
+            if problem == NOT_DOWN:
+                result = CheckResult.stand_error("ответа нет, и камера не ушла в перезагрузку")
+                result.evidence = evidence
+                return result
+            if problem:
+                return self._failed(problem, expected, evidence)
+            return CheckResult(
+                Status.PASSED, expected=expected, actual="ушла и вернулась", evidence=evidence
+            )
         refused = self._refused(op, response)
         if refused:
             return refused
         evidence = [self._evidence(op, response)]
         if not response.is_success:
             return self._failed(f"код {response.status_code}", expected, evidence)
-        if op.path == REBOOT and not self._came_back():
-            return self._failed(f"камера не вернулась за {REBOOT_WAIT_S:g} с", expected, evidence)
+        problem = self._came_back() if op.path == REBOOT else ""
+        if problem:
+            return self._failed(problem, expected, evidence)
         return CheckResult(Status.PASSED, expected=expected, actual="выполнено", evidence=evidence)
 
-    def _came_back(self) -> bool:
-        """Дождаться камеру после перезагрузки: чтение снова отвечает 200."""
+    def _came_back(self) -> str:
+        """Дождаться, что камера ушла в перезагрузку и вернулась; пусто — так и было.
+
+        Первый ответ сам по себе ни о чём не говорит: служба работает и до ухода камеры,
+        поэтому сначала нужен обрыв связи.
+        """
         self.client.expect_restart()
         info = self.api.get("GET", INFO)
-        limit = time.monotonic() + float(self.ctx.extra.get("api_reboot_wait_s", REBOOT_WAIT_S))
+        extra = self.ctx.extra
+        poll = float(extra.get("api_reboot_poll_s", REBOOT_POLL_S))
+        limit = time.monotonic() + float(extra.get("api_reboot_down_s", REBOOT_DOWN_S))
+        while self._answers(info):
+            if time.monotonic() > limit:
+                return NOT_DOWN
+            time.sleep(poll)
+        wait_s = float(extra.get("api_reboot_wait_s", REBOOT_WAIT_S))
+        limit = time.monotonic() + wait_s
         while time.monotonic() < limit:
-            try:
-                if self.client.call(info).status_code == 200:
-                    return True
-            except LOST:
-                pass  # камера ещё поднимается
-            time.sleep(float(self.ctx.extra.get("api_reboot_poll_s", REBOOT_POLL_S)))
-        return False
+            if self._answers(info):
+                return ""
+            time.sleep(poll)
+        return f"камера не вернулась за {wait_s:g} с"
+
+    def _answers(self, info: Operation) -> bool:
+        """Отвечает ли служба API; отказ при повторном входе тоже значит, что она жива."""
+        try:
+            return self.client.call(info).status_code == 200
+        except http.TransportError:
+            return False
+        except LOST:
+            return True
 
     # --- итог -------------------------------------------------------------------------------
 
@@ -696,8 +764,10 @@ class Walk:
                 continue
             if op.kind == TABOO:
                 self._row(op, CheckResult.skipped("запрещено табу"))
-            elif op.kind in (NOT_CALLED, RETURN_ONLY):
+            elif op.kind == NOT_CALLED:
                 self._row(op, CheckResult.skipped(f"не вызывается: {op.reason}"))
+            elif op.kind == RETURN_ONLY:
+                self._row(op, CheckResult.skipped(op.reason))
         order = [op.id for op in self.api.operations]
         rows = []
         for row_id in order:

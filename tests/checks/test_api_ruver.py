@@ -295,6 +295,11 @@ def test_setting_with_answer_outside_the_schema_is_still_verified(camera):
     assert contrast in rows_of(result)[RESTORE_ID].actual
 
 
+def test_repeated_or_odd_ids_do_not_break_comparison():
+    assert changed_fields([{"id": 1, "x": 1}, {"id": 1, "x": 2}], [{"id": 1, "x": 1}]) != []
+    assert changed_fields([{"id": [1], "x": 1}], [{"id": [1], "x": 1}]) == []
+
+
 def test_order_of_blocks_is_not_a_change(camera):
     blocks = [{"id": 1, "x": 5, "y": 6}, {"id": 2, "x": 7, "y": 8}]
     assert changed_fields({"b": blocks}, {"b": blocks[::-1]}) == []
@@ -359,6 +364,50 @@ def test_lost_answer_outside_limits_still_returns_value(camera):
     found = limit_row(run(camera, allow_writes=True), BRIGHTNESS)
     assert found.status is Status.STAND_ERROR
     assert camera.field_value(BRIGHTNESS, "brightness") == before
+
+
+def test_address_whose_first_read_failed_is_not_called_matching(camera):
+    contrast = "/api/image/contrast"
+    camera.forbidden.add(contrast)
+    camera.on_request = lambda mock, logged: (
+        mock.forbidden.discard(contrast) if logged.path == "/api/image/saturation" else None
+    )
+    found = rows_of(run(camera, allow_writes=True))[RESTORE_ID]
+    assert found.status is Status.STAND_ERROR
+    assert "сверка не закончена" in found.reason
+
+
+def block(number, x):
+    return {"id": number, "x": x, "y": 1019, "width": 407, "height": 56}
+
+
+def test_block_moved_on_another_stream_is_returned(camera):
+    camera.blocks_by_stream["secondary"] = [block(1, 900)]
+
+    def move(mock, logged):
+        if logged.method == "POST" and logged.path == BRIGHTNESS:
+            mock.blocks_by_stream["secondary"][0]["x"] = 300
+
+    camera.on_request = move
+    result = run(camera, allow_writes=True)
+    assert camera.blocks_by_stream["secondary"][0]["x"] == 900
+    assert "secondary" in row(result, "POST", "/api/osd/set_block_position").reason
+    sent = camera.sent("POST", "/api/osd/set_block_position")
+    assert [r.query for r in sent] == ["stream_id=secondary"]
+
+
+def test_block_that_cannot_be_returned_is_left_changed(camera):
+    camera.blocks_by_stream["secondary"] = [block(1, 900)]
+    camera.refuses_block_return = True
+
+    def move(mock, logged):
+        if logged.method == "POST" and logged.path == BRIGHTNESS:
+            mock.blocks_by_stream["secondary"][0]["x"] = 300
+
+    camera.on_request = move
+    found = rows_of(run(camera, allow_writes=True))[RESTORE_ID]
+    assert found.status is Status.FAILED
+    assert LEFT_CHANGED in found.reason
 
 
 def test_setting_that_needs_reboot_is_not_written(camera):
@@ -455,6 +504,22 @@ def test_reboot_with_checkbox_waits_for_the_camera(camera):
     assert row(result, "POST", "/api/service/reboot").status is Status.PASSED
     assert camera.sessions == {}
     assert camera.requests[-1].path == "/api/auth/logout"
+
+
+def test_reboot_that_did_not_happen_is_not_a_pass(camera):
+    camera.fake_reboot = True
+    extra = {"api_reboot_down_s": 0.05}
+    found = row(run(camera, allow_destructive=True, extra=extra), "POST", "/api/service/reboot")
+    assert found.status is Status.FAILED
+    assert "не ушла в перезагрузку" in found.reason
+
+
+def test_lost_answer_without_reboot_is_stand_error(camera):
+    camera.fake_reboot = True
+    camera.drops_reboot_answer = True
+    extra = {"api_reboot_down_s": 0.05}
+    found = row(run(camera, allow_destructive=True, extra=extra), "POST", "/api/service/reboot")
+    assert found.status is Status.STAND_ERROR
 
 
 def test_reboot_without_answer_still_waits_for_the_camera(camera):
