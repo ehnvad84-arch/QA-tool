@@ -212,7 +212,7 @@ QMainWindow, QWidget[role="page"] {{ background: {p.window}; }}
 QWidget[role="nav"] {{ background: {p.nav}; }}
 QLabel[role="brand"] {{ font-size: 18px; font-weight: bold; padding: 0 10px 14px 10px; }}
 QListWidget[role="nav-list"] {{ background: transparent; border: none; outline: none; }}
-QListWidget[role="nav-list"]::item {{ padding: 10px 12px; border-radius: 8px; margin: 1px 0; }}
+QListWidget[role="nav-list"]::item {{ padding: 0 12px; border-radius: 8px; margin: 1px 0; }}
 QListWidget[role="nav-list"]::item:selected {{
     background: {p.accent}; color: {p.on_accent}; font-weight: bold; }}
 QListWidget[role="nav-list"]::item:hover:!selected {{ background: {p.window}; }}
@@ -253,6 +253,24 @@ QPushButton[role="link"] {{
     background: transparent; border: none; color: {p.accent}; text-decoration: underline;
     padding: 0; text-align: left; }}
 QPushButton[role="link"]:disabled {{ color: {p.muted}; text-decoration: none; }}
+QListWidget[role="camera-list"] {{ background: transparent; border: none; outline: none; }}
+QListWidget[role="camera-list"]::item {{
+    border: 1px solid transparent; border-radius: 10px; margin: 2px 0; }}
+QListWidget[role="camera-list"]::item:selected {{
+    background: {p.card}; border: 1px solid {p.accent}; }}
+QLabel[dot] {{ border-radius: 5px; min-width: 10px; max-width: 10px;
+    min-height: 10px; max-height: 10px; }}
+QLabel[dot="small"] {{ border-radius: 4px; min-width: 8px; max-width: 8px;
+    min-height: 8px; max-height: 8px; }}
+QLabel[tone="running"] {{ background: {p.dot_running}; }}
+QLabel[tone="failed"] {{ background: {p.dot_failed}; }}
+QLabel[tone="ok"] {{ background: {p.dot_ok}; }}
+QLabel[tone="stand"] {{ background: {p.dot_stand}; }}
+QLabel[tone="idle"] {{ background: {p.dot_idle}; }}
+QScrollArea[role="plain"], QScrollArea[role="plain"] > QWidget > QWidget {{
+    background: transparent; border: none; }}
+QStatusBar {{ background: {p.nav}; color: {p.muted}; }}
+QStatusBar QLabel {{ color: {p.muted}; font-size: 12px; padding: 2px 12px; }}
 QToolTip {{ background: {p.card}; color: {p.text}; border: 1px solid {p.border}; }}
 """
 

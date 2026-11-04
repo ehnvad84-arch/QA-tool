@@ -146,4 +146,7 @@ class StandScreen(Screen):
             index = self.interface.count() - 1
         self.interface.setCurrentIndex(index)
         self.runs_dir.setText(str(stand.runs_dir))
+        self.theme.blockSignals(True)
+        self.theme.setCurrentIndex(self.theme.findData(theme.current_name()))
+        self.theme.blockSignals(False)
         self._loading = False

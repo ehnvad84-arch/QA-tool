@@ -47,13 +47,13 @@ def test_run_eight_cameras_from_window(qtbot, tmp_path, fleet):
     window = make_window(qtbot, tmp_path, fleet, checks=["CORE-CONNECT-1"])
     window.menu.setCurrentRow(3)
     run = screen(window, RunScreen)
-    run.start_button.click()
+    window.run_block.start_button.click()
     assert window.state.running and "идёт прогон" in window.status.text()
     qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
-    for tile in run.tiles.values():
-        assert tile.tally["прошла"] == 1, tile.current.text()
-        assert tile.progress.value() == tile.progress.maximum()
-    run_dir = run.last_store.run_dir
+    for slot in run.view.slots.values():
+        assert slot.counts["прошла"] == 1, slot.summary
+        assert slot.percent == 100
+    run_dir = window.run_control.last_store.run_dir
     assert (run_dir / "summary.pdf").exists() and (run_dir / "protocol_8.xlsx").exists()
 
 
@@ -62,17 +62,19 @@ def test_stop_releases_protocols_for_what_was_done(qtbot, tmp_path, fleet):
         qtbot, tmp_path, fleet[:2], registry_ref="tests.fake_checks:REGISTRY", checks=SLOW
     )
     run = screen(window, RunScreen)
+    control = window.run_control
     trace = tmp_path / "trace"
     trace.mkdir()
-    run.start_button.click()
-    run.runner.extra["trace_dir"] = str(trace)
-    qtbot.waitUntil(lambda: any(t.tally["прошла"] for t in run.tiles.values()), timeout=30000)
-    run.stop_button.click()
+    window.run_block.start_button.click()
+    control.runner.extra["trace_dir"] = str(trace)
+    qtbot.waitUntil(lambda: any(s.counts["прошла"] for s in run.view.slots.values()), timeout=30000)
+    control.stop()
     qtbot.waitUntil(lambda: not window.state.running, timeout=30000)
-    statuses = {r["status"] for r in run.last_store.results()}
+    store = control.last_store
+    statuses = {r["status"] for r in store.results()}
     assert "пропущена" in statuses
-    assert run.last_store.run_info()["state"] == "остановлен"
-    assert (run.last_store.run_dir / "summary.html").exists()
+    assert store.run_info()["state"] == "остановлен"
+    assert (store.run_dir / "summary.html").exists()
 
 
 def test_scenario_choices_saved(qtbot, tmp_path, fleet):
@@ -94,8 +96,7 @@ def test_protocols_screen_opens_all_formats(qtbot, tmp_path, fleet):
     from qa_tool.gui.screens.protocols import ProtocolsScreen
 
     window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
-    run = screen(window, RunScreen)
-    run.start_button.click()
+    window.run_block.start_button.click()
     qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
 
     protocols = screen(window, ProtocolsScreen)
@@ -124,19 +125,6 @@ def test_stress_duration_chosen_from_ten_minute_steps(qtbot, tmp_path, fleet):
     assert scenario.stress.itemText(values.index(240)) == "4 ч"
     scenario.stress.setCurrentIndex(values.index(40))
     assert load_scenario(tmp_path / "scenario.yaml").stress_minutes == 40
-
-
-def test_tile_counts_child_rows_but_progress_by_check(qtbot):
-    from qa_tool.gui.screens.run import Tile
-
-    create_app()
-    tile = Tile(1)
-    tile.reset(Camera(slot=1, address="a", username="u"), total=1)
-    tile.on_result("прошла", advance=False)
-    tile.on_result("не прошла", advance=False)
-    tile.advance()
-    assert tile.tally["прошла"] == 1 and tile.tally["не прошла"] == 1
-    assert tile.progress.value() == tile.progress.maximum() == 1
 
 
 def test_onvif_groups_tooltips_and_f1(qtbot, tmp_path, fleet):
