@@ -69,7 +69,7 @@ def password_digest(nonce: bytes, created: str, password: str) -> str:
 
 
 class MockCamera:
-    auth_reply = "onvif"  # отказ по паролю: onvif, gsoap (TMID-018), http401
+    auth_reply = "onvif"  # отказ по паролю: onvif, gsoap (TMID-018), http401, http401page, soap11
     clock_skew_s = 0  # часы камеры ушли: отметка времени запроса считается просроченной
 
     def __init__(
@@ -163,6 +163,15 @@ class MockCamera:
                 return 400, _fault(reason, "wsse:FailedAuthentication")
             if self.auth_reply == "http401":
                 return 401, b"Unauthorized"
+            if self.auth_reply == "http401page":
+                page = b"<html><head><title>401</title></head><body>Unauthorized</body></html>"
+                return 401, page
+            if self.auth_reply == "soap11":
+                return 500, (
+                    b'<e:Envelope xmlns:e="http://schemas.xmlsoap.org/soap/envelope/"><e:Body>'
+                    b"<e:Fault><faultcode>ter:NotAuthorized</faultcode>"
+                    b"<faultstring>denied</faultstring></e:Fault></e:Body></e:Envelope>"
+                )
             return 400, _fault("Sender not Authorized")
         p = self.passport
         if operation == "GetDeviceInformation":

@@ -54,7 +54,7 @@ def test_wrong_password_is_stand_error_not_camera_defect(mock):
     assert "не приняла логин или пароль места 1" in result.reason
 
 
-@pytest.mark.parametrize("reply", ["onvif", "gsoap", "http401"])
+@pytest.mark.parametrize("reply", ["onvif", "gsoap", "http401", "http401page", "soap11"])
 def test_rejected_password_is_stand_error_for_every_kind_of_refusal(mock, reply):
     mock.auth_reply = reply
     result = run_check(SPEC, ctx_for(mock, password="wrong"))
@@ -102,3 +102,11 @@ def test_wrong_password_with_right_clock_is_tried_once(mock):
     result = run_check(SPEC, ctx_for(mock, password="wrong"))
     assert result.status is Status.STAND_ERROR and result.data[CREDENTIALS_REJECTED]
     assert mock.requests.count("GetDeviceInformation") == 1
+
+
+def test_refusal_with_wrong_clock_names_the_clock(mock):
+    mock.clock_skew_s = 3600  # ter:NotAuthorized: onvif-tt поправит часы только на другой код
+    result = run_check(SPEC, ctx_for(mock))
+    assert result.status is Status.STAND_ERROR
+    assert result.reason.startswith("часы камеры расходятся с компьютером стенда на 3600 с")
+    assert result.data[CREDENTIALS_REJECTED]

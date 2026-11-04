@@ -205,3 +205,15 @@ def test_redirect_with_empty_user_to_camera_stays_behind_proxy(answering, locati
 def test_relative_redirect_is_left_alone(answering):
     proxy, _ = answering(b"", status=302, Location="/onvif/x")
     assert httpx.get(proxy.base_url + "/x", timeout=10).headers["location"] == "/onvif/x"
+
+
+def test_proxy_address_before_at_sign_is_not_the_proxy(answering):
+    proxy, _ = answering(b"")
+    location = f"http://127.0.0.1:{proxy.port}@10.9.9.9/x"
+    assert proxy.rewrite_location(location).startswith(f"{proxy.base_url}/_foreign/")
+
+
+@pytest.mark.parametrize("text", ["(http://127.0.0.1:8080/x)", "<a href=http://127.0.0.1:8080/x>"])
+def test_camera_address_next_to_punctuation_is_rewritten(answering, text):
+    proxy, _ = answering(b"")
+    assert f"{proxy.base_url}/_port/8080/x" in proxy.rewrite(text)
