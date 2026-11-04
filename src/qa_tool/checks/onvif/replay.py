@@ -122,20 +122,21 @@ def record_for_a_while(soap: SoapClient, recording_url: str, seconds: float) -> 
         Что не удалось вернуть («задание X: осталось Active, было Idle»); пусто — всё вернулось.
 
     Raises:
-        OnvifFault: заданий записи нет или камера не включает запись, а режимы вернулись и
-            сверены. Если не вернулись, отказ включения идёт первой строкой в результат: камера
-            осталась изменённой, и это важнее отказа.
+        OnvifFault: заданий записи нет.
+        CameraUnreachable, OnvifFault: камера не включает запись, а режимы вернулись и сверены.
+            Если не вернулись, отказ включения идёт первой строкой в результат: камера осталась
+            изменённой, и это важнее отказа.
     """
     original = _job_modes(soap, recording_url)
     if not original:
         raise OnvifFault("на камере нет заданий записи (GetRecordingJobs пуст)")
     problems: list[str] = []
-    refused: OnvifFault | None = None
+    refused: CameraUnreachable | OnvifFault | None = None
     try:
         for job, _ in original:
             _set_mode(soap, recording_url, job, "Active")
         time.sleep(seconds)
-    except OnvifFault as e:
+    except (CameraUnreachable, OnvifFault) as e:
         refused = e
     finally:
         for job, mode in original:

@@ -16,7 +16,7 @@
   <tr><th>Адрес · место на стенде</th><td>{{ p.address }} · место {{ p.slot }}</td></tr>
   <tr><th>Место стенда</th><td>{{ p.place }}</td></tr>
   <tr><th>Сценарий</th><td>
-    {% if p.scenario.checks %}проверки: {{ p.scenario.checks | join(", ") }}{% else %}все доступные проверки{% endif %};
+    {% if p.scenario.checks %}проверки: {{ (p.scenario.checks if "CORE-CONNECT-1" in p.scenario.checks else ["CORE-CONNECT-1"] + p.scenario.checks) | join(", ") }}{% else %}все доступные проверки{% endif %};
     изменяющие — {{ "разрешены" if p.scenario.allow_writes else "запрещены" }};
     разрушающие — {{ "разрешены" if p.scenario.allow_destructive else "запрещены" }}
   </td></tr>

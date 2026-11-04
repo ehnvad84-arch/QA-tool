@@ -60,3 +60,65 @@
 | 20 | minor | src/qa_tool/checks/onvif/snapshot.py:103, 190 | IndexError на ответе без ImagingSettings | Ловить в `take()` |
 | 21 | minor | src/qa_tool/checks/onvif/excluded.py:45-46 | Нет проверки, что камера отвергает неверный пароль | Своя RUV-проверка на чтение, после вопроса директору о блокировке учётной записи |
 | 22 | minor | src/qa_tool/checks/onvif/stream.py:56 | Значение камеры без экранирования в SOAP | `escape(profile)` |
+
+---
+
+# Проверка багфикса: f04a81d..839b035
+
+**Вердикт:** fail (1 major: находка 26)
+
+Дифф f04a81d..839b035, 2026-11-04, code-reviewer (Claude Opus 5.5). Всё, что выше, — прошлая проверка, она не менялась. Применимый фреймворк — только OWASP Top 10. Номера находок — как в review.md.
+
+## Базовый минимум
+
+- [x] В диффе нет секретов: поиск по диффу ничего не нашёл, в тестах только `admin` и `wrong` виртуальной камеры.
+- [x] `.env` не менялся; `.gitignore`, `.cursorignore`, `.claude/settings.json` в диапазоне нет.
+- [x] Нет доступа к продакшну: прод-ключей и команд деплоя в диффе нет.
+- [x] Минимальные права: новых сервисов и токенов нет; посредник слушает только 127.0.0.1.
+- [ ] Сканеры запущены — частично (ниже).
+
+### Правила проекта и обязательные проверки
+
+| Правило | Результат | Где |
+|---|---|---|
+| Табу AD-7 не ослаблено | pass | `core/taboo.py`, `never.md`, `architecture.md`, `tests/test_architecture.py`, `http.py` в диапазоне не менялись. `rtsp_probe` шлёт только OPTIONS и живёт в разрешённом `probe.py`. Обязательная CORE-CONNECT-1 только читает. Новых запросов к камере нет. Исключения onvif-tt ничего не разрешают |
+| Новый клиент к камере — через `core/taboo.py` | fail (major) | Новых клиентов нет. Обход существующего посредника через `Location` не закрыт — taboo_proxy.py:131-140, 218-219 (находка 26) |
+| Пароль не в журналах, командной строке, доказательствах, протоколах | pass, с замечанием | Новый код пароль не трогает. `rtsp_probe` без учётных данных. В причину CORE-CONNECT-1 идёт только текст камеры, а она видит дайджест, не пароль. `credentials_rejected` ничего не пишет. Условная утечка: находка 26 при откате onvif-tt на PasswordText |
+| Вырезание Authorization, UsernameToken, cookie | pass | `core/secrets.py` не менялся; `Exchange` идёт через `redact` |
+| Ответы камер — недоверенные данные | pass, с замечанием | Токен профиля экранируется (22 закрыта). Свободный текст причины влияет на классификацию отказа (находка 27, minor) |
+| Только адреса стенда | fail (major) | Находка 26 |
+
+## Сканеры
+
+| Инструмент | Команда | Результат |
+|---|---|---|
+| Snyk — зависимости (SCA) | `snyk test` | не запускался: snyk не установлен. По security.md п. 5 заменён на pip-audit |
+| Snyk — код (SAST) | `snyk code test` | не запускался: snyk не установлен |
+| pip-audit | CI, задание `dependencies` | локально не запускался: инструмента нет, `pyproject.toml` и `uv.lock` в диапазоне не менялись |
+| ruff | `uv run ruff check .` | чисто |
+| agentshield | `agentshield scan --path .` | не запускался: хуки, MCP, `.claude/`, скиллы и плагины в диапазоне не менялись |
+| Claude Code Security / `/security-review` | запускает главная сессия | — |
+
+## OWASP Top 10 (редакция 2025)
+
+| Пункт | Результат | Где |
+|---|---|---|
+| A01 Broken Access Control | fail (major) | Обход посредника табу: `Location: http://@хост/`, `//@хост/`, хост с `_` или не латиницей — находка 26 |
+| A02 Security Misconfiguration | pass | Настройки посредника и журналов не менялись |
+| A03 Software Supply Chain Failures | pass | Зависимости не менялись |
+| A04 Cryptographic Failures | pass | Изменений нет. Откат на PasswordText в `SoapClient` не добавлять без решения директора (находка 24) |
+| A05 Injection | pass | Находка 22 закрыта: `escape(profile)` |
+| A06 Insecure Design | fail (minor) | Классификация отказа по свободному тексту камеры — находка 27. Управлять ею может только сама камера, и итог — ошибка стенда, а не ложная «прошла» |
+| A07 Authentication Failures | fail (minor) | Отказ не по паролю считается неверным паролем (находка 24, в review.md — blocker качества итогов, не уязвимость); `LOCAL-AUTH-WRONG-PASSWORD-REJECTED` исключён, цена записана в спеке |
+| A08 Software or Data Integrity Failures | pass | Изменений нет |
+| A09 Logging and Alerting Failures | fail (minor) | Нет обмена SOAP в доказательствах при отказе — находка 28; потеря итога возврата при обрыве — находка 29 |
+| A10 Mishandling of Exceptional Conditions | fail (minor) | IndexError (20) закрыт. `CameraUnreachable` при включении записи — находка 29 |
+
+## Находки
+
+| # | Уровень | Где | Проблема и риск | Минимальный фикс |
+|---|---|---|---|---|
+| 26 | major | src/qa_tool/drivers/camera/taboo_proxy.py:131-140, 218-219 | `Location` с пустым пользователем, хостом с `_` или не латиницей не подменяется; на `@` проверено: POST с телом уходит мимо посредника | Разбирать через `urlsplit` и `urljoin`, всё, кроме хоста камеры, — на `/_foreign` |
+| 27 | minor | src/qa_tool/drivers/camera/soap.py:70-73 | Подстрока в тексте причины от камеры снимает всю камеру с прогона | Сравнивать поля `code` и `status` |
+| 28 | minor | src/qa_tool/checks/core/connect.py:60-68 | Нет доказательства обмена при отказе | Собрать `evidence` до ветки отказа |
+| 29 | minor | src/qa_tool/checks/onvif/replay.py:138 | При `CameraUnreachable` итог возврата режимов теряется | Ловить `(CameraUnreachable, OnvifFault)` |

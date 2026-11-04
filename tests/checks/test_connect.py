@@ -72,3 +72,33 @@ def test_rtsp_closing_silently_is_written_down_not_hidden(mock, monkeypatch):
 def test_rtsp_not_answering_fails(mock, monkeypatch):
     monkeypatch.setattr(connect, "rtsp_probe", lambda *_: RtspProbe.NO_ANSWER)
     assert run_check(SPEC, ctx_for(mock)).status is Status.FAILED
+
+
+def test_refusal_keeps_exchange_as_evidence(mock):
+    result = run_check(SPEC, ctx_for(mock, password="wrong"))
+    assert result.status is Status.STAND_ERROR and result.evidence
+    assert "***</wsse:Password>" in result.evidence[0].content
+
+
+def test_wrong_clock_with_right_password_is_not_a_rejected_password(mock):
+    mock.auth_reply, mock.clock_skew_s = "gsoap", 3600
+    result = run_check(SPEC, ctx_for(mock))
+    assert result.status is Status.PASSED, result.reason
+    assert PASSPORT_KEY in result.data
+
+
+def test_clock_is_corrected_once_so_later_checks_spend_no_login_attempts(mock):
+    mock.auth_reply, mock.clock_skew_s = "gsoap", 3600
+    run_check(SPEC, ctx_for(mock))
+    mock.requests.clear()
+    assert run_check(SPEC, ctx_for(mock)).status is Status.PASSED
+    assert mock.requests.count("GetDeviceInformation") == 1
+    assert "GetSystemDateAndTime" not in mock.requests
+
+
+def test_wrong_password_with_right_clock_is_tried_once(mock):
+    mock.auth_reply, mock.clock_skew_s = "gsoap", 1  # часы почти верны: повтор не поможет
+    mock.requests.clear()
+    result = run_check(SPEC, ctx_for(mock, password="wrong"))
+    assert result.status is Status.STAND_ERROR and result.data[CREDENTIALS_REJECTED]
+    assert mock.requests.count("GetDeviceInformation") == 1

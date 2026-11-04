@@ -183,3 +183,25 @@ def test_redirect_without_scheme_to_foreign_host_goes_to_refusal(answering):
     proxy, _ = answering(b"", status=302, Location="//10.9.9.9/onvif/x")
     r = httpx.get(proxy.base_url + "/x", timeout=10)
     assert r.headers["location"].startswith(f"{proxy.base_url}/_foreign/")
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["http://@10.9.9.9/x", "//@10.9.9.9/x", "http://a:b@10.9.9.9/x", "http://cam_1/x", "ftp://x/y"],
+)
+def test_redirect_tricks_to_foreign_host_go_to_refusal(answering, location):
+    proxy, _ = answering(b"", status=307, Location=location)
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.headers["location"].startswith(f"{proxy.base_url}/_foreign/")
+
+
+@pytest.mark.parametrize("location", ["http://@127.0.0.1:8080/x", "//@127.0.0.1:8080/x"])
+def test_redirect_with_empty_user_to_camera_stays_behind_proxy(answering, location):
+    proxy, _ = answering(b"", status=307, Location=location)
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.headers["location"] == f"{proxy.base_url}/_port/8080/x"
+
+
+def test_relative_redirect_is_left_alone(answering):
+    proxy, _ = answering(b"", status=302, Location="/onvif/x")
+    assert httpx.get(proxy.base_url + "/x", timeout=10).headers["location"] == "/onvif/x"

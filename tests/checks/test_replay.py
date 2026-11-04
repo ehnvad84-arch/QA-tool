@@ -7,6 +7,7 @@ from qa_tool.checks.onvif import replay
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
 from qa_tool.drivers.camera.rtsp import RtpPacket, Track
+from qa_tool.drivers.camera.soap import CameraUnreachable
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import OnvifState
@@ -243,3 +244,18 @@ def test_refused_recording_does_not_hide_a_job_left_active():
         assert "задание job-1: осталось Active" in result.reason
     finally:
         cam.stop()
+
+
+def test_lost_connection_while_enabling_recording_still_restores_modes(monkeypatch):
+    calls = []
+
+    def set_mode(_soap, _url, job, mode):
+        calls.append(mode)
+        if mode == "Active":
+            raise CameraUnreachable("нет ответа")
+
+    monkeypatch.setattr(replay, "_job_modes", lambda *_: [("job-1", "Idle")])
+    monkeypatch.setattr(replay, "_set_mode", set_mode)
+    with pytest.raises(CameraUnreachable):
+        replay.record_for_a_while(None, "url", 0)
+    assert calls == ["Active", "Idle"]

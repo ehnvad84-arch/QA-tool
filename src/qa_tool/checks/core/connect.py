@@ -17,6 +17,13 @@ from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentia
 PASSPORT_KEY = "passport"
 
 
+def _exchanges(driver: OnvifCamera) -> list[Evidence]:
+    return [
+        Evidence(f"onvif-{i}.txt", f"POST {x.url}\n{x.request}\n\nHTTP {x.status}\n{x.response}")
+        for i, x in enumerate(driver.exchanges, start=1)
+    ]
+
+
 @REGISTRY.check(
     "CORE-CONNECT-1",
     module="core",
@@ -60,21 +67,22 @@ def connect(ctx: CheckContext) -> CheckResult:
         if credentials_rejected(e):
             # Решение директора 2026-11-03: неверный логин или пароль — ошибка настройки
             # стенда и подключения, а не дефект камеры; задачи программистам нет.
+            # Камеру с одним лишь открытым паролем (WS-Security PasswordText) от неверного пароля
+            # не отличить, не послав его открытым текстом. Поэтому снимаем и её: 150 тестов
+            # с возможно неверным паролем заблокировали бы вход на камере.
             result = CheckResult.stand_error(
                 f"камера не приняла логин или пароль места {cam.slot} — проверьте их на экране "
-                f"«Камеры» ({e})"
+                f"«Камеры»; если они верны, камера принимает другой способ входа ({e})"
             )
             result.data[CREDENTIALS_REJECTED] = True
+            result.evidence = _exchanges(driver)
             return result
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
     except CameraUnreachable as e:
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
-    evidence = [
-        Evidence(f"onvif-{i}.txt", f"POST {x.url}\n{x.request}\n\nHTTP {x.status}\n{x.response}")
-        for i, x in enumerate(driver.exchanges, start=1)
-    ]
+    evidence = _exchanges(driver)
     data = {}
     if passport is not None:
         data[PASSPORT_KEY] = vars(passport)

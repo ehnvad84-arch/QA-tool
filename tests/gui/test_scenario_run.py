@@ -174,3 +174,15 @@ def test_onvif_groups_tooltips_and_f1(qtbot, tmp_path, fleet):
     saved = load_scenario(tmp_path / "scenario.yaml")
     assert not {"RUV-SD-1", "RUV-SD-2", "RUV-G-REPLAY-1"} & set(saved.checks)
     assert "RUV-M-STREAM-1" in saved.checks
+
+
+def test_connect_check_cannot_be_unchecked(qtbot, tmp_path, fleet):
+    window = make_window(qtbot, tmp_path, fleet[:1], checks=["RUV-S-STREAM-1"])
+    scenario = screen(window, ScenarioScreen)
+    item = next(
+        i
+        for i in scenario._check_items()
+        if i.data(0, Qt.ItemDataRole.UserRole) == "CORE-CONNECT-1"
+    )
+    assert item.checkState(0) == Qt.CheckState.Checked
+    assert not item.flags() & Qt.ItemFlag.ItemIsUserCheckable

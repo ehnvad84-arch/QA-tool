@@ -18,6 +18,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote, urlsplit
 
 from qa_tool.core.taboo import TabooViolation
 from qa_tool.drivers.camera import http
@@ -132,12 +133,17 @@ class TabooProxy:
         """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ.
 
         `//хост/путь` клиент достраивает схемой своего запроса и уходит мимо посредника,
-        поэтому такой адрес сначала приводится к полному.
+        поэтому такой адрес сначала приводится к полному. Всё абсолютное, что не стало адресом
+        посредника, ведёт на отказ: лучше потерять перенаправление, чем выпустить запрос.
         """
         location = location.strip()
         if location.startswith("//"):
             location = f"http:{location}"
-        return _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
+        rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
+        parts = urlsplit(rewritten)
+        if (parts.scheme or parts.netloc) and not rewritten.startswith(self.base_url):
+            return f"{self.base_url}{_FOREIGN}/"
+        return rewritten
 
     def _to_proxy(self, match: re.Match) -> str:
         scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
@@ -149,7 +155,8 @@ class TabooProxy:
     def _to_foreign(self, url: re.Match) -> str:
         if url.group(0).startswith(self.base_url):
             return url.group(0)
-        return f"{self.base_url}{_FOREIGN}/{url.group(2)}{url.group(4) or ''}"
+        host = quote(url.group(2), safe="[]:.-_")  # заголовок Location — только ASCII
+        return f"{self.base_url}{_FOREIGN}/{host}{url.group(4) or ''}"
 
     # --- обработка запросов -------------------------------------------------------------------
 
@@ -216,7 +223,9 @@ class TabooProxy:
 # http(s)://хост[:порт][/путь] — хост без пользователя и пароля в адресе; схема в адресе
 # без учёта регистра (RFC 3986 §3.1): «HTTP://камера/…» иначе ушёл бы к камере мимо табу
 _HTTP_URL = re.compile(
-    r"\b(https?)://([A-Za-z0-9.\-]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?(/[^\s<\"']*)?",
+    # пустая или любая часть до «@» — клиент её отбрасывает и идёт на хост после неё
+    r"\b(https?)://(?:[^/@\s<\"']*@)?([^/:?#@\s<\"'\[\]]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?"
+    r"(/[^\s<\"']*)?",
     re.IGNORECASE,
 )
 # поля, где ONVIF передаёт адреса служб: <tt:XAddr>, <d:XAddrs>, <wsa:Address>, <tt:Uri>
