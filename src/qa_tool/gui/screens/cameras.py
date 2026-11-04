@@ -174,21 +174,27 @@ class CamerasScreen(Screen):
             except ConfigError as e:
                 QMessageBox.warning(self, "Камеры", str(e))
 
+    def warn(self, title: str, text: str) -> None:
+        """Показать предупреждение; тесты подставляют свою запись вместо окошка."""
+        QMessageBox.warning(self, title, text)
+
     def place_camera(self, camera: Camera, password: str) -> None:
         """Поставить камеру на место; ConfigError — если мест нет или место занято."""
         if not self.state.stand.free_slots():
             raise ConfigError(NO_FREE_SLOTS)
         if camera.slot not in self.state.stand.free_slots():
             raise ConfigError(f"Место {camera.slot} уже занято")
-        if password:
-            try:
-                set_password(camera, password)
-            except Exception as e:  # нет системного хранилища паролей и т. п.
-                raise ConfigError(f"Пароль не сохранён в хранилище паролей: {e}") from e
+        in_memory_only = bool(password) and not set_password(camera, password)
         self.state.stand.add_camera(camera)
         self.state.save()
         self.refresh()
         self.notify()
+        if in_memory_only:
+            self.warn(
+                "Камеры",
+                "На этом компьютере нет системного хранилища паролей. Пароль будет работать "
+                "до закрытия программы; после запуска камеру нужно добавить заново.",
+            )
 
     def remove_camera(self, slot: int) -> None:
         self.state.stand.remove_camera(slot)

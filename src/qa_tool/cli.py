@@ -109,6 +109,7 @@ def cmd_doctor() -> int:
     """
     import subprocess
 
+    from qa_tool.core.secrets import storage_name
     from qa_tool.gui.help_window import load_topics, manual_dir
     from qa_tool.gui.theme import font_files_missing
     from qa_tool.tools import tool_path
@@ -126,6 +127,7 @@ def cmd_doctor() -> int:
     topics = load_topics()
     print(f"справка: {manual_dir()} — разделов {len(topics)}")
     ok = ok and "index" in topics
+    print(f"хранилище паролей: {storage_name()}")
     missing = font_files_missing()
     print(f"шрифты окна: {'не хватает ' + ', '.join(missing) if missing else 'PT Sans, PT Mono'}")
     ok = ok and not missing

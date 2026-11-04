@@ -91,7 +91,6 @@ class Runner:
         Raises:
             ConfigError: не задан пароль камеры.
             OSError, sqlite3.Error: не создать папку или базу прогона.
-            keyring.errors.KeyringError: недоступно системное хранилище паролей.
         """
         passwords = {
             cam.slot: get_password(cam) for cam in self.stand.cameras

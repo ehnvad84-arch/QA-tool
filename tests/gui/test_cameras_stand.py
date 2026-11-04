@@ -88,3 +88,32 @@ def test_find_button_reenabled_after_discovery_error(window, qtbot, monkeypatch)
     cameras.find_cameras()
     qtbot.waitUntil(lambda: cameras.find_button.isEnabled(), timeout=5000)
     assert "мусор в сети" in cameras.search_state.text()
+
+
+def test_without_password_storage_camera_is_added_with_warning(qtbot, tmp_path, memory_keyring):
+    from keyring.errors import NoKeyringError
+
+    from qa_tool.core import secrets
+    from qa_tool.core.models import Camera
+    from qa_tool.gui.app import create_app
+    from qa_tool.gui.main_window import MainWindow
+    from qa_tool.gui.screens.cameras import CamerasScreen
+    from qa_tool.gui.state import AppState
+
+    def refuse(*_):
+        raise NoKeyringError("нет хранилища")
+
+    memory_keyring.set_password = refuse
+    create_app()
+    window = MainWindow(AppState(stand_path=tmp_path / "stand.yaml"))
+    qtbot.addWidget(window)
+    screen = next(s for s in window.screens if isinstance(s, CamerasScreen))
+    warnings = []
+    screen.warn = lambda _title, text: warnings.append(text)
+    camera = Camera(slot=1, address="10.0.0.7", username="admin")
+    screen.place_camera(camera, "s3cret")
+    assert window.state.stand.camera_at(1) is not None
+    assert "нет системного хранилища" in warnings[0]
+    assert secrets.get_password(camera) == "s3cret"
+    assert "s3cret" not in (tmp_path / "stand.yaml").read_text(encoding="utf-8")
+    secrets._session.clear()

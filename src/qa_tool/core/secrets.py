@@ -8,6 +8,7 @@ import keyring
 from qa_tool.core.models import Camera, ConfigError
 
 SERVICE = "qa-tool"
+_session: dict[str, str] = {}  # пароли без системного хранилища: только в памяти этого запуска
 MASK = "***"
 
 
@@ -20,25 +21,53 @@ def _key(camera: Camera) -> str:
     return f"{camera.address}:{camera.port}"
 
 
-def set_password(camera: Camera, password: str) -> None:
-    """Сохранить пароль камеры в системном хранилище по ключу «адрес:порт»."""
-    keyring.set_password(SERVICE, _key(camera), password)
+def set_password(camera: Camera, password: str) -> bool:
+    """Сохранить пароль камеры по ключу «адрес:порт».
+
+    Файлом хранилище не заменяется (security.md): если системного хранилища нет (Linux без
+    Secret Service), пароль остаётся только в памяти до закрытия программы.
+
+    Returns:
+        True — пароль в системном хранилище; False — только в памяти этого запуска.
+    """
+    try:
+        keyring.set_password(SERVICE, _key(camera), password)
+    except Exception:  # у каждого хранилища и D-Bus свои исключения, итог для стенда один
+        _session[_key(camera)] = password
+        return False
+    _session.pop(_key(camera), None)
+    return True
+
+
+def _stored(camera: Camera) -> str | None:
+    try:
+        return keyring.get_password(SERVICE, _key(camera)) or keyring.get_password(
+            SERVICE,
+            camera.address,  # ключ ранних версий — только адрес
+        )
+    except Exception:  # нет хранилища — значит, и пароля в нём нет
+        return None
+
+
+def storage_name() -> str:
+    """Какое хранилище паролей видит программа (для `qa-tool doctor`)."""
+    backend = keyring.get_keyring()
+    name = f"{type(backend).__module__}.{type(backend).__name__}"
+    return "нет: пароли только в памяти до закрытия" if "fail" in name else name
 
 
 def get_password(camera: Camera) -> str:
-    """Пароль камеры: сначала переменная окружения (CI), потом системное хранилище паролей.
+    """Пароль камеры: переменная окружения (CI), память этого запуска, системное хранилище.
 
     Raises:
         ConfigError: пароль не задан нигде.
-        keyring.errors.KeyringError: хранилище паролей недоступно (нет Secret Service).
     """
-    password = (
-        os.environ.get(_env_name(camera))
-        or keyring.get_password(SERVICE, _key(camera))
-        or keyring.get_password(SERVICE, camera.address)  # ключ ранних версий — только адрес
-    )
+    password = os.environ.get(_env_name(camera)) or _session.get(_key(camera)) or _stored(camera)
     if password is None:
-        raise ConfigError(f"Место {camera.slot}: не задан пароль камеры {camera.address}")
+        raise ConfigError(
+            f"Место {camera.slot}: не задан пароль камеры {camera.address} — уберите камеру с "
+            "места и добавьте заново с паролем"
+        )
     return password
 
 
