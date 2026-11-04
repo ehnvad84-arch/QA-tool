@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from qa_tool.core.models import Place
+from qa_tool.gui import theme
 from qa_tool.gui.help import helped
 from qa_tool.gui.screens.base import Screen
 
@@ -87,9 +89,24 @@ class StandScreen(Screen):
         row.addWidget(self.runs_dir, 1)
         row.addWidget(browse)
 
+        self.theme = helped(
+            QComboBox(),
+            "Цвета окна: светлая или тёмная тема. Окно перекрашивается сразу, "
+            "выбор запоминается до следующего запуска.",
+            "stand-theme",
+        )
+        for name, title in theme.TITLES.items():
+            self.theme.addItem(title, name)
+        self.theme.setCurrentIndex(self.theme.findData(theme.current_name()))
+        # тема — настройка пользователя, а не стенда: в stand.yaml не пишется
+        self.theme.currentIndexChanged.connect(
+            lambda: theme.apply(QApplication.instance(), self.theme.currentData(), remember=True)
+        )
+
         form.addRow("Место стенда", self.place)
         form.addRow("Сетевая карта к камерам", self.interface)
         form.addRow("Папка прогонов", runs_row)
+        form.addRow("Тема окна", self.theme)
         self.layout_.addLayout(form)
 
         self.resources = helped(
