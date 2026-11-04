@@ -57,10 +57,11 @@ class Step:
 
     @property
     def label(self) -> str:
-        """Название для экрана; у составной — с числом тестов («onvif-tt: 161 тест»)."""
+        """Название для экрана; у составной — с числом строк («onvif-tt: 161 тест»)."""
         if not self.parts:
             return self.title
-        return f"{self.title}: {plural(len(self.parts), 'тест', 'теста', 'тестов')}"
+        forms = ("операция", "операции", "операций") if self.check_id.startswith("API-") else None
+        return f"{self.title}: {plural(len(self.parts), *(forms or ('тест', 'теста', 'тестов')))}"
 
 
 @dataclass

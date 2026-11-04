@@ -293,3 +293,63 @@ def test_verb_in_middle_of_path_is_write():
 )
 def test_author_and_cloudy_not_blocked(title):
     check_web_request("POST", "http://cam/api/image/white_balance", '{"mode": "cloudy"}', title)
+
+
+@pytest.mark.parametrize(
+    "method, url",
+    [
+        ("GET", "http://cam/api/auth/create_session"),
+        ("POST", "http://cam/api/auth/login"),
+        ("POST", "http://cam/api/auth/logout"),
+    ],
+)
+def test_camera_login_passes_word_filter(method, url):
+    check_web_request(method, url, '{"username": "admin", "password": "hash"}')
+
+
+@pytest.mark.parametrize(
+    "method, url",
+    [
+        ("POST", "http://cam/api/auth/create_session"),
+        ("POST", "http://cam/api/auth/login?user=1"),
+        ("POST", "http://cam/api/auth/login;/../users/set_password"),
+        ("POST", "http://cam/api/auth/login/../users/set_password"),
+        ("POST", "http://cam/api/auth/%6cogin"),
+        ("POST", "http://cam/API/AUTH/LOGIN"),
+        ("POST", "http://cam/api/auth/validate_session"),
+        ("POST", "http://cam/api/auth/set_password"),
+    ],
+)
+def test_only_exact_login_addresses_are_excepted(method, url):
+    with pytest.raises(TabooViolation):
+        check_web_request(method, url, '{"password": "x"}')
+
+
+@pytest.mark.parametrize(
+    "body",
+    ['{"hostName": "cam"}', '{"ntpAddress": "1.1.1.1"}', '{"ntpPort": 123}', '{"password": "x"}'],
+)
+def test_word_filter_still_catches_settings_in_body(body):
+    with pytest.raises(TabooViolation):
+        check_web_request("POST", "http://cam/api/image/brightness", body)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/datetime",
+        "/api/datetime/timezone",
+        "/api/DateTime",
+        "/api/video/multicast_ip",
+        "/api/video/multicast_ttl",
+        "/api/video/./multicast_enable",
+    ],
+)
+def test_time_source_and_multicast_writes_rejected(path):
+    with pytest.raises(TabooViolation):
+        check_http("POST", path)
+
+
+def test_reading_time_and_multicast_allowed():
+    check_http("GET", "/api/datetime")
+    check_http("GET", "/api/video/multicast_ip")

@@ -88,6 +88,7 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
         dict(args.extra),
         allow_writes=args.allow_writes,
         allow_destructive=args.allow_destructive,
+        stop_requested=stop_event.is_set,
     )
     by_phase: dict[Phase, list[tuple[str, str | None]]] = {}
     for check_id, skip in args.plan:
