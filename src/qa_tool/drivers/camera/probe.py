@@ -30,6 +30,8 @@ def rtsp_probe(address: str, port: int, timeout: float) -> RtspProbe:
     """
     try:
         connection = socket.create_connection((address, port), timeout=timeout)
+    except ConnectionResetError:
+        return RtspProbe.CLOSED  # принял и сразу сбросил: сброс успел прийти ещё при подключении
     except OSError:
         return RtspProbe.NO_ANSWER
     with connection as s:
