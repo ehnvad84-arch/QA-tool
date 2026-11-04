@@ -74,7 +74,8 @@ class MockRuver:
     refuses_next_write_once: set[str] = field(default_factory=set)  # занята после смены значения
     busy_writes_left: int = 1  # сколько записей подряд она отказывает
     restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
-    down_s: float = 0.15
+    # счётчик, а не время: на Windows запрос идёт дольше любого короткого окна простоя
+    down_requests: int = 3
     blocks_by_stream: dict[str, list] = field(default_factory=dict)  # надписи других потоков
     refuses_block_return: bool = False
     absent_streams: set[str] = field(default_factory=set)  # чтение надписей отвечает 400
@@ -102,7 +103,7 @@ class MockRuver:
                         value[name] = {"min": 0, "max": 100}
         hardware = self.state["/api/hardware"]
         hardware |= {name: True for name in hardware if name.endswith("Support")}
-        self._down_until = 0.0
+        self._down_left = 0
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
         self._served = 0
@@ -212,7 +213,7 @@ class MockRuver:
         if path == "/api/service/need_reboot":
             return 200, {"needReboot": (body or {}).get("route") in self.reboot_needed}
         if path == "/api/service/export_settings" and self.restarts_on_export:
-            self._down_until = time.monotonic() + self.down_s
+            self._down_left = self.down_requests
             self.sessions.clear()
             return 200, b"settings"
         if path == "/api/service/reboot":
@@ -220,7 +221,7 @@ class MockRuver:
                 return 200, None
             self.reboots += 1
             self.sessions.clear()
-            self._down_until = time.monotonic() + self.down_s
+            self._down_left = self.down_requests
             return 200, None
         stream = parse_qs(query).get("stream_id", ["primary"])[0]
         if path == "/api/osd/block_positions" and stream in self.absent_streams:
@@ -257,7 +258,10 @@ class MockRuver:
                 body = json.loads(raw) if raw and parts.path.startswith("/api/") else None
                 session = self.headers.get("X-Session-ID") or ""
                 logged = Logged(self.command, parts.path, parts.query, body, session)
-                if time.monotonic() < mock._down_until:
+                with mock._lock:
+                    down = mock._down_left > 0
+                    mock._down_left -= down
+                if down:
                     self.close_connection = True  # служба перезапускается: ответа нет
                     return
                 with mock._lock:
