@@ -266,3 +266,23 @@ def test_composite_check_writes_child_rows_and_tasks(tmp_path, fleet):
     parts = [e for e in events if e.kind == "result"]
     assert [e.check_id for e in parts] == ["SUB-1", "SUB-2", "SUB-3"] and all(e.part for e in parts)
     assert [e.check_id for e in events if e.kind == "done"] == ["FAKE-COMPOSITE-1"]
+
+
+def test_events_carry_passport_severity_and_clean_reasons(tmp_path, fleet):
+    events = []
+    stand = make_stand(tmp_path, fleet[:1])
+    runner = Runner(
+        stand,
+        Scenario(checks=["FAKE-PASSPORT-1", "FAKE-COMPOSITE-1", "FAKE-NET-1"]),
+        registry_ref=REF,
+        on_event=events.append,
+    )
+    runner.run()
+    kinds = [e.kind for e in events if e.slot == 1]
+    assert kinds.index("passport") < kinds.index("result")
+    passport = next(e for e in events if e.kind == "passport")
+    assert passport.passport["model"] == "<b>FK-1</b>"  # разметку экранирует окно, не ядро
+    results = {e.check_id: e for e in events if e.kind == "result"}
+    assert results["SUB-2"].severity == "блокер"
+    assert results["SUB-2"].detail == "password=*** отказ"
+    assert results["SUB-1"].severity == results["FAKE-NET-1"].severity != ""
