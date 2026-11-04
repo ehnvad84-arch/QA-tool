@@ -29,6 +29,10 @@ NS = {
     "wsu": "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd",
     "wsa": "http://schemas.xmlsoap.org/ws/2004/08/addressing",
 }
+PASSWORD_DIGEST_TYPE = (
+    "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0"
+    "#PasswordDigest"
+)
 VENDORS = ["Ruver", "Hikvision", "Dahua", "Axis", "Uniview", "Raysharp"]
 
 
@@ -116,7 +120,11 @@ class MockCamera:
         if token is None:
             return False
         user = token.findtext("wsse:Username", default="", namespaces=NS)
-        digest = token.findtext("wsse:Password", default="", namespaces=NS)
+        password = token.find("wsse:Password", NS)
+        # как gSOAP: тип сравнивается точно, иначе пароль считается открытым текстом и не совпадает
+        if password is None or password.get("Type") != PASSWORD_DIGEST_TYPE:
+            return False
+        digest = password.text or ""
         nonce = base64.b64decode(token.findtext("wsse:Nonce", default="", namespaces=NS))
         created = token.findtext("wsu:Created", default="", namespaces=NS)
         return user == self.username and digest == password_digest(nonce, created, self.password)

@@ -12,6 +12,9 @@ RTSP (`rtsp://user:пароль@хост`): пароль виден в спис�
 
 Изменяющие тесты doorcontrol могут выполнить команду у настоящей двери, а вернуть её состояние
 снимок настроек не умеет (AD-3): служба бывает у устройств Profile D, QA-tool их не проверяет.
+
+FALSE_FAILURES — дефекты самих тестов закреплённой версии: они падают на исправной камере и дали бы
+ложные задачи программистам. Править onvif-tt здесь нельзя (never.md); решение директора 2026-11-04.
 """
 
 NO_FFPROBE = (
@@ -36,6 +39,15 @@ NO_DOOR_RESTORE = (
 )
 DOOR_TESTS = tuple(f"DOORCONTROL-3-1-{n}" for n in range(19, 25))
 
+FALSE_FAILURES = {
+    "DEVICEIO-5-1-1": "тест onvif-tt читает атрибут token у строк ответа DeviceIO и падает на "
+    "исправной камере",
+    "LOCAL-AUTH-WRONG-PASSWORD-REJECTED": "тест onvif-tt ждёт отказ при подключении и падает на "
+    "камере, которая проверяет пароль при первом обращении к службе",
+    "LOCAL-NETWORK-GET-DEFAULT-GATEWAY": "тест onvif-tt считает ошибкой пустой шлюз, а схема ONVIF "
+    "его допускает",
+}
+
 EXCLUDED = {
     "LOCAL-DISCOVERY-PROBE": "сверяет адрес WS-Discovery с адресом подключения (через посредника "
     "это 127.0.0.1); поиск камер проверяет QA-tool",
@@ -45,3 +57,4 @@ EXCLUDED = {
 }
 EXCLUDED.update(dict.fromkeys(FFPROBE_TESTS, NO_FFPROBE))
 EXCLUDED.update(dict.fromkeys(DOOR_TESTS, NO_DOOR_RESTORE))
+EXCLUDED.update(FALSE_FAILURES)

@@ -33,7 +33,7 @@ def ctx_for(mock, **extra):
 def test_onvif_tt_runs_through_proxy_one_row_per_test(mock):
     result = run_check(SPEC, ctx_for(mock))
     ids = {c.check_id for c in result.children}
-    assert len(ids) > 100  # 161 тест onvif-tt: три исключены и добавлены строками «пропущена»
+    assert len(ids) > 100  # исключённые тесты onvif-tt добавлены строками «пропущена»
     assert set(EXCLUDED) <= ids
     statuses = {c.result.status for c in result.children}
     assert Status.PASSED in statuses and Status.SKIPPED in statuses
