@@ -133,3 +133,7 @@ def test_storage_is_preferred_when_it_works(memory_keyring):
     camera = Camera(slot=1, address="10.0.0.5", username="admin")
     assert set_password(camera, "s3cret") is True
     assert not secrets._session
+
+
+def test_password_in_command_line_form_is_redacted():
+    assert "s3cret" not in redact("onvif-tt --user admin --password=s3cret --host x")

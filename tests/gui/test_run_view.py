@@ -185,3 +185,21 @@ def test_tasks_of_one_severity_are_ordered_by_check_id():
         Event("result", 1, "A-1", "а", "не прошла", severity="мелкая"),
     )
     assert [t.check_id for t in slot.sorted_tasks()] == ["A-1", "Z-1"]
+
+
+def test_tasks_of_one_severity_follow_protocol_phase_and_module():
+    slot = feed(
+        view_with(),
+        Event("result", 1, "A-1", "а", "не прошла", severity="мелкая", phase=2, module="io"),
+        Event("result", 1, "Z-1", "я", "не прошла", severity="мелкая", phase=1, module="onvif"),
+        Event("result", 1, "Y-1", "ю", "не прошла", severity="мелкая", phase=1, module="core"),
+    )
+    assert [t.check_id for t in slot.sorted_tasks()] == ["Y-1", "Z-1", "A-1"]
+
+
+def test_aborted_run_leaves_nothing_looking_alive():
+    view = view_with()
+    slot = feed(view, Event("started", 1, "X", "Запись"))
+    view.abort("нет места на диске")
+    assert slot.dot == Dot.STAND and slot.summary == "ошибка стенда: нет места на диске"
+    assert slot.steps[0].state == "ошибка стенда"

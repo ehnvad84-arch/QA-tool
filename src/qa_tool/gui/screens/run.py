@@ -491,7 +491,13 @@ class RunScreen(Screen):
             self.warn(self, "Прогон", error)
 
     def _on_failed(self, error: str) -> None:
-        self.showing_run = False
+        started = any(v.started for v in self.view.slots.values())
+        self.showing_run = started  # оборвался посреди проверок: сделанное остаётся на экране
+        if started:
+            self.view.abort(error)
+            for slot, row in self.cameras.rows.items():
+                row.show_view(self.view.slots[slot])
+            self._show_card()
         self.warn(self, "Прогон", error)
 
     def _show_card(self) -> None:

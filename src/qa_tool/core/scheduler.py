@@ -32,6 +32,7 @@ class Event:
     phase: int = 0
     part: bool = False  # строка составной проверки: считается в итогах, но не в прогрессе
     severity: str = ""  # важность для задач программистам: та же, что уходит в протокол
+    module: str = ""  # модуль проверки: окно упорядочивает задачи как протокол
     passport: dict[str, str] = field(default_factory=dict)  # только у события passport
 
 
@@ -228,6 +229,8 @@ class Runner:
                         redact(child.result.reason),
                         part=True,
                         severity=(child.severity or spec.severity).value,
+                        module=spec.module,
+                        phase=int(spec.phase),
                     )
                 )
             self.on_event(Event("done", c.slot, check_id, spec.title))
@@ -241,6 +244,8 @@ class Runner:
                     result.status.value,
                     redact(result.reason),
                     severity=spec.severity.value,
+                    module=spec.module,
+                    phase=int(spec.phase),
                 )
             )
 

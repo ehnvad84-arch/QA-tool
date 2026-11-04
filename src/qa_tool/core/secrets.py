@@ -93,7 +93,7 @@ _PATTERNS = [
     # строка запроса и формы: password=…&
     (
         re.compile(
-            r"(?i)((?:^|[?&;\s_])(?:password|passwd|pwd|pass|token|access_token|sessionid|"
+            r"(?i)((?:^|[?&;\s_-])(?:password|passwd|pwd|pass|token|access_token|sessionid|"
             r"session_id|auth|secret)=)[^&\s\"']+"
         ),
         rf"\g<1>{MASK}",

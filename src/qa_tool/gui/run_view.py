@@ -71,6 +71,8 @@ class Task:
     title: str
     severity: str
     reason: str
+    phase: int = 0
+    module: str = ""
 
 
 @dataclass
@@ -156,8 +158,11 @@ class SlotView:
         return "ошибок нет"
 
     def sorted_tasks(self) -> list[Task]:
-        """Задачи как в таблице протокола: по важности, внутри неё — по ID проверки."""
-        return sorted(self.tasks, key=lambda t: (SEVERITY_ORDER.get(t.severity, 9), t.check_id))
+        """Задачи как в таблице протокола: по важности, затем по фазе, модулю и ID проверки."""
+        return sorted(
+            self.tasks,
+            key=lambda t: (SEVERITY_ORDER.get(t.severity, 9), t.phase, t.module, t.check_id),
+        )
 
 
 class RunView:
@@ -172,6 +177,19 @@ class RunView:
         """Начать место заново перед прогоном: камера стенда и число проверок её плана."""
         self.slots[slot] = SlotView(slot, camera=camera, total=total)
         self.phase, self.finished = "", False
+
+    def abort(self, reason: str) -> None:
+        """Прогон оборвался посреди проверок: незавершённые места не должны выглядеть идущими."""
+        self.finished = True
+        for view in self.slots.values():
+            if view.camera is None:
+                continue
+            view.finished = True
+            if view.started and not view.complete and not view.lost_reason:
+                view.lost_reason = f"ошибка стенда: {reason}"
+            for step in view.steps:
+                if step.state == RUNNING:
+                    step.state, step.reason = Status.STAND_ERROR.value, reason
 
     def apply(self, event: Event, at: datetime) -> int | None:
         """Учесть событие планировщика; `at` — когда оно пришло в окно (время строки хода)."""
@@ -216,7 +234,16 @@ class RunView:
         if event.status == Status.FAILED.value:
             if event.detail == LOST_DURING_CHECK:
                 view.stopped_responding = True
-            view.tasks.append(Task(event.check_id, event.title, event.severity, event.detail))
+            view.tasks.append(
+                Task(
+                    event.check_id,
+                    event.title,
+                    event.severity,
+                    event.detail,
+                    event.phase,
+                    event.module,
+                )
+            )
         step = self._running(view)
         if event.part:
             if step is not None:
