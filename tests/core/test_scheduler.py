@@ -266,3 +266,22 @@ def test_composite_check_writes_child_rows_and_tasks(tmp_path, fleet):
     parts = [e for e in events if e.kind == "result"]
     assert [e.check_id for e in parts] == ["SUB-1", "SUB-2", "SUB-3"] and all(e.part for e in parts)
     assert [e.check_id for e in events if e.kind == "done"] == ["FAKE-COMPOSITE-1"]
+
+
+def test_wrong_password_skips_other_checks_instead_of_false_failures(tmp_path, fleet, monkeypatch):
+    # решение директора 2026-11-03: неверный пароль — ошибка стенда, задач программистам нет
+    from qa_tool.report.model import build_protocol
+
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    stand = make_stand(tmp_path, fleet[:2])
+    runner = Runner(stand, Scenario(checks=["CORE-CONNECT-1", "RUV-S-STREAM-1"]))
+    store = runner.run()
+    bad = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=1)}
+    assert bad["CORE-CONNECT-1"][0] == "ошибка стенда"
+    assert bad["RUV-S-STREAM-1"] == (
+        "пропущена",
+        "камера не приняла логин или пароль (см. CORE-CONNECT-1)",
+    )
+    assert build_protocol(store, 1).tasks == []
+    good = {r["check_id"]: r["status"] for r in store.results(slot=2)}
+    assert good == {"CORE-CONNECT-1": "прошла", "RUV-S-STREAM-1": "прошла"}
