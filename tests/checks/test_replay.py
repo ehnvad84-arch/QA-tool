@@ -220,3 +220,26 @@ def test_services_on_foreign_host_are_named_in_skip_reason():
         assert "на чужом хосте" in result.reason and "search" in result.reason
     finally:
         cam.stop()
+
+
+def test_refused_recording_with_modes_restored_is_a_plain_failure():
+    cam = start(job_refuses_active="job-1")
+    try:
+        result = run_check(SPEC, ctx_for(cam, writes=True))
+        assert result.status is Status.FAILED
+        assert "камера осталась изменённой" not in result.reason
+        assert cam.state.jobs[0]["mode"] == "Idle"
+    finally:
+        cam.stop()
+
+
+def test_refused_recording_does_not_hide_a_job_left_active():
+    cam = start(job_refuses_active="job-2", job_stuck_active=True)
+    cam.state.jobs.append({"token": "job-2", "recording": "rec-2", "mode": "Idle"})
+    try:
+        result = run_check(SPEC, ctx_for(cam, writes=True))
+        assert result.status is Status.FAILED
+        assert "камера осталась изменённой: запись не включилась" in result.reason
+        assert "задание job-1: осталось Active" in result.reason
+    finally:
+        cam.stop()

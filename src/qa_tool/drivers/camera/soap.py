@@ -56,6 +56,23 @@ class OnvifFault(RuntimeError):
     """Камера ответила SOAP Fault."""
 
 
+# Камеры отказывают по-разному: ter:NotAuthorized — код ONVIF; wsse:FailedAuthentication и его
+# текст — код WS-Security, им отвечают камеры на gSOAP (RUWARE TMID-018); HTTP 401 без SOAP —
+# веб-сервер камеры, не дошедший до службы ONVIF.
+_CREDENTIALS_REJECTED_MARKS = (
+    "notauthorized",
+    "failedauthentication",
+    "security token could not be authenticated",
+    "http 401",
+)
+
+
+def credentials_rejected(fault: OnvifFault) -> bool:
+    """Отказ камеры означает неверный логин или пароль, а не дефект операции."""
+    text = str(fault).lower()
+    return any(mark in text for mark in _CREDENTIALS_REJECTED_MARKS)
+
+
 @dataclass
 class Exchange:
     """Один обмен с камерой; секреты уже вырезаны."""

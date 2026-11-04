@@ -4,6 +4,8 @@ from qa_tool.checks import load_all
 from qa_tool.checks.onvif import stream
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
+from qa_tool.drivers.camera.onvif_generic import service_urls
+from qa_tool.drivers.camera.soap import SoapClient
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import OnvifState
@@ -42,3 +44,14 @@ def test_camera_gone_is_failed():
     cam.stop()
     result = run_check(SPEC, ctx)
     assert result.status is Status.FAILED and result.reason.startswith("ONVIF:")
+
+
+def test_profile_token_from_camera_is_escaped():
+    cam = MockCamera(Passport("X", "M", "1", "S1"), state=OnvifState(profile_token="a&b")).start()
+    try:
+        camera = ctx_for(cam).camera
+        soap = SoapClient("admin", "admin", timeout=5)
+        profile, uri = stream.first_stream(soap, service_urls(soap, camera))
+        assert profile == "a&b" and uri.startswith("rtsp://")
+    finally:
+        cam.stop()

@@ -42,8 +42,8 @@ DOOR_TESTS = tuple(f"DOORCONTROL-3-1-{n}" for n in range(19, 25))
 FALSE_FAILURES = {
     "DEVICEIO-5-1-1": "тест onvif-tt читает атрибут token у строк ответа DeviceIO и падает на "
     "исправной камере",
-    "LOCAL-AUTH-WRONG-PASSWORD-REJECTED": "тест onvif-tt ждёт отказ при подключении и падает на "
-    "камере, которая проверяет пароль при первом обращении к службе",
+    "LOCAL-AUTH-WRONG-PASSWORD-REJECTED": "тест onvif-tt шлёт неверный пароль, тратит попытку до "
+    "блокировки и падает на исправной камере RUWARE TMID-018",
     "LOCAL-NETWORK-GET-DEFAULT-GATEWAY": "тест onvif-tt считает ошибкой пустой шлюз, а схема ONVIF "
     "его допускает",
     "MEDIA2-1-1-1": "тест onvif-tt вызывает GetProfiles без Type и ждёт кодер в профиле, а Media2 "

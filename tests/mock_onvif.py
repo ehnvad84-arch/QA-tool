@@ -8,6 +8,7 @@ import itertools
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from xml.sax.saxutils import quoteattr
 
 SERVICE_NS = {
     "ptz": "http://www.onvif.org/ver20/ptz/wsdl",
@@ -98,6 +99,9 @@ class OnvifState:
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
     job_stuck_active: bool = False  # SetRecordingJobMode «OK», но из Active задание не выходит
+    job_refuses_active: str = ""  # задание с этим токеном камера не включает
+    imaging_without_settings: bool = False  # GetImagingSettings без ImagingSettings
+    profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
     replay_host: str = ""  # GetReplayUri отдаёт этот, внутренний адрес камеры (NAT)
     recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
@@ -171,8 +175,9 @@ class OnvifServices:
             else ""
         )
         return (
-            '<tr2:GetProfilesResponse><tr2:Profiles token="main" fixed="true">'
-            f"<tr2:Name>Основной</tr2:Name>{metadata}</tr2:Profiles></tr2:GetProfilesResponse>"
+            f"<tr2:GetProfilesResponse><tr2:Profiles token={quoteattr(self.state.profile_token)} "
+            f'fixed="true"><tr2:Name>Основной</tr2:Name>{metadata}</tr2:Profiles>'
+            "</tr2:GetProfilesResponse>"
         )
 
     def op_GetStreamUri(self, _request) -> str:  # noqa: N802
@@ -225,8 +230,10 @@ class OnvifServices:
         )
         return f"<trc:GetRecordingJobsResponse>{items}</trc:GetRecordingJobsResponse>"
 
-    def op_SetRecordingJobMode(self, request) -> str:  # noqa: N802
+    def op_SetRecordingJobMode(self, request) -> str | None:  # noqa: N802
         token, mode = _text(request, "JobToken"), _text(request, "Mode")
+        if mode == "Active" and token == self.state.job_refuses_active:
+            return None
         for job in self.state.jobs:
             if job["token"] == token:
                 if self.state.job_stuck_active and job["mode"] == "Active":
@@ -378,6 +385,8 @@ class OnvifServices:
         return '<trt:GetVideoSourcesResponse><trt:VideoSources token="vs-1"/></trt:GetVideoSourcesResponse>'
 
     def op_GetImagingSettings(self, _request) -> str:  # noqa: N802
+        if self.state.imaging_without_settings:
+            return "<timg:GetImagingSettingsResponse/>"
         return (
             "<timg:GetImagingSettingsResponse><timg:ImagingSettings>"
             f"{self.state.imaging_xml}</timg:ImagingSettings></timg:GetImagingSettingsResponse>"

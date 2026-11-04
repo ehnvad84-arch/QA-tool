@@ -187,7 +187,10 @@ class SnapshotTaker:
                 url,
                 f"<timg:GetImagingSettings>{source}</timg:GetImagingSettings>",
             )
-            settings = _find_all(self.soap.call(*read), "ImagingSettings")[0]
+            found = _find_all(self.soap.call(*read), "ImagingSettings")
+            if not found:
+                raise OnvifFault(f"GetImagingSettings источника {token} без ImagingSettings")
+            settings = found[0]
             restore = [
                 (
                     url,

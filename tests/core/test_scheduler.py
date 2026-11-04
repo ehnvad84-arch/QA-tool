@@ -285,3 +285,12 @@ def test_wrong_password_skips_other_checks_instead_of_false_failures(tmp_path, f
     assert build_protocol(store, 1).tasks == []
     good = {r["check_id"]: r["status"] for r in store.results(slot=2)}
     assert good == {"CORE-CONNECT-1": "прошла", "RUV-S-STREAM-1": "прошла"}
+
+
+def test_connect_check_runs_even_if_scenario_left_it_out(tmp_path, fleet, monkeypatch):
+    # без неё неверный пароль дал бы ложные «не прошла», а протокол — шапку без паспорта
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    stand = make_stand(tmp_path, fleet[:1])
+    store = Runner(stand, Scenario(checks=["RUV-S-STREAM-1"])).run()
+    rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
+    assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
