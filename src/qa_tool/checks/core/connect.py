@@ -11,13 +11,10 @@ from qa_tool.core.checks import (
     Status,
 )
 from qa_tool.drivers.camera.onvif_generic import OnvifCamera
-from qa_tool.drivers.camera.probe import rtsp_answers, tcp_open
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
+from qa_tool.drivers.camera.probe import RtspProbe, rtsp_probe, tcp_open
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
 
 PASSPORT_KEY = "passport"
-NOT_AUTHORIZED = (
-    "NotAuthorized"  # подкод SOAP Fault ter:NotAuthorized — общий код отказа в доступе ONVIF
-)
 
 
 @REGISTRY.check(
@@ -39,7 +36,8 @@ def connect(ctx: CheckContext) -> CheckResult:
     Паспорт (производитель, модель, прошивка, серийный номер) кладётся в
     `data[PASSPORT_KEY]` и уходит в шапку протокола. Закрытый HTTP-порт —
     «не прошла» с признаком `UNREACHABLE`: по нему рабочий процесс камеры пропускает
-    остальные её проверки, а не копит одинаковые задачи.
+    остальные её проверки, а не копит одинаковые задачи. Отказ по логину или паролю —
+    «ошибка стенда» с признаком `CREDENTIALS_REJECTED`, по нему проверки пропускаются так же.
     """
     cam, timeout = ctx.camera, float(ctx.extra.get("timeout_s", 5.0))
     expected = f"HTTP {cam.port} и RTSP {cam.rtsp_port} отвечают, ONVIF отдаёт паспорт"
@@ -52,13 +50,14 @@ def connect(ctx: CheckContext) -> CheckResult:
             actual="порт закрыт или камера не в сети",
             data={UNREACHABLE: True},
         )
-    if not rtsp_answers(cam.address, cam.rtsp_port, timeout):
+    rtsp = rtsp_probe(cam.address, cam.rtsp_port, timeout)
+    if rtsp is RtspProbe.NO_ANSWER:
         problems.append(f"RTSP (порт {cam.rtsp_port}) не отвечает")
     driver = OnvifCamera(cam, ctx.password, timeout)
     try:
         passport = driver.get_device_information()
     except OnvifFault as e:
-        if NOT_AUTHORIZED in str(e):
+        if credentials_rejected(e):
             # Решение директора 2026-11-03: неверный логин или пароль — ошибка настройки
             # стенда и подключения, а не дефект камеры; задачи программистам нет.
             result = CheckResult.stand_error(
@@ -90,6 +89,9 @@ def connect(ctx: CheckContext) -> CheckResult:
         if passport
         else "паспорт не получен"
     )
+    if rtsp is RtspProbe.CLOSED:
+        # Ответа RTSP нет, поэтому в протоколе это не подтверждение: живой поток — RUV-S-STREAM-1.
+        actual += f"; RTSP (порт {cam.rtsp_port}) принял соединение и закрыл его без ответа"
     status = Status.FAILED if problems else Status.PASSED
     return CheckResult(
         status,

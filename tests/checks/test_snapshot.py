@@ -107,3 +107,9 @@ def test_values_from_camera_are_escaped_in_requests_to_it():
     bodies = soap.bodies + [body for item in items for _, body in item.restore]
     assert sum(HOSTILE_XML in body for body in bodies) >= 7
     assert not [body for body in bodies if HOSTILE in body]
+
+
+def test_imaging_answer_without_settings_is_skipped_not_a_crash(mock):
+    mock.state.imaging_without_settings = True
+    snap = taker(mock).take()
+    assert any("без ImagingSettings" in line for line in snap.skipped), snap.skipped

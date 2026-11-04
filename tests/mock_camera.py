@@ -53,10 +53,10 @@ def _envelope(body: str) -> bytes:
     ).encode()
 
 
-def _fault(reason: str) -> bytes:
+def _fault(reason: str, subcode: str = "ter:NotAuthorized") -> bytes:
     return _envelope(
         "<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode>"
-        "<s:Value>ter:NotAuthorized</s:Value></s:Subcode></s:Code>"
+        f"<s:Value>{subcode}</s:Value></s:Subcode></s:Code>"
         f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason></s:Fault>'
     )
 
@@ -68,6 +68,8 @@ def password_digest(nonce: bytes, created: str, password: str) -> str:
 
 
 class MockCamera:
+    auth_reply = "onvif"  # отказ по паролю: onvif, gsoap (TMID-018), http401
+
     def __init__(
         self,
         passport: Passport,
@@ -138,6 +140,11 @@ class MockCamera:
         operation = body[0].tag.split("}")[-1] if body is not None and len(body) else ""
         self.requests.append(operation)
         if not self._authorized(root):
+            if self.auth_reply == "gsoap":
+                reason = "The security token could not be authenticated or authorized"
+                return 400, _fault(reason, "wsse:FailedAuthentication")
+            if self.auth_reply == "http401":
+                return 401, b"Unauthorized"
             return 400, _fault("Sender not Authorized")
         p = self.passport
         if operation == "GetDeviceInformation":

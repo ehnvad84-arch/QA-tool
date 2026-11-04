@@ -22,6 +22,9 @@ PREVIOUS_RESULTS = "previous_results"
 UNREACHABLE = "unreachable"
 """Ключ в CheckResult.data: камера не ответила по сети (не ошибка проверки, а отсутствие связи)."""
 
+FIRST_CHECK = "CORE-CONNECT-1"
+"""Первая проверка каждой камеры: связь и паспорт."""
+
 CREDENTIALS_REJECTED = "credentials_rejected"
 """Ключ в CheckResult.data: камера не приняла логин или пароль места — ошибка стенда."""
 
@@ -201,7 +204,13 @@ class Registry:
         for spec in self.all():
             if not spec.applies_to(camera):
                 continue
-            if scenario.checks is not None and spec.id not in scenario.checks:
+            # CORE-CONNECT-1 — всегда: без неё нет паспорта в шапке протокола, а неверный пароль
+            # стал бы ложными «не прошла» у остальных проверок (worker.py).
+            if (
+                scenario.checks is not None
+                and spec.id not in scenario.checks
+                and spec.id != FIRST_CHECK
+            ):
                 continue
             planned.append((spec, skip_reason(spec, scenario, place)))
         return planned

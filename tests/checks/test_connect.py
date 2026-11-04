@@ -1,9 +1,11 @@
 import pytest
 
 from qa_tool.checks import load_all
+from qa_tool.checks.core import connect
 from qa_tool.checks.core.connect import PASSPORT_KEY
-from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
+from qa_tool.core.checks import CREDENTIALS_REJECTED, REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
+from qa_tool.drivers.camera.probe import RtspProbe
 from tests.mock_camera import start_fleet
 
 load_all()
@@ -50,3 +52,23 @@ def test_wrong_password_is_stand_error_not_camera_defect(mock):
     result = run_check(SPEC, ctx_for(mock, password="bad"))
     assert result.status is Status.STAND_ERROR
     assert "не приняла логин или пароль места 1" in result.reason
+
+
+@pytest.mark.parametrize("reply", ["onvif", "gsoap", "http401"])
+def test_rejected_password_is_stand_error_for_every_kind_of_refusal(mock, reply):
+    mock.auth_reply = reply
+    result = run_check(SPEC, ctx_for(mock, password="wrong"))
+    assert result.status is Status.STAND_ERROR, result.reason
+    assert result.data[CREDENTIALS_REJECTED]
+
+
+def test_rtsp_closing_silently_is_written_down_not_hidden(mock, monkeypatch):
+    monkeypatch.setattr(connect, "rtsp_probe", lambda *_: RtspProbe.CLOSED)
+    result = run_check(SPEC, ctx_for(mock))
+    assert result.status is Status.PASSED, result.reason
+    assert "закрыл его без ответа" in result.actual
+
+
+def test_rtsp_not_answering_fails(mock, monkeypatch):
+    monkeypatch.setattr(connect, "rtsp_probe", lambda *_: RtspProbe.NO_ANSWER)
+    assert run_check(SPEC, ctx_for(mock)).status is Status.FAILED

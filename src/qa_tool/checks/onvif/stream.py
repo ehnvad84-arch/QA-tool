@@ -6,6 +6,8 @@ Authorization, адрес потока — на хосте камеры из с�
 Глубокий разбор потока (потери, частота кадров, битрейт) — модуль «Поток» этапа 4.
 """
 
+from xml.sax.saxutils import escape
+
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.replay import play, soap_evidence
 from qa_tool.core.checks import (
@@ -53,7 +55,8 @@ def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str]:
         raise OnvifFault("GetProfiles не вернул ни одного медиапрофиля")
     answer = soap.call(
         url,
-        f"<{prefix}:GetStreamUri>{setup}<{prefix}:ProfileToken>{profile}</{prefix}:ProfileToken>"
+        f"<{prefix}:GetStreamUri>{setup}"
+        f"<{prefix}:ProfileToken>{escape(profile)}</{prefix}:ProfileToken>"
         f"</{prefix}:GetStreamUri>",
     )
     uri = next(((e.text or "").strip() for e in answer.iter() if _local(e.tag) == "Uri"), "")

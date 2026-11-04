@@ -129,7 +129,14 @@ class TabooProxy:
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
 
     def rewrite_location(self, location: str) -> str:
-        """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ."""
+        """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ.
+
+        `//хост/путь` клиент достраивает схемой своего запроса и уходит мимо посредника,
+        поэтому такой адрес сначала приводится к полному.
+        """
+        location = location.strip()
+        if location.startswith("//"):
+            location = f"http:{location}"
         return _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
 
     def _to_proxy(self, match: re.Match) -> str:

@@ -14,6 +14,7 @@ from typing import Any
 
 from qa_tool.core.checks import (
     CREDENTIALS_REJECTED,
+    FIRST_CHECK,
     PREVIOUS_RESULTS,
     UNREACHABLE,
     CheckContext,
@@ -26,7 +27,6 @@ from qa_tool.core.checks import (
 from qa_tool.core.models import Camera, Place, Threshold
 from qa_tool.drivers.camera.probe import tcp_open
 
-FIRST_CHECK = "CORE-CONNECT-1"
 STOPPED = "прогон остановлен"
 LOST_DURING_CHECK = "камера перестала отвечать во время проверки (сбой камеры или прошивки)"
 

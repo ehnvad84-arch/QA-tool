@@ -171,3 +171,15 @@ def test_redirect_to_foreign_host_goes_to_refusal(answering):
     r = httpx.get(proxy.base_url + "/x", timeout=10)
     assert "10.9.9.9" in r.headers["location"]
     assert r.headers["location"].startswith(f"{proxy.base_url}/_foreign/")
+
+
+def test_redirect_without_scheme_stays_behind_proxy(answering):
+    proxy, _ = answering(b"", status=302, Location="//127.0.0.1:8080/onvif/x")
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.headers["location"] == f"{proxy.base_url}/_port/8080/onvif/x"
+
+
+def test_redirect_without_scheme_to_foreign_host_goes_to_refusal(answering):
+    proxy, _ = answering(b"", status=302, Location="//10.9.9.9/onvif/x")
+    r = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert r.headers["location"].startswith(f"{proxy.base_url}/_foreign/")
