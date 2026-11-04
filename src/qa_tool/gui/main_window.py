@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -31,13 +32,47 @@ def format_elapsed(seconds: float) -> str:
     return f"{total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
+def stop_question(parent: QWidget, closing: bool) -> QMessageBox:
+    """Вопрос перед остановкой прогона (S13).
+
+    Выбран ответ «Продолжить прогон», он же срабатывает на Esc: случайный Enter или
+    закрытие окошка прогон не прерывают.
+
+    Args:
+        parent: окно, над которым показать вопрос.
+        closing: вопрос задан при закрытии окна, а не по кнопке «Остановить».
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Идёт прогон")
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText("Идёт прогон. Остановить его?")
+    tail = "окно закроется после этого." if closing else "их можно будет открыть в «Протоколах»."
+    box.setInformativeText(
+        f"Начатые проверки доработают, остальные будут «пропущены». Протоколы выйдут по "
+        f"сделанному, {tail}"
+    )
+    box.addButton("Остановить и закрыть" if closing else "Остановить", box.ButtonRole.AcceptRole)
+    keep = box.addButton("Продолжить прогон", box.ButtonRole.RejectRole)
+    box.setDefaultButton(keep)
+    box.setEscapeButton(keep)
+    return box
+
+
+def ask_stop(parent: QWidget, closing: bool) -> bool:
+    """Спросить оператора; True — остановить прогон."""
+    box = stop_question(parent, closing)
+    box.exec()
+    return box.clickedButton() is not box.defaultButton()
+
+
 class RunBlock(QFrame):
     """Блок прогона внизу колонки разделов (S7): состояние, время, фаза и кнопки.
 
     Виден на всех экранах; кнопки только зовут общий `RunControl`.
     """
 
-    def __init__(self, control: RunControl, open_protocols, parent=None):
+    def __init__(self, control: RunControl, open_protocols, request_stop, parent=None):
         super().__init__(parent)
         self.control = control
         self.setProperty("role", "run-block")
@@ -74,7 +109,7 @@ class RunBlock(QFrame):
         for w in (self.status, self.start_button, self.stop_button, self.protocols_button):
             layout.addWidget(w)
         self.start_button.clicked.connect(control.start)
-        self.stop_button.clicked.connect(control.stop)
+        self.stop_button.clicked.connect(request_stop)
         self.protocols_button.clicked.connect(open_protocols)
         control.started.connect(self._started)
         control.event.connect(self._on_event)
@@ -139,6 +174,8 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setMinimumSize(1280, 800)
         self.run_control = RunControl(self.state, self)
+        self.ask_stop = ask_stop  # тесты подставляют ответ оператора
+        self.close_after_run = False
 
         self.menu = helped(
             QListWidget(), "Разделы программы. Выберите раздел, чтобы открыть его.", "index"
@@ -167,7 +204,7 @@ class MainWindow(QMainWindow):
         brand.setProperty("role", "brand")
         column.addWidget(brand)
         column.addWidget(self.menu, 1)
-        self.run_block = RunBlock(self.run_control, self.open_protocols)
+        self.run_block = RunBlock(self.run_control, self.open_protocols, self.request_stop)
         column.addWidget(self.run_block)
 
         central = QWidget()
@@ -183,6 +220,8 @@ class MainWindow(QMainWindow):
         self.run_control.started.connect(self.update_status)
         self.run_control.published.connect(lambda *_: self.update_status())
         self.run_control.failed.connect(lambda *_: self.update_status())
+        self.run_control.published.connect(lambda *_: self._close_if_requested())
+        self.run_control.failed.connect(lambda *_: self._close_if_requested())
 
         self.status = helped(
             QLabel(), "Состояние стенда: место, сколько камер на местах, идёт ли прогон.", "index"
@@ -213,6 +252,31 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         self.screens[index].refresh()
         self.update_status()
+
+    def request_stop(self) -> None:
+        """Кнопка «Остановить»: остановить прогон, только если оператор подтвердил."""
+        if self.ask_stop(self, False):
+            self.run_control.stop()
+
+    def closeEvent(self, event):  # noqa: N802 — имя метода задаёт Qt
+        """Закрытие окна во время прогона — только с подтверждением и после протоколов (S13).
+
+        Окно не закрывается сразу: рабочие процессы и выпуск протоколов живут в этом процессе,
+        и закрытие оборвало бы их. Окно закроется само по сигналу о выпуске протоколов.
+        """
+        if not self.run_control.running:
+            event.accept()
+            return
+        event.ignore()
+        if self.close_after_run:
+            return  # уже закрываемся: повторный крестик не мешает выпуску протоколов
+        if self.ask_stop(self, True):
+            self.close_after_run = True
+            self.run_control.stop()
+
+    def _close_if_requested(self) -> None:
+        if self.close_after_run:
+            self.close()
 
     def open_protocols(self) -> None:
         """Перейти на экран «Протоколы»."""

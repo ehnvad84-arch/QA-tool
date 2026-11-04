@@ -1,7 +1,8 @@
+import pytest
 from PySide6.QtCore import Qt
 
 from qa_tool.gui.app import create_app
-from qa_tool.gui.main_window import MainWindow, format_elapsed
+from qa_tool.gui.main_window import MainWindow, format_elapsed, stop_question
 from qa_tool.gui.screens.run import RunScreen
 from qa_tool.gui.state import AppState
 from tests.fake_checks import SLOW
@@ -116,3 +117,63 @@ def test_keyboard_arrows_switch_card(qtbot, tmp_path, fleet):  # noqa: F811
     assert run.card.place.text() == "Место 1"
     qtbot.keyClick(run.cameras.list, Qt.Key.Key_Down)
     assert run.card.place.text() == "Место 2"
+
+
+def running_window(qtbot, tmp_path, fleet):  # noqa: F811
+    """Окно с идущим прогоном: первая проверка уже прошла, вторая ещё идёт."""
+    window = make_window(qtbot, tmp_path, fleet, registry_ref=FAKE, checks=SLOW)
+    asked = []
+    window.ask_stop = lambda _parent, closing: asked.append(closing) or window.answer
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    window.run_block.start_button.click()
+    window.run_control.runner.extra["trace_dir"] = str(trace)
+    run = screen(window, RunScreen)
+    qtbot.waitUntil(lambda: any(s.counts["прошла"] for s in run.view.slots.values()), timeout=30000)
+    return window, asked
+
+
+def test_s13_close_declined_keeps_run_going(qtbot, tmp_path, fleet):  # noqa: F811
+    window, asked = running_window(qtbot, tmp_path, fleet[:1])
+    window.answer = False
+    assert window.close() is False
+    assert asked == [True] and window.isVisible()
+    assert window.state.running and not window.run_control.stop_requested
+    window.run_control.stop()
+    finish(qtbot, window)
+
+
+def test_s13_close_confirmed_waits_for_protocols(qtbot, tmp_path, fleet):  # noqa: F811
+    window, asked = running_window(qtbot, tmp_path, fleet[:1])
+    window.answer = True
+    assert window.close() is False  # окно ждёт протоколы
+    assert window.isVisible() and window.run_control.stop_requested
+    assert window.close() is False and asked == [True]  # второй крестик ничего не спрашивает
+    qtbot.waitUntil(lambda: not window.isVisible(), timeout=30000)
+    assert (window.run_control.last_store.run_dir / "summary.html").exists()
+
+
+def test_s13_stop_button_asks_first(qtbot, tmp_path, fleet):  # noqa: F811
+    window, asked = running_window(qtbot, tmp_path, fleet[:1])
+    window.answer = False
+    window.run_block.stop_button.click()
+    assert asked == [False] and not window.run_control.stop_requested
+    window.answer = True
+    window.run_block.stop_button.click()
+    assert window.run_control.stop_requested
+    finish(qtbot, window)
+    assert window.isVisible()  # «Остановить» окно не закрывает
+
+
+def test_s13_no_question_without_run(qtbot, tmp_path, fleet):  # noqa: F811
+    window = make_window(qtbot, tmp_path, fleet[:1], registry_ref=FAKE, checks=SLOW)
+    window.ask_stop = lambda *_: pytest.fail("без прогона вопроса быть не должно")
+    assert window.close() is True
+
+
+def test_s13_question_defaults_to_keep_running(qtbot):
+    create_app()
+    box = stop_question(None, closing=True)
+    assert box.defaultButton().text() == "Продолжить прогон"
+    assert box.escapeButton() is box.defaultButton()
+    assert "Остановить и закрыть" in [b.text() for b in box.buttons()]
