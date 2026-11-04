@@ -5,8 +5,12 @@
 `timeout_s`, поэтому у обхода свой предел времени меньше него: при пределе и при остановке новые
 значения не пишутся, а записанное возвращается и сверяется до выхода (AD-3).
 
-Порядок: чтение всех настроек → запись с возвратом → сверка обходом чтения → разрушающие,
-перезагрузка последней. Первое чтение одновременно служит снимком «до».
+Порядок: чтение всех настроек → запись с возвратом → сверка обходом чтения → экспорт настроек →
+разрушающие, перезагрузка последней. Первое чтение одновременно служит снимком «до». Экспорт идёт
+после сверки: на прошивке 0.6.14 он перезапускает службу API, связь пропадает на несколько секунд.
+
+Операции функций, которых у модели нет по ответу `/api/hardware`, не вызываются: камера отвечает
+на них ошибками или пустотой, и это не дефект прошивки.
 
 Камера не меняет сеть и учётные записи: такие операции закрыты табу в `core/taboo.py` и картой
 (AD-7). Операции вне карты клиент не вызовет вовсе.
@@ -54,12 +58,27 @@ CHECK_ID = "API-RUVER-1"
 RESTORE_ID = "API-RUVER-RESTORE"
 NEED_REBOOT = "/api/service/need_reboot"
 INFO = "/api/info"
+HARDWARE = "/api/hardware"
+EXPORT = "/api/service/export_settings"
 REBOOT = "/api/service/reboot"
+# Адрес → признак в ответе /api/hardware. Сверено на камере TMID-018 с прошивкой 0.6.14.
+FEATURES = {
+    "/api/lte": "lteSupport",
+    "/api/glonass": "glonassSupport",
+    "/api/osd/glonass_enable": "glonassSupport",
+    "/api/network/https": "httpsSupport",
+    "/api/sdcard": "flashCardSupport",
+    "/api/recorder": "recorderSupport",
+    "/api/shock_sensor": "shockSensorSupport",
+    "/api/image/exposure/iris_enable": "irisSupport",
+}
 LEFT_CHANGED = "камера осталась изменённой"
 PER_OPERATION_S = 3.0  # обычно 0,1 с; запас на медленную камеру и тайм-ауты отдельных запросов
 RESERVE_S = 300.0  # возврат значений и сверка уже после предела времени
 REBOOT_WAIT_S = 180.0  # камера «Рувер» поднимается за 1–2 минуты
 REBOOT_POLL_S = 3.0
+OUTAGE_WATCH_S = 6.0  # на 0.6.14 обрыв начинается в первую секунду после экспорта
+OUTAGE_LIMIT_S = 30.0  # на 0.6.14 служба возвращается за 3 с
 EVIDENCE_LIMIT = 20_000  # ответы API невелики; ограничение — от чужой прошивки с большим ответом
 
 
@@ -130,6 +149,7 @@ class Walk:
     before: dict[str, Any] = field(default_factory=dict)  # снимок «до»: только в памяти
     firmware: str = ""
     wrote: bool = False  # что-то могло измениться: нужна сверка «до и после»
+    features: dict[str, Any] = field(default_factory=dict)  # ответ /api/hardware
 
     # --- общее ------------------------------------------------------------------------------
 
@@ -183,15 +203,27 @@ class Walk:
     def read_all(self) -> None:
         """Вызвать каждую операцию чтения один раз и запомнить снимок «до».
 
-        Адрес со сведениями о камере идёт первым: версия прошивки нужна в причинах 404.
+        Сведения о камере идут первыми: версия прошивки нужна в причинах 404, а состав
+        функций — чтобы не вызывать то, чего у модели нет. Экспорт — отдельно (`export`).
         """
-        reads = [op for op in self.api.operations if op.kind == READ]
-        for op in sorted(reads, key=lambda op: op.path != INFO):
+        reads = [op for op in self.api.operations if op.kind == READ and op.path != EXPORT]
+        first = {INFO: 0, HARDWARE: 1}
+        for op in sorted(reads, key=lambda op: first.get(op.path, 2)):
             self._row(op, self._read(op))
+
+    def _absent(self, op: Operation) -> str:
+        """Причина пропуска, если функции операции у этой модели нет; пусто — функция есть."""
+        for prefix, flag in FEATURES.items():
+            if op.path.startswith(prefix) and self.features.get(flag) is False:
+                return f"нет у этой модели: {flag} = false в /api/hardware"
+        return ""
 
     def _read(self, op: Operation) -> CheckResult:
         if op.missing:
             return CheckResult.skipped(f"нужны параметры: {', '.join(op.missing)}")
+        absent = self._absent(op)
+        if absent:
+            return CheckResult.skipped(absent)
         halted = self._halted()
         if halted:
             return CheckResult.skipped(halted)
@@ -223,6 +255,9 @@ class Walk:
             data = response.json()
         except ValueError:
             return self._failed("ответ не в формате JSON", expected, evidence)
+        # состав функций нужен и при расхождении со схемой: она отстаёт от прошивки
+        if op.path == HARDWARE and isinstance(data, dict):
+            self.features = data
         errors = schema_errors(op.schema, data, op.sensitive)
         if errors:
             return self._failed(
@@ -275,7 +310,7 @@ class Walk:
             if not self.ctx.allow_writes:
                 self._row(op, CheckResult.skipped("не разрешено сценарием: изменяющая проверка"))
                 continue
-            halted = self._halted()
+            halted = self._halted() or self._absent(op)
             if halted:
                 self._row(op, CheckResult.skipped(halted))
                 continue
@@ -458,6 +493,40 @@ class Walk:
 
     # --- разрушающие ------------------------------------------------------------------------
 
+    def export(self) -> None:
+        """Экспорт настроек и замер обрыва службы API после него."""
+        op = self.api.get("POST", EXPORT)
+        result = self._read(op)
+        if result.status is Status.PASSED:
+            outage = self._outage_s()
+            if outage:
+                result = self._failed(
+                    f"после экспорта API не отвечало {outage:.0f} с: служба перезапустилась",
+                    "экспорт не прерывает работу API",
+                    result.evidence,
+                )
+        self._row(op, result)
+
+    def _outage_s(self) -> float:
+        """Сколько секунд API не отвечало после экспорта; 0 — обрыва не было."""
+        info = self.api.get("GET", INFO)
+        poll = float(self.ctx.extra.get("api_outage_poll_s", 1.0))
+        start = time.monotonic()
+        lost = None
+        limit = start + float(self.ctx.extra.get("api_outage_watch_s", OUTAGE_WATCH_S))
+        while time.monotonic() < limit:
+            try:
+                answered = self.client.call(info).status_code == 200
+            except http.TransportError:
+                answered = False
+            if answered and lost is not None:
+                return max(time.monotonic() - lost, 0.1)
+            if not answered and lost is None:
+                lost = time.monotonic()
+                limit = lost + OUTAGE_LIMIT_S
+            time.sleep(poll)
+        return time.monotonic() - lost if lost is not None else 0.0
+
     def destroy_all(self) -> None:
         """Разрушающие операции; перезагрузка — последней, после неё сеанс новый."""
         operations = [op for op in self.api.operations if op.kind == DESTRUCTIVE]
@@ -466,6 +535,8 @@ class Walk:
                 self._row(op, CheckResult.skipped("не разрешено сценарием: разрушающая проверка"))
             elif op.missing:
                 self._row(op, CheckResult.skipped(f"нужны параметры: {', '.join(op.missing)}"))
+            elif self._absent(op):
+                self._row(op, CheckResult.skipped(self._absent(op)))
             elif self._halted():
                 self._row(op, CheckResult.skipped(self._halted()))
             else:
@@ -508,6 +579,7 @@ class Walk:
         self.write_all()
         if self.wrote:
             self.verify()
+        self.export()
         self.destroy_all()
         return self.ordered()
 

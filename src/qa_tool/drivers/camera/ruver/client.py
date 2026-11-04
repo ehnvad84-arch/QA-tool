@@ -35,8 +35,9 @@ SESSION_HEADER = "X-Session-ID"
 CREATE_SESSION = "/api/auth/create_session"
 LOGIN = "/api/auth/login"
 LOGOUT = "/api/auth/logout"
-# Коды описания API: неверный или истёкший сеанс, а не отказ в правах
-SESSION_GONE_CODES = frozenset({1006, 1013, 2001})
+# Неверный или истёкший сеанс, а не отказ в правах. 1006, 1013 и 2001 — из описания API;
+# 105 («Session expired») описание не называет, его отдаёт прошивка 0.6.14 (живая камера TMID-018).
+SESSION_GONE_CODES = frozenset({105, 1006, 1013, 2001})
 
 
 class RuverError(Exception):

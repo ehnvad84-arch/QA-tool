@@ -32,7 +32,13 @@ def camera():
 
 def ctx_for(camera, password="admin", **options):
     place = Camera(slot=1, address="127.0.0.1", port=camera.port, username="admin", vendor=RUVER)
-    extra = {"api_timeout_s": 0.3, "api_reboot_poll_s": 0.01, **options.pop("extra", {})}
+    extra = {
+        "api_timeout_s": 0.3,
+        "api_reboot_poll_s": 0.01,
+        "api_outage_watch_s": 0,  # обрыв после экспорта смотрят только его тесты
+        "api_outage_poll_s": 0.01,
+        **options.pop("extra", {}),
+    }
     return CheckContext(place, password, Place.COLOR_BOX, extra=extra, **options)
 
 
@@ -156,6 +162,52 @@ def test_address_missing_in_firmware_is_skipped_not_a_task(camera):
     found = row(run(camera), "GET", "/api/hardware")
     assert found.status is Status.SKIPPED
     assert "нет в прошивке 0.6.14" in found.reason
+
+
+def test_function_absent_from_the_model_is_skipped(camera):
+    camera.state["/api/hardware"]["lteSupport"] = False
+    found = row(run(camera), "GET", "/api/lte/enable")
+    assert found.status is Status.SKIPPED
+    assert "нет у этой модели" in found.reason
+    assert not camera.sent("GET", "/api/lte/enable")
+
+
+def test_absent_function_is_not_written(camera):
+    camera.state["/api/hardware"]["glonassSupport"] = False
+    found = row(run(camera, allow_writes=True), "POST", "/api/osd/glonass_enable")
+    assert "нет у этой модели" in found.reason
+    assert not camera.sent("POST", "/api/osd/glonass_enable")
+
+
+def test_hardware_flags_work_even_if_its_answer_breaks_the_schema(camera):
+    camera.state["/api/hardware"]["lteSupport"] = False
+    camera.state["/api/hardware"]["manufacturer"] = 3
+    result = run(camera)
+    assert row(result, "GET", "/api/hardware").status is Status.FAILED
+    assert row(result, "GET", "/api/lte").status is Status.SKIPPED
+
+
+def test_export_restarting_the_api_is_its_own_failure(camera):
+    camera.restarts_on_export = True
+    result = run(camera, extra={"api_outage_watch_s": 1, "api_outage_poll_s": 0.02})
+    found = row(result, "POST", "/api/service/export_settings")
+    assert found.status is Status.FAILED
+    assert "служба перезапустилась" in found.reason
+    others = [c for c in result.children if c.result.status is Status.STAND_ERROR]
+    assert others == []
+
+
+def test_export_without_restart_passes(camera):
+    result = run(camera, extra={"api_outage_watch_s": 0.05, "api_outage_poll_s": 0.01})
+    assert row(result, "POST", "/api/service/export_settings").status is Status.PASSED
+
+
+def test_export_runs_after_writes_are_verified(camera):
+    run(camera, allow_writes=True, extra={"api_outage_watch_s": 0.05, "api_outage_poll_s": 0.01})
+    paths = [r.path for r in camera.requests]
+    assert paths.index("/api/service/export_settings") > max(
+        i for i, r in enumerate(camera.requests) if r.method == "POST" and r.path == BRIGHTNESS
+    )
 
 
 # --- S6: запись --------------------------------------------------------------------------------

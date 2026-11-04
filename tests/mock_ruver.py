@@ -71,6 +71,8 @@ class MockRuver:
     side_effects: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
     # адрес записи → (адрес, поле, значение), которое он меняет рядом
     accepts_out_of_range: bool = False
+    restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
+    down_s: float = 0.15
     expire_session_after: int = 0  # сеанс закрывается по времени после N запросов
     on_request: Callable[["MockRuver", Logged], None] | None = None
     requests: list[Logged] = field(default_factory=list)
@@ -90,6 +92,9 @@ class MockRuver:
                 for name in value:
                     if name.endswith("Range"):
                         value[name] = {"min": 0, "max": 100}
+        hardware = self.state["/api/hardware"]
+        hardware |= {name: True for name in hardware if name.endswith("Support")}
+        self._down_until = 0.0
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
         self._served = 0
@@ -179,7 +184,7 @@ class MockRuver:
         self._served += 1
         if self.expire_session_after and self._served == self.expire_session_after:
             self.sessions.pop(session, None)
-            return 401, {"errorCode": 1013, "errorDescription": "Session expired"}
+            return 401, {"errorCode": 105, "errorDescription": "Session expired"}
         if path in self.forbidden:
             return 403, {"errorCode": 5, "errorDescription": "Forbidden"}
         op = self.api.get(method, path)
@@ -187,6 +192,10 @@ class MockRuver:
             return 404, {"errorCode": 1, "errorDescription": "Not found"}
         if path == "/api/service/need_reboot":
             return 200, {"needReboot": (body or {}).get("route") in self.reboot_needed}
+        if path == "/api/service/export_settings" and self.restarts_on_export:
+            self._down_until = time.monotonic() + self.down_s
+            self.sessions.clear()
+            return 200, b"settings"
         if path == "/api/service/reboot":
             self.reboots += 1
             self.sessions.clear()
@@ -211,6 +220,9 @@ class MockRuver:
                 body = json.loads(raw) if raw and parts.path.startswith("/api/") else None
                 session = self.headers.get("X-Session-ID") or ""
                 logged = Logged(self.command, parts.path, parts.query, body, session)
+                if time.monotonic() < mock._down_until:
+                    self.close_connection = True  # служба перезапускается: ответа нет
+                    return
                 with mock._lock:
                     mock.requests.append(logged)
                     if mock.on_request:
