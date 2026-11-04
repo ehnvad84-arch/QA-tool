@@ -33,6 +33,11 @@ jobs:
         run: uv run ruff check . && uv run ruff format --check .
       - name: Правила комментирования (docs/rules/comments.md)
         run: uv run python scripts/check_comments.py
+      - name: Больше сетевых портов (Windows)
+        if: runner.os == 'Windows'
+        # тесты открывают к mock-камерам сотни соединений в секунду, а Windows держит закрытое
+        # соединение 2 минуты: 16 тысяч портов по умолчанию кончаются (WinError 10048)
+        run: netsh int ipv4 set dynamicport tcp start=1025 num=64510
       - name: Тесты
         run: uv run pytest -q  # на Linux conftest включает offscreen, на Windows — рабочий стол раннера
 

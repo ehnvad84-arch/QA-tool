@@ -75,7 +75,7 @@ class MockRuver:
     busy_writes_left: int = 1  # сколько записей подряд она отказывает
     restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
     # счётчик, а не время: на Windows запрос идёт дольше любого короткого окна простоя
-    down_requests: int = 3
+    down_requests: int = 10  # с запасом: иначе фаза возврата заканчивается, не успев подождать
     blocks_by_stream: dict[str, list] = field(default_factory=dict)  # надписи других потоков
     refuses_block_return: bool = False
     absent_streams: set[str] = field(default_factory=set)  # чтение надписей отвечает 400

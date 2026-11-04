@@ -568,6 +568,14 @@ def test_one_lost_answer_is_not_a_reboot(camera):
     assert "не ушла в перезагрузку" in found.reason
 
 
+def test_camera_that_never_returns_after_reboot_fails(camera):
+    camera.down_requests = 10**6
+    extra = {"api_reboot_wait_s": 0.2}
+    found = row(run(camera, allow_destructive=True, extra=extra), "POST", "/api/service/reboot")
+    assert found.status is Status.FAILED
+    assert "не вернулась" in found.reason
+
+
 def test_reboot_without_answer_still_waits_for_the_camera(camera):
     camera.drops_reboot_answer = True
     result = run(camera, allow_destructive=True)
