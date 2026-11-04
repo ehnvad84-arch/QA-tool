@@ -25,13 +25,14 @@ from qa_tool.core.store import RunStore  # noqa: E402
 CHECKS = [
     "CORE-CONNECT-1",
     "ONVIF-TT",
+    "RUV-S-STREAM-1",
     "RUV-M-METADATA-1",
     "RUV-M-STREAM-1",
     "RUV-M-ANALYTICS-1",
     "RUV-SD-1",
     "RUV-PROFILES-1",
 ]
-MUST_PASS = ["CORE-CONNECT-1", "RUV-M-METADATA-1", "RUV-M-STREAM-1", "RUV-SD-1"]
+MUST_PASS = ["CORE-CONNECT-1", "RUV-S-STREAM-1", "RUV-M-METADATA-1", "RUV-M-STREAM-1", "RUV-SD-1"]
 MIN_OTT_ROWS = 30  # у закреплённой onvif-tt по виртуальной камере ~100 строк; 30 — «запустился»
 
 

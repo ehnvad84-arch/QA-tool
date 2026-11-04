@@ -27,6 +27,12 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 from qa_tool.core.taboo import check_rtsp
 
+# Пределы ответа камеры — недоверенных данных (security.md): строка заголовка, число строк и
+# тело (SDP, текст ошибки) у настоящих камер на порядки меньше; больше — сбой или атака
+MAX_LINE = 8192
+MAX_HEADERS = 100
+MAX_BODY = 1 << 20
+
 
 class RtspError(ConnectionError):
     """Ответ RTSP не 2xx (код — в `status`) или соединение оборвалось (`status` = 0)."""
@@ -190,19 +196,29 @@ class RtspClient:
                 raise RtspError("камера закрыла соединение RTSP")
             if first == b"$":
                 head = self._file.read(3)
-                data = self._file.read(struct.unpack("!H", head[1:3])[0])
+                if len(head) < 3:
+                    raise RtspError("соединение RTSP оборвалось посреди пакета")
+                size = struct.unpack("!H", head[1:3])[0]
+                data = self._file.read(size)
+                if len(data) < size:
+                    raise RtspError("соединение RTSP оборвалось посреди пакета")
                 return _rtp_packet(head[0], data)
             if first not in b"\r\n":
                 break
-        line = (first + self._file.readline()).decode("latin-1").strip()
+        line = (first + self._file.readline(MAX_LINE)).decode("latin-1").strip()
         status_line = line.split(" ", 2)
         if len(status_line) < 2 or not status_line[1].isdigit():
             raise RtspError(f"не ответ RTSP: {line[:60]!r}")
         headers = {}
-        while raw := self._file.readline().decode("latin-1").strip():
+        while raw := self._file.readline(MAX_LINE).decode("latin-1").strip():
+            if len(headers) >= MAX_HEADERS:
+                raise RtspError(f"в ответе RTSP больше {MAX_HEADERS} заголовков")
             key, _, value = raw.partition(":")
             headers[key.strip().lower()] = value.strip()
-        length = int(headers.get("content-length", "0") or 0)
+        raw_length = headers.get("content-length", "0") or "0"
+        if not raw_length.isdigit() or int(raw_length) > MAX_BODY:
+            raise RtspError(f"недопустимый Content-Length в ответе RTSP: {raw_length[:20]!r}")
+        length = int(raw_length)
         body = self._file.read(length).decode("utf-8", "replace") if length else ""
         reason = status_line[2] if len(status_line) > 2 else ""
         return Response(int(status_line[1]), reason, headers, body)

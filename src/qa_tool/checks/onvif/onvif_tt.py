@@ -64,6 +64,18 @@ def runner_command() -> list[str]:
     return [str(console if console.exists() else sys.executable), RUNNER_FLAG]
 
 
+def path_without_ffprobe(path: str) -> str:
+    """PATH для onvif-tt без папок с ffprobe: вторая защита к исключению его тестов.
+
+    Тест onvif-tt, не попавший в список исключений (новая версия), без ffprobe пропускается
+    сам, а не передаёт пароль камеры в командной строке (см. excluded.py).
+    """
+    exe = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+    return os.pathsep.join(
+        folder for folder in path.split(os.pathsep) if folder and not (Path(folder) / exe).exists()
+    )
+
+
 def titles() -> dict[str, str]:
     """Названия тестов onvif-tt — из docstring его реализаций («…html#tc.ID — название.»)."""
     from onvif_tt import registry
@@ -154,7 +166,12 @@ def run_onvif_tt(
     if writes and ctx.allow_destructive:
         command.append("--allow-reboot")
     # вывод pytest читается как UTF-8 и на Windows, где консоль по умолчанию в cp866/cp1251
-    env = {**os.environ, PASSWORD_ENV: ctx.password, "PYTHONIOENCODING": "utf-8"}
+    env = {
+        **os.environ,
+        PASSWORD_ENV: ctx.password,
+        "PYTHONIOENCODING": "utf-8",
+        "PATH": path_without_ffprobe(os.environ.get("PATH", "")),
+    }
     done = subprocess.run(
         command,
         env=env,

@@ -93,7 +93,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         Feature(
             "Видеопоток RTSP",
             "Media Streaming",
-            ("LOCAL-MEDIA-S-STREAM-URI", "LOCAL-MEDIA-S-RTSP-LIVE", "LOCAL-RTSS-*"),
+            ("LOCAL-MEDIA-S-STREAM-URI", "RUV-S-STREAM-1"),
         ),
     ),
     "G": (
@@ -121,7 +121,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         Feature("Служба Media2", "Media2 Service", ("MEDIA2-1-1-4", "MEDIA2-*")),
         _METADATA,
         Feature("Поток метаданных RTSP", "Metadata RTSP streaming", ("RUV-M-STREAM-1",)),
-        Feature("Видеопоток RTSP", "Video RTSP streaming", ("LOCAL-MEDIA2-RTSP-LIVE",)),
+        Feature("Видеопоток RTSP", "Video RTSP streaming", ("RUV-S-STREAM-1",)),
         Feature("Служба аналитики", "Analytics Service", ("ANALYTICS-3-1-*",)),
         Feature("Модули аналитики", "Analytics Module", ("ANALYTICS-4-1-*", "RUV-M-ANALYTICS-1")),
         _EVENTS,
@@ -138,7 +138,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         Feature(
             "Видеопоток RTSP",
             "RTSP streaming",
-            ("LOCAL-MEDIA2-STREAM-URI", "LOCAL-MEDIA2-RTSP-LIVE"),
+            ("LOCAL-MEDIA2-STREAM-URI", "RUV-S-STREAM-1"),
         ),
         Feature("Снимок JPEG", "JPEG Snapshot", ()),
         _METADATA,
@@ -186,7 +186,13 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
     url = f"http://{ctx.camera.address}:{ctx.camera.port}/onvif/device_service"
     answer = SoapClient(ctx.camera.username, ctx.password).call(url, "<tds:GetScopes/>")
     items = {(e.text or "").strip() for e in answer.iter() if e.tag.endswith("ScopeItem")}
-    return {p for p, scope in SCOPES.items() if f"onvif://www.onvif.org/Profile/{scope}" in items}
+    # регистр и «/» на конце у камер разные, а RFC 3986 хост и схему сравнивает без регистра
+    items = {i.lower().rstrip("/") for i in items}
+    return {
+        p
+        for p, scope in SCOPES.items()
+        if f"onvif://www.onvif.org/profile/{scope}".lower() in items
+    }
 
 
 def confirms(check_id: str) -> list[str]:
@@ -256,8 +262,16 @@ def profiles(ctx: CheckContext) -> CheckResult:
             if v.verdict in (BROKEN, UNSUPPORTED)
         ]
         unchecked = sum(v.verdict == UNCHECKED for v in rows)
+        works = sum(v.verdict == WORKS for v in rows)
         if profile not in declared:
             result = CheckResult.skipped(f"профиль {profile} камерой не объявлен")
+        elif not works and not bad:
+            # ни одна функция не проверена (onvif-tt упал, проверки пропущены) — это не
+            # «прошла»: доказательства нет (never.md), и не ошибка камеры
+            result = CheckResult.stand_error(
+                f"профиль {profile} объявлен, но ни одна обязательная функция не проверена "
+                f"({unchecked} из {len(rows)}): смотрите строки ONVIF-TT и RUV-* выше"
+            )
         elif bad:
             result = CheckResult(
                 Status.FAILED,

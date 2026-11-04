@@ -110,3 +110,38 @@ def test_reads_metadata_track_on_requested_channel():
         assert "SETUP /live" in server.requests and "TEARDOWN /live" in server.requests
     finally:
         server.stop()
+
+
+class _Replies(socketserver.StreamRequestHandler):
+    """Сервер, который на любой запрос шлёт заранее заданные байты и закрывает соединение."""
+
+    reply = b""
+
+    def handle(self):
+        self.rfile.readline()
+        self.wfile.write(self.reply)
+
+
+def _serve(reply: bytes):
+    handler = type("H", (_Replies,), {"reply": reply})
+    server = socketserver.TCPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 99999999\r\n\r\n",
+        b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: -5\r\n\r\n",
+        b"$\x00\x10",  # обрыв посреди пакета RTP
+    ],
+)
+def test_hostile_or_broken_replies_raise_rtsp_error(reply):
+    server = _serve(reply)
+    try:
+        client = RtspClient(f"rtsp://127.0.0.1:{server.server_address[1]}/x", timeout=3)
+        with client, pytest.raises(RtspError):
+            client.request("OPTIONS", "*")
+    finally:
+        server.server_close()

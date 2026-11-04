@@ -103,7 +103,8 @@ class TabooProxy:
 
     def camera_url(self, path: str) -> str | None:
         """Адрес на камере для пути запроса к посреднику; None — адрес не камеры (чужой хост)."""
-        if path.startswith(_FOREIGN):
+        # путь без «/» в начале склеился бы с адресом камеры в чужой хост («@10.9.9.9/x»)
+        if path.startswith(_FOREIGN) or not path.startswith("/"):
             return None
         match = _PORT_PREFIX.match(path.split("?", 1)[0])
         if match:
@@ -129,7 +130,7 @@ class TabooProxy:
                 match.group(4),
             )
             if host.lower() == self.camera_address.lower():
-                target = int(port) if port else (443 if scheme == "https" else 80)
+                target = int(port) if port else (443 if scheme.lower() == "https" else 80)
                 return f"{self.base_url}/_port/{target}{path or ''}"
             return match.group(0)
 
@@ -201,9 +202,11 @@ class TabooProxy:
         return Handler
 
 
-# http(s)://хост[:порт][/путь] — хост без пользователя и пароля в адресе
+# http(s)://хост[:порт][/путь] — хост без пользователя и пароля в адресе; схема в адресе
+# без учёта регистра (RFC 3986 §3.1): «HTTP://камера/…» иначе ушёл бы к камере мимо табу
 _HTTP_URL = re.compile(
-    r"\b(https?)://([A-Za-z0-9.\-]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?(/[^\s<\"']*)?"
+    r"\b(https?)://([A-Za-z0-9.\-]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?(/[^\s<\"']*)?",
+    re.IGNORECASE,
 )
 # поля, где ONVIF передаёт адреса служб: <tt:XAddr>, <d:XAddrs>, <wsa:Address>, <tt:Uri>
 _ADDRESS_FIELD = re.compile(r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)([^<]*)(</)")

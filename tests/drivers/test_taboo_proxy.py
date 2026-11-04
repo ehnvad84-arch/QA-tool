@@ -76,6 +76,20 @@ def test_rewrite_services_subscriptions_and_foreign_hosts():
     assert p.camera_url("/_foreign/192.168.1.99/onvif/ptz") is None
 
 
+@pytest.mark.parametrize("scheme", ["HTTP", "Http", "hTTp"])
+def test_uppercase_scheme_still_goes_through_proxy(scheme):
+    p = TabooProxy("10.0.0.5", 80)
+    p._server = type("S", (), {"server_address": ("127.0.0.1", 5555)})()
+    out = p.rewrite(f"<tds:XAddr>{scheme}://10.0.0.5/onvif/media2</tds:XAddr>")
+    assert out == "<tds:XAddr>http://127.0.0.1:5555/_port/80/onvif/media2</tds:XAddr>"
+    assert "_port/443/" in p.rewrite("<tt:XAddr>HTTPS://10.0.0.5/x</tt:XAddr>")
+
+
+def test_path_without_leading_slash_is_not_glued_to_camera_host():
+    p = TabooProxy("10.0.0.5", 80)
+    assert p.camera_url("@10.9.9.9/x") is None
+
+
 def test_foreign_host_not_forwarded(proxy):
     r = httpx.post(proxy.base_url + "/_foreign/192.168.1.99/onvif/ptz", content=b"<x/>", timeout=5)
     assert r.status_code == 502 and "QAToolForeignHost" in r.text

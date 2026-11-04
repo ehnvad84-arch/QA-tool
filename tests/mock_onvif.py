@@ -97,6 +97,7 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    job_stuck_active: bool = False  # SetRecordingJobMode «OK», но из Active задание не выходит
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
     replay_host: str = ""  # GetReplayUri отдаёт этот, внутренний адрес камеры (NAT)
     recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
@@ -224,6 +225,8 @@ class OnvifServices:
         token, mode = _text(request, "JobToken"), _text(request, "Mode")
         for job in self.state.jobs:
             if job["token"] == token:
+                if self.state.job_stuck_active and job["mode"] == "Active":
+                    continue
                 job["mode"] = mode
                 if mode == "Active":  # виртуальная камера «записывает» мгновенно
                     start = _now() - datetime.timedelta(seconds=60)

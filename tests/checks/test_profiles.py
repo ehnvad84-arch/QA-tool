@@ -64,7 +64,7 @@ def test_declared_profile_with_broken_mandatory_feature_is_task(camera_sg):
     camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
     previous = {
         "DEVICE-1-1-2": ("прошла", ""),
-        "LOCAL-MEDIA-S-RTSP-LIVE": ("прошла", ""),
+        "RUV-S-STREAM-1": ("прошла", ""),
         "RUV-G-REPLAY-1": ("не прошла", "архив не отдан"),
         "SEARCH-1-1-1": ("прошла", ""),
     }
@@ -106,3 +106,25 @@ def test_profiles_section_in_protocol(tmp_path, camera_sg):
     assert "Профили ONVIF" in html and "Воспроизведение архива" in html
     path = write_protocol_xlsx(tmp_path / "p.xlsx", protocol)
     assert "Профили ONVIF" in load_workbook(path).sheetnames
+
+
+def test_declared_profile_without_any_checked_feature_is_not_passed(camera_sg):
+    camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
+    ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: {}})
+    rows = {c.check_id: c.result for c in run_check(SPEC, ctx).children}
+    assert rows["RUV-PROFILE-S"].status is Status.STAND_ERROR  # onvif-tt упал — нет доказательства
+    assert "ни одна обязательная функция не проверена" in rows["RUV-PROFILE-S"].reason
+
+
+def test_scopes_matched_regardless_of_case_and_trailing_slash(monkeypatch):
+    class Answer:
+        def iter(self):
+            for text in (
+                "ONVIF://www.onvif.org/Profile/streaming/",
+                "onvif://www.onvif.org/Profile/G",
+            ):
+                yield type("E", (), {"tag": "{x}ScopeItem", "text": text})()
+
+    monkeypatch.setattr(profiles.SoapClient, "call", lambda self, url, body: Answer())
+    camera = Camera(slot=1, address="127.0.0.1", port=1, username="admin")
+    assert profiles.declared_profiles(CheckContext(camera, "x", Place.COLOR_BOX)) == {"S", "G"}

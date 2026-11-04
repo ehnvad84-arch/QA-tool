@@ -1,6 +1,7 @@
 """Табу держится в коде (AD-7): к камере ходят только через drivers/camera/http.py
 (HTTP), drivers/camera/probe.py, discovery.py (сокеты только на чтение) и rtsp.py
-(поток: методы проверяет core/taboo.check_rtsp).
+(поток: методы проверяет core/taboo.check_rtsp); taboo_proxy.py принимает запросы onvif-tt
+на 127.0.0.1 и пересылает их через http.py.
 
 Импорты разбираются через ast: обход записью «from urllib import request» или
 «import os, socket» тоже ловится."""
@@ -25,12 +26,17 @@ NETWORK_MODULES = {
     "ftplib",
     "telnetlib",
     "smtplib",
+    "http.server",
+    "socketserver",
+    "asyncio",
 }
 ALLOWED = {
     "drivers/camera/http.py": {"httpx"},
     "drivers/camera/probe.py": {"socket"},
     "drivers/camera/discovery.py": {"socket"},
     "drivers/camera/rtsp.py": {"socket"},
+    # посредник табу слушает только 127.0.0.1, к камере пересылает через http.py
+    "drivers/camera/taboo_proxy.py": {"http.server"},
 }
 GUARDED = "qa_tool.drivers.camera.http"
 

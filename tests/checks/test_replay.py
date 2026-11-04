@@ -157,3 +157,37 @@ def test_start_point_is_near_recording_end():
     )
     short = {"start": "2026-11-04T08:59:55Z", "end": "2026-11-04T09:00:00Z"}
     assert replay.start_point(short, 10).second == 55  # не раньше начала записи
+
+
+def test_job_left_active_is_visible_as_changed_camera():
+    cam = start(job_stuck_active=True)
+    try:
+        result = run_check(SPEC, ctx_for(cam, writes=True))
+        assert result.status is Status.FAILED
+        assert "камера осталась изменённой" in result.reason and "Active" in result.reason
+    finally:
+        cam.stop()
+
+
+@needs_video
+def test_frames_outside_recording_fail():
+    now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+    old = [
+        {
+            "token": "rec-1",
+            "start": now - datetime.timedelta(hours=3),
+            "end": now - datetime.timedelta(hours=2),
+        }
+    ]
+    cam = start(recordings=old)  # mock отдаёт кадры «минуту назад» — не из этой записи
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.FAILED and "вне записи" in result.reason
+    finally:
+        cam.stop()
+
+
+def test_outside_recording_without_onvif_time_is_reported():
+    stats = {"seconds": 12.0, "frames": 120, "keyframes": 2, "codec": "h264"}
+    rec = {"start": "2026-11-04T08:00:00Z", "end": "2026-11-04T09:00:00Z"}
+    assert "нет времени кадров" in replay.outside_recording(stats, rec)

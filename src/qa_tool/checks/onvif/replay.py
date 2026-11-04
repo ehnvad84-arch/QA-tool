@@ -20,6 +20,7 @@
 import datetime
 import json
 import time
+from xml.sax.saxutils import escape
 
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.storage import parse_time
@@ -45,6 +46,7 @@ REPLAY_HEADERS = {"Require": "onvif-replay"}
 OPTION_NOT_SUPPORTED = 551  # RFC 2326 §11.3.14: камера не знает заголовка Require
 ONVIF_EXTENSION = b"\xab\xac"  # профиль расширения RTP архива ONVIF: NTP-время и флаги C/E/D
 START_DELAY_S = 20.0  # запас на поиск места в архиве камерой до первого кадра
+TIME_SLACK_S = 60.0  # допуск времени кадров к границам записи: GOP до запрошенного места и рост
 NTP_EPOCH = datetime.datetime(1900, 1, 1, tzinfo=datetime.UTC)
 
 
@@ -53,21 +55,28 @@ def _texts(element, name: str) -> list[str]:
 
 
 def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
-    """Записи камеры: токен, начало и конец (ONVIF Recording Search)."""
-    token = _texts(
+    """Записи камеры: токен, начало и конец (ONVIF Recording Search).
+
+    Raises:
+        OnvifFault: камера не начала поиск (нет SearchToken) — это её ошибка, а не стенда.
+    """
+    tokens = _texts(
         soap.call(
             search_url,
             "<tse:FindRecordings><tse:Scope/><tse:MaxMatches>20</tse:MaxMatches>"
             "<tse:KeepAliveTime>PT10S</tse:KeepAliveTime></tse:FindRecordings>",
         ),
         "SearchToken",
-    )[0]
+    )
+    if not tokens or not tokens[0]:
+        raise OnvifFault("FindRecordings не вернул SearchToken")
+    token = tokens[0]
     found: list[dict] = []
     try:
         for _ in range(5):  # поиск на камере асинхронный: ждём «Completed» не дольше ~25 с
             answer = soap.call(
                 search_url,
-                f"<tse:GetRecordingSearchResults><tse:SearchToken>{token}</tse:SearchToken>"
+                f"<tse:GetRecordingSearchResults><tse:SearchToken>{escape(token)}</tse:SearchToken>"
                 "<tse:MinResults>1</tse:MinResults><tse:WaitTime>PT5S</tse:WaitTime>"
                 "</tse:GetRecordingSearchResults>",
             )
@@ -83,39 +92,63 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
                 break
     finally:
         soap.call(
-            search_url, f"<tse:EndSearch><tse:SearchToken>{token}</tse:SearchToken></tse:EndSearch>"
+            search_url,
+            f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
         )
     return [r for r in found if r["token"]]
 
 
-def record_for_a_while(soap: SoapClient, recording_url: str, seconds: float) -> None:
-    """Включить запись (задание в режим Active), подождать и вернуть режимы как были.
-
-    Raises:
-        OnvifFault: заданий записи нет или камера не включает запись.
-    """
+def _job_modes(soap: SoapClient, recording_url: str) -> list[tuple[str, str]]:
     jobs = soap.call(recording_url, "<trc:GetRecordingJobs/>")
     items = [e for e in jobs.iter() if e.tag.endswith("}JobItem")]
-    if not items:
+    return [((_texts(i, "JobToken") or [""])[0], (_texts(i, "Mode") or ["Idle"])[0]) for i in items]
+
+
+def _set_mode(soap: SoapClient, recording_url: str, job: str, mode: str) -> None:
+    soap.call(
+        recording_url,
+        f"<trc:SetRecordingJobMode><trc:JobToken>{escape(job)}</trc:JobToken>"
+        f"<trc:Mode>{escape(mode)}</trc:Mode></trc:SetRecordingJobMode>",
+    )
+
+
+def record_for_a_while(soap: SoapClient, recording_url: str, seconds: float) -> list[str]:
+    """Включить запись (задания в режим Active), подождать, вернуть режимы и сверить.
+
+    Каждое задание возвращается отдельно: сбой одного не оставляет остальные включёнными
+    (never.md — камера не уходит со стенда изменённой).
+
+    Returns:
+        Что не удалось вернуть («задание X: осталось Active, было Idle»); пусто — всё вернулось.
+
+    Raises:
+        OnvifFault: заданий записи нет или камера не включает запись (режимы уже возвращены).
+    """
+    original = _job_modes(soap, recording_url)
+    if not original:
         raise OnvifFault("на камере нет заданий записи (GetRecordingJobs пуст)")
-    original = [
-        ((_texts(i, "JobToken") or [""])[0], (_texts(i, "Mode") or ["Idle"])[0]) for i in items
-    ]
+    problems: list[str] = []
     try:
         for job, _ in original:
-            soap.call(
-                recording_url,
-                f"<trc:SetRecordingJobMode><trc:JobToken>{job}</trc:JobToken>"
-                "<trc:Mode>Active</trc:Mode></trc:SetRecordingJobMode>",
-            )
+            _set_mode(soap, recording_url, job, "Active")
         time.sleep(seconds)
     finally:
         for job, mode in original:
-            soap.call(
-                recording_url,
-                f"<trc:SetRecordingJobMode><trc:JobToken>{job}</trc:JobToken>"
-                f"<trc:Mode>{mode}</trc:Mode></trc:SetRecordingJobMode>",
-            )
+            try:
+                _set_mode(soap, recording_url, job, mode)
+            except (CameraUnreachable, OnvifFault) as e:
+                problems.append(f"задание {job}: режим {mode} не вернулся ({e})")
+        try:
+            now = dict(_job_modes(soap, recording_url))
+        except (CameraUnreachable, OnvifFault) as e:
+            problems.append(f"режимы заданий записи не сверить: {e}")
+        else:
+            problems += [
+                f"задание {job}: осталось {now[job]}, было {mode}"
+                for job, mode in original
+                if job in now and now[job] != mode
+            ]
+    return problems
 
 
 def replay_uri(soap: SoapClient, replay_url: str, recording: str) -> str:
@@ -124,7 +157,7 @@ def replay_uri(soap: SoapClient, replay_url: str, recording: str) -> str:
         replay_url,
         "<trp:GetReplayUri><trp:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream>"
         "<tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trp:StreamSetup>"
-        f"<trp:RecordingToken>{recording}</trp:RecordingToken></trp:GetReplayUri>",
+        f"<trp:RecordingToken>{escape(recording)}</trp:RecordingToken></trp:GetReplayUri>",
     )
     return (_texts(answer, "Uri") or [""])[0]
 
@@ -190,7 +223,31 @@ def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
     }
     if moments:
         stats["archive"] = f"{min(moments):%Y-%m-%d %H:%M:%S} — {max(moments):%H:%M:%S} UTC"
+        stats["first_utc"], stats["last_utc"] = min(moments).isoformat(), max(moments).isoformat()
     return stats
+
+
+def outside_recording(stats: dict, recording: dict) -> str:
+    """Почему время кадров не совпадает с записью; пусто — совпадает.
+
+    Время кадра архива ONVIF передаёт в расширении RTP — без него регистратор не покажет, к
+    какому моменту относится кадр, поэтому отсутствие метки — тоже ошибка. Допуск
+    `TIME_SLACK_S`: камера начинает с ключевого кадра до запрошенного места, а запись,
+    пока идёт проверка, продолжает расти.
+    """
+    if "first_utc" not in stats:
+        return "в пакетах архива нет времени кадров (расширение RTP ONVIF 0xABAC)"
+    begin, end = parse_time(recording["start"]), parse_time(recording["end"])
+    first = datetime.datetime.fromisoformat(stats["first_utc"])
+    last = datetime.datetime.fromisoformat(stats["last_utc"])
+    slack = datetime.timedelta(seconds=TIME_SLACK_S)
+    if (begin and first < begin - slack) or (end and last > end + slack):
+        return (
+            f"время кадров ({stats['archive']}) вне записи "
+            f"({recording['start']} — {recording['end']}): "
+            "камера отдаёт не тот архив или живой поток"
+        )
+    return ""
 
 
 def play(client: RtspClient, seconds: float, start: datetime.datetime | None) -> tuple[str, dict]:
@@ -246,7 +303,7 @@ def start_point(recording: dict, seconds: float) -> datetime.datetime | None:
     title="Выдача архива по ONVIF (Profile G)",
     description="Ищем запись на карте (FindRecordings), получаем адрес воспроизведения "
     "(GetReplayUri) и проигрываем архив. Ожидаем: поток открывается, кадры идут не меньше "
-    "порога, есть ключевые кадры.",
+    "порога, есть ключевые кадры, время кадров — в пределах записи.",
     phase=Phase.NETWORK,
     order=20,
     severity=Severity.BLOCKER,
@@ -258,7 +315,10 @@ def replay(ctx: CheckContext) -> CheckResult:
     """Найти, получить и проиграть архив; при пустой карте — записать (если разрешено)."""
     soap = SoapClient(ctx.camera.username, ctx.password, timeout=10)
     minimum = ctx.thresholds.get(THRESHOLD_KEY, DEFAULT_MIN_S)
-    expected = f"архив проигрывается ≥ {minimum.value:g} {minimum.unit}, кадры идут"
+    expected = (
+        f"архив проигрывается ≥ {minimum.value:g} {minimum.unit}, кадры идут, "
+        "время кадров — в пределах записи"
+    )
     try:
         services = service_urls(soap, ctx.camera)
         if not {"search", "replay"} <= services.keys():
@@ -276,20 +336,27 @@ def replay(ctx: CheckContext) -> CheckResult:
                     Status.FAILED,
                     reason="нет записей и нет службы управления записью",
                     expected=expected,
-                    evidence=_soap_evidence(soap),
+                    evidence=soap_evidence(soap),
                 )
-            record_for_a_while(
+            left_changed = record_for_a_while(
                 soap,
                 services["recording"],
                 float(ctx.extra.get("replay_record_s", DEFAULT_RECORD_S)),
             )
+            if left_changed:
+                return CheckResult(
+                    Status.FAILED,
+                    reason="камера осталась изменённой: " + "; ".join(left_changed),
+                    expected=expected,
+                    evidence=soap_evidence(soap),
+                )
             recordings = find_recordings(soap, services["search"])
             if not recordings:
                 return CheckResult(
                     Status.FAILED,
                     reason="запись включена, но в поиске не появилась",
                     expected=expected,
-                    evidence=_soap_evidence(soap),
+                    evidence=soap_evidence(soap),
                 )
         latest = max(recordings, key=lambda r: r["end"])
         uri = replay_uri(soap, services["replay"], latest["token"])
@@ -298,10 +365,10 @@ def replay(ctx: CheckContext) -> CheckResult:
             Status.FAILED,
             reason=f"ONVIF: {e}",
             expected=expected,
-            evidence=_soap_evidence(soap),
+            evidence=soap_evidence(soap),
             threshold=minimum,
         )
-    evidence = _soap_evidence(soap)
+    evidence = soap_evidence(soap)
     if not uri.startswith("rtsp://"):
         return CheckResult(
             Status.FAILED,
@@ -339,12 +406,14 @@ def replay(ctx: CheckContext) -> CheckResult:
     )
     if "archive" in stats:
         actual += f"; время кадров архива {stats['archive']}"
-    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"]:
-        reason = (
-            f"архив отдан, но проиграно {stats['seconds']:g} с"
-            if stats["keyframes"]
-            else "в архиве нет ключевых кадров — изображение не собрать"
-        )
+    mismatch = outside_recording(stats, latest)
+    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or mismatch:
+        if not stats["keyframes"]:
+            reason = "в архиве нет ключевых кадров — изображение не собрать"
+        elif stats["seconds"] + 0.5 < minimum.value:
+            reason = f"архив отдан, но проиграно {stats['seconds']:g} с"
+        else:
+            reason = mismatch
         return CheckResult(
             Status.FAILED,
             reason=reason,
@@ -358,7 +427,8 @@ def replay(ctx: CheckContext) -> CheckResult:
     )
 
 
-def _soap_evidence(soap: SoapClient) -> list[Evidence]:
+def soap_evidence(soap: SoapClient) -> list[Evidence]:
+    """Обмен SOAP с камерой — по файлу доказательства на запрос (секреты вырезает RunStore)."""
     return [
         Evidence(f"onvif-{i}.txt", f"POST {x.url}\n{x.request}\n\nHTTP {x.status}\n{x.response}")
         for i, x in enumerate(soap.exchanges, start=1)

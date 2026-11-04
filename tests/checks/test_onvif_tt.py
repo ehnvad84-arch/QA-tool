@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 
@@ -55,6 +56,7 @@ def test_password_only_in_environment(mock, monkeypatch):
     run_check(SPEC, ctx)
     assert "s3cret-pw" not in " ".join(seen["command"])
     assert seen["env"][onvif_tt.PASSWORD_ENV] == "s3cret-pw"
+    assert seen["env"]["PATH"] == onvif_tt.path_without_ffprobe(os.environ.get("PATH", ""))
     assert "--allow-writes" not in seen["command"] and "--allow-reboot" not in seen["command"]
 
 
@@ -182,3 +184,19 @@ def test_write_skip_reason_in_russian():
     )
     assert row.result.status is Status.SKIPPED
     assert row.result.reason == "не разрешено сценарием: изменяющая проверка"
+
+
+def test_every_onvif_tt_test_running_ffprobe_is_excluded():
+    from onvif_tt import registry
+
+    registry.discover()
+    uses_ffprobe = {i for i, impl in registry.REGISTRY.items() if "requires_ffprobe" in impl.tags}
+    assert uses_ffprobe and uses_ffprobe <= set(EXCLUDED)  # новая версия onvif-tt — сверить
+
+
+def test_path_for_onvif_tt_has_no_ffprobe(tmp_path):
+    with_ffprobe, plain = tmp_path / "ff", tmp_path / "plain"
+    with_ffprobe.mkdir(), plain.mkdir()
+    (with_ffprobe / ("ffprobe.exe" if os.name == "nt" else "ffprobe")).write_text("")
+    path = os.pathsep.join([str(with_ffprobe), str(plain)])
+    assert onvif_tt.path_without_ffprobe(path) == str(plain)
