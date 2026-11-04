@@ -9,7 +9,7 @@
 - Этап: 1 — планирование, ждём Гейт 1 (директор читает спеку и план)
 - Последнее сделанное: 2026-11-04 директор выбрал вариант D «три колонки»; спека и план T1–T8 написаны
 - Следующий шаг: «да» директора → Этап 2 с T1
-- Важно знать: ветка от feature/onvif (c09f377); после squash этапа 2 в main — `git rebase --onto main a9a82c4` или новее; worktree ~/projects/QA-tool-gui-layout; макет — ui/run-screen-d.png
+- Важно знать: ветка от feature/onvif (c09f377); после squash этапа 2 в main — `git rebase --onto main c09f377` (основа этой ветки); worktree ~/projects/QA-tool-gui-layout; макет — ui/run-screen-d.png
 
 ## Журнал
 
