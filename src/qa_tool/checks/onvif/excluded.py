@@ -46,6 +46,9 @@ FALSE_FAILURES = {
     "камере, которая проверяет пароль при первом обращении к службе",
     "LOCAL-NETWORK-GET-DEFAULT-GATEWAY": "тест onvif-tt считает ошибкой пустой шлюз, а схема ONVIF "
     "его допускает",
+    "MEDIA2-1-1-1": "тест onvif-tt вызывает GetProfiles без Type и ждёт кодер в профиле, а Media2 "
+    "в этом случае требует профили без конфигураций",
+    "ANALYTICS-4-1-1": "тест onvif-tt ждёт атрибут Type, которого нет в tt:ConfigDescription",
 }
 
 EXCLUDED = {
