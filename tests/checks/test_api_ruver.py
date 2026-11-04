@@ -4,7 +4,7 @@ import pytest
 
 from qa_tool.checks import load_all
 from qa_tool.checks.api import ruver
-from qa_tool.checks.api.ruver import CHECK_ID, LEFT_CHANGED, RESTORE_ID
+from qa_tool.checks.api.ruver import CHECK_ID, LEFT_CHANGED, RESTORE_ID, changed_fields
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import RUVER, Camera, Place, Scenario
 from qa_tool.drivers.camera.ruver.client import (
@@ -271,6 +271,96 @@ def test_busy_camera_gets_a_second_return_attempt(camera):
     assert camera.field_value(BRIGHTNESS, "brightness") == before
 
 
+def test_failed_relogin_after_write_is_reported_as_left_changed(camera):
+    def lose_session(mock, logged):
+        if logged.method == "POST" and logged.path == BRIGHTNESS:
+            mock.sessions.clear()
+            mock.busy_sessions = 3
+
+    camera.on_request = lose_session
+    result = run(camera, allow_writes=True)
+    assert result.children
+    assert LEFT_CHANGED in row(result, "POST", BRIGHTNESS).reason
+    assert camera.login_attempts == 1
+
+
+def test_setting_with_answer_outside_the_schema_is_still_verified(camera):
+    contrast = "/api/image/contrast"
+    del camera.state[contrast]["contrastRange"]
+    before = camera.field_value(contrast, "contrast")
+    camera.side_effects[BRIGHTNESS] = (contrast, "contrast", before + 7)
+    result = run(camera, allow_writes=True)
+    assert row(result, "GET", contrast).status is Status.FAILED
+    assert camera.field_value(contrast, "contrast") == before
+    assert contrast in rows_of(result)[RESTORE_ID].actual
+
+
+def test_order_of_blocks_is_not_a_change(camera):
+    blocks = [{"id": 1, "x": 5, "y": 6}, {"id": 2, "x": 7, "y": 8}]
+    assert changed_fields({"b": blocks}, {"b": blocks[::-1]}) == []
+
+
+def test_moved_block_is_named():
+    old = [{"id": 1, "x": 5}, {"id": 2, "x": 7}]
+    new = [{"id": 2, "x": 7}, {"id": 1, "x": 9}]
+    assert changed_fields({"b": old}, {"b": new}) == ["b[1].x"]
+
+
+def test_null_answer_is_not_unread(camera):
+    camera.state["/api/detector/roi"] = None
+    result = run(camera, allow_writes=True)
+    assert rows_of(result)[RESTORE_ID].status is Status.PASSED
+
+
+def test_moved_block_is_returned_and_stays_a_task(camera):
+    path = "/api/osd/block_positions"
+    block = camera.state[path]["overlayBlocks"][0]
+    block |= {"id": 1, "x": 1503, "y": 1019}
+    moved = [{**block, "x": 844}]
+    camera.side_effects[BRIGHTNESS] = (path, "overlayBlocks", moved)
+    result = run(camera, allow_writes=True)
+    assert moved[0]["x"] == 1503
+    assert rows_of(result)[RESTORE_ID].status is Status.PASSED
+    found = row(result, "POST", "/api/osd/set_block_position")
+    assert found.status is Status.FAILED
+    assert "сдвинулись надписи" in found.reason
+
+
+def test_block_is_never_touched_without_a_move(camera):
+    result = run(camera, allow_writes=True)
+    assert not camera.sent("POST", "/api/osd/set_block_position")
+    assert row(result, "POST", "/api/osd/set_block_position").status is Status.SKIPPED
+
+
+def test_value_returned_only_by_verify_is_not_left_changed(camera):
+    camera.refuses_next_write_once.add(BRIGHTNESS)
+    camera.busy_writes_left = 2  # обе попытки возврата отказаны, проходит только сверка
+    before = camera.field_value(BRIGHTNESS, "brightness")
+    result = run(camera, allow_writes=True, extra={"api_return_pause_s": 0})
+    found = row(result, "POST", BRIGHTNESS)
+    assert found.status is Status.FAILED
+    assert LEFT_CHANGED not in found.reason
+    assert "вернулось только при сверке" in found.reason
+    assert camera.field_value(BRIGHTNESS, "brightness") == before
+    assert row_id_absent_or_skipped(result, BRIGHTNESS)
+
+
+def row_id_absent_or_skipped(result, path):
+    found = rows_of(result).get(API.get("POST", path).id + "-LIMIT")
+    return found is None or found.status is Status.SKIPPED
+
+
+def test_lost_answer_outside_limits_still_returns_value(camera):
+    camera.drops_answer_for = lambda logged: (
+        logged.method == "POST" and logged.path == BRIGHTNESS and logged.body["brightness"] == 101
+    )
+    camera.accepts_out_of_range = True
+    before = camera.field_value(BRIGHTNESS, "brightness")
+    found = limit_row(run(camera, allow_writes=True), BRIGHTNESS)
+    assert found.status is Status.STAND_ERROR
+    assert camera.field_value(BRIGHTNESS, "brightness") == before
+
+
 def test_setting_that_needs_reboot_is_not_written(camera):
     camera.reboot_needed.add(BRIGHTNESS)
     found = row(run(camera, allow_writes=True), "POST", BRIGHTNESS)
@@ -365,6 +455,19 @@ def test_reboot_with_checkbox_waits_for_the_camera(camera):
     assert row(result, "POST", "/api/service/reboot").status is Status.PASSED
     assert camera.sessions == {}
     assert camera.requests[-1].path == "/api/auth/logout"
+
+
+def test_reboot_without_answer_still_waits_for_the_camera(camera):
+    camera.drops_reboot_answer = True
+    result = run(camera, allow_destructive=True)
+    assert row(result, "POST", "/api/service/reboot").status is Status.PASSED
+
+
+def test_export_then_reboot_in_one_run(camera):
+    camera.restarts_on_export = True
+    extra = {"api_outage_watch_s": 1, "api_outage_poll_s": 0.02, "api_reboot_wait_s": 2}
+    result = run(camera, allow_destructive=True, extra=extra)
+    assert row(result, "POST", "/api/service/reboot").status is Status.PASSED
 
 
 def test_records_are_not_removed_without_a_value(camera):

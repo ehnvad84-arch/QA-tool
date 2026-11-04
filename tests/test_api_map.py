@@ -13,6 +13,7 @@ from qa_tool.drivers.camera.ruver.client import (
     MAP_FILE,
     NOT_CALLED,
     READ,
+    RETURN_ONLY,
     TABOO,
     WRITE,
     load_map,
@@ -58,6 +59,10 @@ def test_write_has_read_at_the_same_address():
 def test_write_has_a_value_that_can_be_chosen():
     for op in of_kind(WRITE):
         assert op.setting and (op.boolean or op.values or op.range_field), op.path
+
+
+def test_return_only_list_is_closed():
+    assert {op.path for op in of_kind(RETURN_ONLY)} == {"/api/osd/set_block_position"}
 
 
 def test_destructive_list_is_closed():
@@ -112,7 +117,7 @@ def test_every_taboo_operation_is_stopped_by_the_taboo_itself():
 
 
 def test_everything_the_program_calls_passes_the_taboo():
-    for op in [*of_kind(READ), *of_kind(WRITE), *of_kind(DESTRUCTIVE)]:
+    for op in [*of_kind(READ), *of_kind(WRITE), *of_kind(DESTRUCTIVE), *of_kind(RETURN_ONLY)]:
         check_http(op.method, op.path)
         check_web_request(op.method, op.path, json.dumps(op.body or {op.setting: 1}))
 

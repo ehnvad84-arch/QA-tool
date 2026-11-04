@@ -23,12 +23,13 @@ from urllib.parse import urlencode
 
 from qa_tool.drivers.camera import http
 
-READ, WRITE, TABOO, DESTRUCTIVE, NOT_CALLED = (
+READ, WRITE, TABOO, DESTRUCTIVE, NOT_CALLED, RETURN_ONLY = (
     "чтение",
     "запись",
     "табу",
     "разрушающая",
     "не вызывается",
+    "только возврат",
 )
 MAP_FILE = Path(__file__).resolve().parents[3] / "data" / "ruver_api_map.json"
 SESSION_HEADER = "X-Session-ID"
@@ -232,12 +233,20 @@ class RuverClient:
         with contextlib.suppress(http.TransportError):
             http.request("POST", self.base + LOGOUT, headers=headers, timeout=self.timeout)
 
+    def expect_restart(self) -> None:
+        """Разрешить ещё один повторный вход: служба API камеры перезапускается ожидаемо.
+
+        Пароль уже подтверждён, а сеанс закрывает сама камера. Отказ в пароле всё равно
+        не повторяется: после него вход больше не пробуется.
+        """
+        self._relogin_used = False
+
     def _check_allowed(self, op: Operation) -> None:
         if self.api.get(op.method, op.path) != op:
             raise CallRefused(f"{op.method} {op.path}: операции нет в карте API")
         if op.kind in (TABOO, NOT_CALLED):
             raise CallRefused(f"{op.method} {op.path}: вид «{op.kind}» не вызывается")
-        if op.kind == WRITE and not self.allow_writes:
+        if op.kind in (WRITE, RETURN_ONLY) and not self.allow_writes:
             raise CallRefused(f"{op.method} {op.path}: изменяющие проверки не разрешены")
         if op.kind == DESTRUCTIVE and not self.allow_destructive:
             raise CallRefused(f"{op.method} {op.path}: разрушающие проверки не разрешены")

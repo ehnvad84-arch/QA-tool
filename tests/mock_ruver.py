@@ -72,8 +72,11 @@ class MockRuver:
     # адрес записи → (адрес, поле, значение), которое он меняет рядом
     accepts_out_of_range: bool = False
     refuses_next_write_once: set[str] = field(default_factory=set)  # занята после смены значения
+    busy_writes_left: int = 1  # сколько записей подряд она отказывает
     restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
     down_s: float = 0.15
+    drops_reboot_answer: bool = False  # уходит в перезагрузку, не ответив
+    drops_answer_for: Callable[[Logged], bool] | None = None  # значение применено, ответ потерян
     expire_session_after: int = 0  # сеанс закрывается по времени после N запросов
     on_request: Callable[["MockRuver", Logged], None] | None = None
     requests: list[Logged] = field(default_factory=list)
@@ -161,7 +164,9 @@ class MockRuver:
         if op.path in self.ignored_writes:
             return 200, None
         if op.path in self.busy_after_write:
-            self.busy_after_write.discard(op.path)
+            self.busy_writes_left -= 1
+            if self.busy_writes_left <= 0:
+                self.busy_after_write.discard(op.path)
             return 400, {"errorCode": 1003, "errorDescription": "Busy"}
         if op.path in self.refuses_next_write_once:
             self.refuses_next_write_once.discard(op.path)
@@ -208,6 +213,12 @@ class MockRuver:
             self.reboots += 1
             self.sessions.clear()
             return 200, None
+        if path == "/api/osd/set_block_position":
+            blocks = self.state["/api/osd/block_positions"]["overlayBlocks"]
+            for block in blocks:
+                if block.get("id") == (body or {}).get("id"):
+                    block |= {"x": body["x"], "y": body["y"]}
+            return 200, None
         if op.kind == WRITE:
             return self._write(op, body or {})
         if op.binary:
@@ -238,6 +249,12 @@ class MockRuver:
                     status, payload = mock.answer(self.command, parts.path, session, body)
                 if parts.path in mock.slow:
                     time.sleep(mock.slow_s)
+                if mock.drops_answer_for and mock.drops_answer_for(logged):
+                    self.close_connection = True
+                    return
+                if mock.drops_reboot_answer and parts.path == "/api/service/reboot":
+                    self.close_connection = True
+                    return
                 data = (
                     payload
                     if isinstance(payload, bytes)

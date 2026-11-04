@@ -4,7 +4,7 @@
 
 Метод, operationId и краткое описание не определяют, меняет ли операция настройку: чтение бывает
 через POST, а описания неверны (`/api/recorder/remove_dir` описан как «Включить запись»). Поэтому
-вид операции задают списки ниже, записанные руками. Новая операция вне списков получает вид
+вид операции задают списки ниже, записанные руками. Новый POST вне списков получает вид
 «не вызывается»: программа не шлёт камере то, что человек не разобрал (AD-7).
 
 В репозиторий идёт наша карта, а не файл прошивки (never.md): `description` и `example`
@@ -23,12 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path.home() / "projects/hisi-fw-dev-gstack/www/openapi/doc/openapi.yaml"
 TARGET = ROOT / "src/qa_tool/data/ruver_api_map.json"
 
-READ, WRITE, TABOO, DESTRUCTIVE, NOT_CALLED = (
+READ, WRITE, TABOO, DESTRUCTIVE, NOT_CALLED, RETURN_ONLY = (
     "чтение",
     "запись",
     "табу",
     "разрушающая",
     "не вызывается",
+    "только возврат",
 )
 
 AUTH_REASON = "служебный адрес входа: вызывается только при открытии сеанса"
@@ -104,7 +105,6 @@ NOT_CALLED_POSTS = {
     "/api/daynight/light_high": NO_READ,
     "/api/recorder/enable": NO_READ,
     "/api/recorder/settings": NO_READ,
-    "/api/osd/set_block_position": NO_READ,
     "/api/image/exposure/manual_shutter": NO_LIMITS,
     "/api/image/exposure/auto_gain_low": NO_LIMITS,
     "/api/image/exposure/auto_gain_high": NO_LIMITS,
@@ -120,6 +120,10 @@ NOT_CALLED_POSTS = {
     "/api/daynight/day_trigger": COMPOSITE,
     "/api/daynight/night_trigger": COMPOSITE,
 }
+
+# Сама по себе не проверяется: на TMID-018 0.6.14 запись сдвинула надпись, вернуть её можно только
+# этой операцией (never.md: камера не остаётся изменённой). Разовый возврат разрешил директор.
+RETURN_ONLY_OPS = frozenset({"/api/osd/set_block_position"})
 
 WRITES = frozenset(
     {
@@ -275,6 +279,8 @@ def kind_of(method: str, path: str, has_read: bool) -> tuple[str, str]:
         return DESTRUCTIVE, "разрушающая операция"
     if path in POST_READS:
         return READ, ""
+    if path in RETURN_ONLY_OPS:
+        return RETURN_ONLY, "вызывается только для возврата сдвинутых надписей"
     if path in NOT_CALLED_POSTS:
         return NOT_CALLED, NOT_CALLED_POSTS[path]
     if path in WRITES and has_read:

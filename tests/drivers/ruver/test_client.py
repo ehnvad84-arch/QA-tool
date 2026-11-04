@@ -17,6 +17,7 @@ from tests.mock_ruver import MockRuver
 API = load_map()
 BRIGHTNESS = API.get("POST", "/api/image/brightness")
 INFO = API.get("GET", "/api/info")
+BRIGHTNESS_READ = API.get("GET", "/api/image/brightness")
 REBOOT = API.get("POST", "/api/service/reboot")
 
 
@@ -124,6 +125,23 @@ def test_forged_operation_is_stopped_by_taboo_too(camera, monkeypatch):
         with pytest.raises(TabooViolation):
             client.call(forged, {"password": "x"})
     assert not camera.sent("POST", forged.path)
+
+
+def test_return_operation_needs_write_permission(camera):
+    block = API.get("POST", "/api/osd/set_block_position")
+    with client_for(camera) as client, pytest.raises(CallRefused):
+        client.call(block, {"id": 1, "x": 1, "y": 1})
+    assert not camera.sent("POST", block.path)
+
+
+def test_expected_restart_allows_one_more_login(camera):
+    with client_for(camera) as client:
+        client._relogin_used = True
+        client.expect_restart()
+        camera.sessions.clear()
+        camera.expire_session_after = 0
+        assert client.call(BRIGHTNESS_READ).status_code == 200
+    assert camera.login_attempts == 2
 
 
 def test_map_file_is_in_the_package():

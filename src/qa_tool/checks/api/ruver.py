@@ -42,6 +42,7 @@ from qa_tool.drivers.camera.ruver.client import (
     DESTRUCTIVE,
     NOT_CALLED,
     READ,
+    RETURN_ONLY,
     TABOO,
     WRITE,
     ApiMap,
@@ -61,6 +62,9 @@ INFO = "/api/info"
 HARDWARE = "/api/hardware"
 EXPORT = "/api/service/export_settings"
 REBOOT = "/api/service/reboot"
+BLOCKS = "/api/osd/block_positions"
+SET_BLOCK = "/api/osd/set_block_position"
+LOST = (http.TransportError, RuverError)  # камера не ответила или повторный вход не удался
 # Адрес → признак в ответе /api/hardware. Сверено на камере TMID-018 с прошивкой 0.6.14.
 FEATURES = {
     "/api/lte": "lteSupport",
@@ -126,15 +130,40 @@ def beyond_limits(op: Operation, limits: Any) -> int | None:
 
 
 def changed_fields(before: Any, after: Any, prefix: str = "") -> list[str]:
-    """Имена разошедшихся полей двух ответов; значения намеренно не возвращаются."""
+    """Имена разошедшихся полей двух ответов; значения намеренно не возвращаются.
+
+    Порядок в списках не считается изменением: на TMID-018 0.6.14 камера сама меняет порядок
+    блоков наложения. Элементы с `id` сравниваются по нему, чтобы было видно, какой разошёлся.
+    """
+    name = prefix.rstrip(".") or "ответ"
     if isinstance(before, dict) and isinstance(after, dict):
-        names = sorted(set(before) | set(after))
+        keys = sorted(set(before) | set(after))
         return [
             found
-            for name in names
-            for found in changed_fields(before.get(name), after.get(name), f"{prefix}{name}.")
+            for key in keys
+            for found in changed_fields(before.get(key), after.get(key), f"{prefix}{key}.")
         ]
-    return [] if before == after else [prefix.rstrip(".") or "ответ"]
+    if isinstance(before, list) and isinstance(after, list):
+        old, new = _by_id(before), _by_id(after)
+        if old is not None and new is not None:
+            return [
+                found
+                for key in sorted(set(old) | set(new), key=str)
+                for found in changed_fields(old.get(key), new.get(key), f"{name}[{key}].")
+            ]
+        return [] if _canonical(before) == _canonical(after) else [name]
+    return [] if before == after else [name]
+
+
+def _by_id(items: list) -> dict | None:
+    """Элементы списка по `id`; None — список не из таких элементов."""
+    if not all(isinstance(item, dict) and "id" in item for item in items):
+        return None
+    return {item["id"]: item for item in items}
+
+
+def _canonical(items: list) -> list[str]:
+    return sorted(json.dumps(item, sort_keys=True, ensure_ascii=False) for item in items)
 
 
 @dataclass
@@ -230,8 +259,8 @@ class Walk:
             return CheckResult.skipped(halted)
         try:
             response = self.client.call(op)
-        except http.TransportError as e:
-            return CheckResult.stand_error(f"камера не ответила: {type(e).__name__}")
+        except LOST as e:
+            return CheckResult.stand_error(f"камера не ответила: {type(e).__name__}: {e}")
         refused = self._refused(op, response)
         if refused:
             return refused
@@ -256,9 +285,13 @@ class Walk:
             data = response.json()
         except ValueError:
             return self._failed("ответ не в формате JSON", expected, evidence)
-        # состав функций нужен и при расхождении со схемой: она отстаёт от прошивки
+        # Снимок и состав функций нужны и при расхождении со схемой: она отстаёт от прошивки,
+        # а адрес без снимка сверка не увидела бы и написала бы «совпало».
+        self.before[op.id] = data
         if op.path == HARDWARE and isinstance(data, dict):
             self.features = data
+        if op.path == INFO and isinstance(data, dict):
+            self.firmware = str(data.get("firmwareVersion") or "")
         errors = schema_errors(op.schema, data, op.sensitive)
         if errors:
             return self._failed(
@@ -266,9 +299,6 @@ class Walk:
                 expected,
                 evidence,
             )
-        self.before[op.id] = data
-        if op.path == INFO and isinstance(data, dict):
-            self.firmware = str(data.get("firmwareVersion") or "")
         return CheckResult(
             Status.PASSED, expected=expected, actual="совпадает со схемой", evidence=evidence
         )
@@ -317,8 +347,8 @@ class Walk:
                 continue
             try:
                 self._write(op)
-            except http.TransportError as e:
-                reason = f"камера не ответила: {type(e).__name__}"
+            except LOST as e:
+                reason = f"камера не ответила: {type(e).__name__}: {e}"
                 self._row(op, CheckResult.stand_error(reason))
 
     def _write(self, op: Operation) -> None:
@@ -342,15 +372,17 @@ class Walk:
         if value is None:
             self._row(op, CheckResult.skipped("нет другого допустимого значения"))
             return
-        self._row(op, self._change_and_return(op, read_op, original, value))
+        result = self._change_and_return(op, read_op, original, value)
+        self._row(op, result)
         outside = beyond_limits(op, limits)
         if outside is None or self._halted():
             return
-        try:
-            self._row(op, self._try_outside(op, read_op, original, outside), "-LIMIT")
-        except http.TransportError as e:
-            reason = f"камера не ответила: {type(e).__name__}"
-            self._row(op, CheckResult.stand_error(reason), "-LIMIT")
+        if LEFT_CHANGED in result.reason:
+            # от неверной точки отсчёта строка показала бы ложное «значение изменилось»
+            reason = "значение не вернулось: вне пределов не проверялось"
+            self._row(op, CheckResult.skipped(reason), "-LIMIT")
+            return
+        self._row(op, self._try_outside(op, read_op, original, outside), "-LIMIT")
 
     def _change_and_return(
         self, op: Operation, read_op: Operation, original: Any, value: Any
@@ -374,7 +406,7 @@ class Walk:
             read_back, _ = self._read_field(read_op, op.setting)
             if read_back != value:
                 reason = f"записано {value}, прочитано {read_back}"
-        except (ValueError, http.TransportError) as e:
+        except (ValueError, *LOST) as e:
             reason = f"значение не прочитано после записи: {type(e).__name__}: {e}"
         problem = self._return_value(op, read_op, original)
         evidence = [self._evidence(op, response, sent)] if response is not None else []
@@ -403,22 +435,29 @@ class Walk:
             if not response.is_success:
                 return f"возврат отказан: код {response.status_code}"
             current, _ = self._read_field(read_op, op.setting)
-        except (ValueError, http.TransportError, RuverError) as e:
+        except (ValueError, *LOST) as e:
             return f"возврат не подтверждён: {type(e).__name__}"
         return "" if current == original else f"{op.setting} = {current}, было {original}"
 
     def _try_outside(
         self, op: Operation, read_op: Operation, original: Any, value: int
     ) -> CheckResult:
-        """Отправить значение вне пределов: камера обязана отказать и не менять настройку (S7)."""
+        """Отправить значение вне пределов: камера обязана отказать и не менять настройку (S7).
+
+        Значение возвращается и после сбоя: ответ мог потеряться, а запись примениться.
+        """
         expected = f"{op.setting} = {value} вне пределов: ошибка, значение не меняется"
         self.wrote = True
-        response = self.client.call(op, {op.setting: value})
-        evidence = [self._evidence(op, response, {op.setting: value})]
+        evidence: list[Evidence] = []
         try:
+            response = self.client.call(op, {op.setting: value})
+            evidence = [self._evidence(op, response, {op.setting: value})]
             current, _ = self._read_field(read_op, op.setting)
-        except ValueError as e:
-            return CheckResult.stand_error(f"значение не прочитано: {e}")
+        except (ValueError, *LOST) as e:
+            problem = self._return_value(op, read_op, original)
+            if problem:
+                return self._failed(f"{LEFT_CHANGED}: {problem}", expected, evidence)
+            return CheckResult.stand_error(f"значение не прочитано: {type(e).__name__}: {e}")
         problem = ""
         if current != original:
             problem = self._return_value(op, read_op, original)
@@ -453,10 +492,11 @@ class Walk:
                 continue
             try:
                 response = self.client.call(op)
-                data = response.json() if response.status_code == 200 else None
-            except (ValueError, http.TransportError):
-                data = None
-            if data is None:
+                if response.status_code != 200:
+                    unread.append(op.path)
+                    continue
+                data = response.json()  # ответ `null` — тоже ответ: так камера отдаёт пустой список
+            except (ValueError, *LOST):
                 unread.append(op.path)
                 continue
             fields = changed_fields(self.before[op.id], data)
@@ -467,22 +507,70 @@ class Walk:
     def _repair(self, changed: dict[str, list[str]]) -> None:
         """Ещё раз вернуть настройки вида «запись», которые разошлись со снимком «до»."""
         for path in changed:
+            if time.monotonic() > self.hard_deadline:
+                return
             op, read_op = self.api.get("POST", path), self.api.get("GET", path)
             if op is None or op.kind != WRITE or read_op.id not in self.before:
                 continue
             before = self.before[read_op.id]
-            if op.setting in before:
+            if isinstance(before, dict) and op.setting in before:
                 self._return_value(op, read_op, before[op.setting])
+
+    def _return_blocks(self) -> None:
+        """Вернуть сдвинутые надписи по снимку «до»; сдвиг остаётся задачей программистам."""
+        read_op, op = self.api.get("GET", BLOCKS), self.api.get("POST", SET_BLOCK)
+        moved: list[int] = []
+        problem = ""
+        try:
+            now = {
+                block["id"]: block for block in self.client.call(read_op).json()["overlayBlocks"]
+            }
+            for block in self.before[read_op.id]["overlayBlocks"]:
+                current = now.get(block["id"])
+                if current and (current["x"], current["y"]) != (block["x"], block["y"]):
+                    body = {"id": block["id"], "x": block["x"], "y": block["y"]}
+                    if not self.client.call(op, body).is_success:
+                        problem = "камера отказала в возврате"
+                    moved.append(block["id"])
+        except (ValueError, KeyError, TypeError, *LOST) as e:
+            problem = f"положение не прочитано: {type(e).__name__}"
+        ids = ", ".join(str(block) for block in moved)
+        reason = f"после записи настроек сдвинулись надписи: блоки {ids or '?'}"
+        text = f"{reason}\n{problem or 'положение возвращено, итог — в строке сверки'}"
+        evidence = [Evidence(f"{op.id}.txt", self._clean(text))]
+        self._row(op, self._failed(reason, "запись настроек не двигает надписи", evidence))
+
+    def _settle_rows(self, changed: dict[str, list[str]], unread: list[str]) -> None:
+        """Снять «осталась изменённой» со строк настроек, которые вернулись при сверке."""
+        for op in self.api.operations:
+            read_op = self.api.get("GET", op.path)
+            if op.kind != WRITE or op.path in changed or op.path in unread:
+                continue
+            if read_op.id not in self.before:
+                continue
+            for row_id in (op.id, f"{op.id}-LIMIT"):
+                row = self.rows.get(row_id)
+                if row and LEFT_CHANGED in row.result.reason:
+                    text = row.result.reason.replace(LEFT_CHANGED, "вернулось только при сверке")
+                    row.result.reason = row.result.actual = text
 
     def verify(self) -> None:
         """Строка сверки: настройки после записи совпали со снимком «до» (S6)."""
         changed, unread = self._read_again()
+        repaired: list[str] = []
         if changed:
+            first = list(changed)
             self._repair(changed)
+            if BLOCKS in changed:
+                self._return_blocks()
             changed, unread = self._read_again()
+            repaired = [path for path in first if path not in changed and path not in unread]
+        self._settle_rows(changed, unread)
         lines = [f"{path}: {', '.join(fields)}" for path, fields in changed.items()]
         expected = "настройки после записи совпадают с обходом чтения до неё"
-        text = "\n".join(["Разошлись:", *lines, "Не прочитаны:", *unread])
+        text = "\n".join(
+            ["Разошлись:", *lines, "Не прочитаны:", *unread, "Вернулись при сверке:", *repaired]
+        )
         evidence = [Evidence(f"{RESTORE_ID}.txt", self._clean(text))]
         if lines:
             result = self._failed(f"{LEFT_CHANGED}: " + "; ".join(lines)[:400], expected, evidence)
@@ -490,8 +578,9 @@ class Walk:
             result = CheckResult.stand_error(f"сверка не закончена: {len(unread)} адресов")
             result.evidence = evidence
         else:
+            actual = f"совпало после повторного возврата: {', '.join(repaired)}" if repaired else ""
             result = CheckResult(
-                Status.PASSED, expected=expected, actual="совпало", evidence=evidence
+                Status.PASSED, expected=expected, actual=actual or "совпало", evidence=evidence
             )
         self.rows[RESTORE_ID] = ChildResult(
             RESTORE_ID, "Сверка настроек после записи через API", result
@@ -515,6 +604,7 @@ class Walk:
 
     def _outage_s(self) -> float:
         """Сколько секунд API не отвечало после экспорта; 0 — обрыва не было."""
+        self.client.expect_restart()
         info = self.api.get("GET", INFO)
         poll = float(self.ctx.extra.get("api_outage_poll_s", 1.0))
         start = time.monotonic()
@@ -523,7 +613,7 @@ class Walk:
         while time.monotonic() < limit:
             try:
                 answered = self.client.call(info).status_code == 200
-            except http.TransportError:
+            except LOST:
                 answered = False
             if answered and lost is not None:
                 return max(time.monotonic() - lost, 0.1)
@@ -552,8 +642,17 @@ class Walk:
         expected = "камера выполнила операцию"
         try:
             response = self.client.call(op)
-        except http.TransportError as e:
-            return CheckResult.stand_error(f"камера не ответила: {type(e).__name__}")
+        except LOST as e:
+            if op.path != REBOOT:
+                return CheckResult.stand_error(f"камера не ответила: {type(e).__name__}: {e}")
+            # камера может уйти в перезагрузку, не успев ответить: судить надо по её возвращению
+            note = f"{op.method} {op.path}\n\nответа нет: {type(e).__name__}"
+            evidence = [Evidence(f"{op.id}.txt", self._clean(note))]
+            if self._came_back():
+                return CheckResult(
+                    Status.PASSED, expected=expected, actual="вернулась", evidence=evidence
+                )
+            return self._failed(f"камера не вернулась за {REBOOT_WAIT_S:g} с", expected, evidence)
         refused = self._refused(op, response)
         if refused:
             return refused
@@ -566,13 +665,14 @@ class Walk:
 
     def _came_back(self) -> bool:
         """Дождаться камеру после перезагрузки: чтение снова отвечает 200."""
+        self.client.expect_restart()
         info = self.api.get("GET", INFO)
         limit = time.monotonic() + float(self.ctx.extra.get("api_reboot_wait_s", REBOOT_WAIT_S))
         while time.monotonic() < limit:
             try:
                 if self.client.call(info).status_code == 200:
                     return True
-            except http.TransportError:
+            except LOST:
                 pass  # камера ещё поднимается
             time.sleep(float(self.ctx.extra.get("api_reboot_poll_s", REBOOT_POLL_S)))
         return False
@@ -596,7 +696,7 @@ class Walk:
                 continue
             if op.kind == TABOO:
                 self._row(op, CheckResult.skipped("запрещено табу"))
-            elif op.kind == NOT_CALLED:
+            elif op.kind in (NOT_CALLED, RETURN_ONLY):
                 self._row(op, CheckResult.skipped(f"не вызывается: {op.reason}"))
         order = [op.id for op in self.api.operations]
         rows = []
