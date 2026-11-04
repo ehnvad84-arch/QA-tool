@@ -263,6 +263,14 @@ def test_lost_answer_after_write_still_returns_value(camera):
     assert camera.field_value(BRIGHTNESS, "brightness") == before
 
 
+def test_busy_camera_gets_a_second_return_attempt(camera):
+    camera.refuses_next_write_once.add(BRIGHTNESS)
+    before = camera.field_value(BRIGHTNESS, "brightness")
+    found = row(run(camera, allow_writes=True, extra={"api_return_pause_s": 0}), "POST", BRIGHTNESS)
+    assert found.status is Status.PASSED
+    assert camera.field_value(BRIGHTNESS, "brightness") == before
+
+
 def test_setting_that_needs_reboot_is_not_written(camera):
     camera.reboot_needed.add(BRIGHTNESS)
     found = row(run(camera, allow_writes=True), "POST", BRIGHTNESS)

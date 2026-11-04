@@ -77,6 +77,7 @@ PER_OPERATION_S = 3.0  # обычно 0,1 с; запас на медленную
 RESERVE_S = 300.0  # возврат значений и сверка уже после предела времени
 REBOOT_WAIT_S = 180.0  # камера «Рувер» поднимается за 1–2 минуты
 REBOOT_POLL_S = 3.0
+RETURN_PAUSE_S = 2.0
 OUTAGE_WATCH_S = 6.0  # на 0.6.14 обрыв начинается в первую секунду после экспорта
 OUTAGE_LIMIT_S = 30.0  # на 0.6.14 служба возвращается за 3 с
 EVIDENCE_LIMIT = 20_000  # ответы API невелики; ограничение — от чужой прошивки с большим ответом
@@ -394,6 +395,11 @@ class Walk:
         """Вернуть исходное значение и сверить; пусто — вернулось, иначе что не так."""
         try:
             response = self.client.call(op, {op.setting: original})
+            if not response.is_success:
+                # TMID-018 0.6.14: возврат режима день/ночь сразу после смены получил 400, а при
+                # сверке в конце обхода тот же запрос прошёл. Пауза 2 с на камере не проверена.
+                time.sleep(float(self.ctx.extra.get("api_return_pause_s", RETURN_PAUSE_S)))
+                response = self.client.call(op, {op.setting: original})
             if not response.is_success:
                 return f"возврат отказан: код {response.status_code}"
             current, _ = self._read_field(read_op, op.setting)

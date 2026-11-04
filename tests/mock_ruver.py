@@ -71,6 +71,7 @@ class MockRuver:
     side_effects: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
     # адрес записи → (адрес, поле, значение), которое он меняет рядом
     accepts_out_of_range: bool = False
+    refuses_next_write_once: set[str] = field(default_factory=set)  # занята после смены значения
     restarts_on_export: bool = False  # как прошивка 0.6.14: экспорт перезапускает службу API
     down_s: float = 0.15
     expire_session_after: int = 0  # сеанс закрывается по времени после N запросов
@@ -99,6 +100,7 @@ class MockRuver:
         self._server: ThreadingHTTPServer | None = None
         self._served = 0
         self._stuck_written: set[str] = set()
+        self.busy_after_write: set[str] = set()
 
     @property
     def port(self) -> int:
@@ -158,6 +160,12 @@ class MockRuver:
             return 400, {"errorCode": 1003, "errorDescription": "Bad parameter"}
         if op.path in self.ignored_writes:
             return 200, None
+        if op.path in self.busy_after_write:
+            self.busy_after_write.discard(op.path)
+            return 400, {"errorCode": 1003, "errorDescription": "Busy"}
+        if op.path in self.refuses_next_write_once:
+            self.refuses_next_write_once.discard(op.path)
+            self.busy_after_write.add(op.path)
         if op.path in self.stuck and op.path in self._stuck_written:
             return 200, None
         self._stuck_written.add(op.path)
