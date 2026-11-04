@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from qa_tool.checks import load_all
@@ -108,5 +110,6 @@ def test_refusal_with_wrong_clock_names_the_clock(mock):
     mock.clock_skew_s = 3600  # ter:NotAuthorized: onvif-tt поправит часы только на другой код
     result = run_check(SPEC, ctx_for(mock))
     assert result.status is Status.STAND_ERROR
-    assert result.reason.startswith("часы камеры расходятся с компьютером стенда на 3600 с")
+    # часы камеры идут целыми секундами, поэтому разница может быть на секунду меньше
+    assert re.match(r"часы камеры расходятся с компьютером стенда на 3(599|600) с", result.reason)
     assert result.data[CREDENTIALS_REJECTED]
