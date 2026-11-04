@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from qa_tool.checks.onvif.profiles import confirms
-from qa_tool.core.checks import CheckSpec
+from qa_tool.core.checks import FIRST_CHECK, CheckSpec
 from qa_tool.gui.help import HELP_ID, helped
 from qa_tool.gui.screens.base import Screen
 from qa_tool.report.model import MODULE_TITLES
@@ -173,8 +173,10 @@ class ScenarioScreen(Screen):
             whom = "все производители" if spec.vendors is None else ", ".join(sorted(spec.vendors))
             item = QTreeWidgetItem([f"{spec.id} — {spec.title}", spec.phase.title, whom])
             item.setData(0, Qt.ItemDataRole.UserRole, spec.id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            selected = scenario.checks is None or spec.id in scenario.checks
+            always = spec.id == FIRST_CHECK  # идёт в каждом прогоне: снять её нельзя
+            flags = item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+            item.setFlags(flags & ~Qt.ItemFlag.ItemIsUserCheckable if always else flags)
+            selected = always or scenario.checks is None or spec.id in scenario.checks
             item.setCheckState(0, Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked)
             item.setData(1, Qt.ItemDataRole.UserRole, spec.help_id)
             item.setToolTip(0, check_tooltip(spec))

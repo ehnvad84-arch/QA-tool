@@ -9,6 +9,7 @@
 
 import argparse
 import base64
+import datetime
 import hashlib
 import socket
 import struct
@@ -69,6 +70,7 @@ def password_digest(nonce: bytes, created: str, password: str) -> str:
 
 class MockCamera:
     auth_reply = "onvif"  # отказ по паролю: onvif, gsoap (TMID-018), http401
+    clock_skew_s = 0  # часы камеры ушли: отметка времени запроса считается просроченной
 
     def __init__(
         self,
@@ -129,7 +131,14 @@ class MockCamera:
         digest = password.text or ""
         nonce = base64.b64decode(token.findtext("wsse:Nonce", default="", namespaces=NS))
         created = token.findtext("wsu:Created", default="", namespaces=NS)
+        if self.clock_skew_s:
+            sent = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if abs((sent - self._now()).total_seconds()) > 5:
+                return False
         return user == self.username and digest == password_digest(nonce, created, self.password)
+
+    def _now(self) -> datetime.datetime:
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=self.clock_skew_s)
 
     def answer(self, payload: bytes) -> tuple[int, bytes]:
         try:
@@ -139,6 +148,15 @@ class MockCamera:
         body = root.find("s:Body", NS)
         operation = body[0].tag.split("}")[-1] if body is not None and len(body) else ""
         self.requests.append(operation)
+        if operation == "GetSystemDateAndTime" and self.clock_skew_s:
+            t = self._now()
+            return 200, _envelope(
+                "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime><tt:Time>"
+                f"<tt:Hour>{t.hour}</tt:Hour><tt:Minute>{t.minute}</tt:Minute>"
+                f"<tt:Second>{t.second}</tt:Second></tt:Time><tt:Date><tt:Year>{t.year}</tt:Year>"
+                f"<tt:Month>{t.month}</tt:Month><tt:Day>{t.day}</tt:Day></tt:Date></tt:UTCDateTime>"
+                "</tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>"
+            )
         if not self._authorized(root):
             if self.auth_reply == "gsoap":
                 reason = "The security token could not be authenticated or authorized"

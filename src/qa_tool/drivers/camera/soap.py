@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 from xml.etree.ElementTree import Element
 from xml.sax.saxutils import escape
 
@@ -53,24 +54,43 @@ class CameraUnreachable(ConnectionError):
 
 
 class OnvifFault(RuntimeError):
-    """Камера ответила SOAP Fault."""
+    """Камера ответила SOAP Fault или не SOAP: `status` — код HTTP, `code` — подкод SOAP."""
+
+    def __init__(self, message: str, status: int = 0, code: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.code = code
 
 
-# Камеры отказывают по-разному: ter:NotAuthorized — код ONVIF; wsse:FailedAuthentication и его
-# текст — код WS-Security, им отвечают камеры на gSOAP (RUWARE TMID-018); HTTP 401 без SOAP —
-# веб-сервер камеры, не дошедший до службы ONVIF.
-_CREDENTIALS_REJECTED_MARKS = (
-    "notauthorized",
-    "failedauthentication",
-    "security token could not be authenticated",
-    "http 401",
-)
+# ter:NotAuthorized — код ONVIF, wsse:FailedAuthentication — код WS-Security (камеры на gSOAP,
+# RUWARE TMID-018). Смотрим только на коды: причина — свободный текст камеры.
+_FAILED_AUTHENTICATION = "failedauthentication"
+_CREDENTIAL_CODES = ("notauthorized", _FAILED_AUTHENTICATION)
+# Запас свежести WS-Security: меньшее расхождение часов не объясняет отказ, а повтор входа
+# с тем же паролем только потратил бы попытку до блокировки камеры.
+CLOCK_TOLERANCE_S = 5.0
+# Поправка на часы камеры, по адресу службы. Общая на процесс: процесс одной камеры делает много
+# клиентов, и без неё каждая проверка заново тратила бы попытку входа.
+_clock_offsets: dict[str, datetime.timedelta] = {}
 
 
 def credentials_rejected(fault: OnvifFault) -> bool:
-    """Отказ камеры означает неверный логин или пароль, а не дефект операции."""
-    text = str(fault).lower()
-    return any(mark in text for mark in _CREDENTIALS_REJECTED_MARKS)
+    """Отказ по входу, а не дефект операции. HTTP 401 — веб-сервер камеры до службы ONVIF."""
+    code = fault.code.lower()
+    return fault.status == 401 or any(mark in code for mark in _CREDENTIAL_CODES)
+
+
+def _camera_utc(root: Element) -> datetime.datetime:
+    """Время камеры из ответа GetSystemDateAndTime. ValueError — ответа нет или он неполон."""
+    utc = next((e for e in root.iter() if e.tag.split("}")[-1] == "UTCDateTime"), None)
+    if utc is None:
+        raise ValueError("нет UTCDateTime")
+    parts = {e.tag.split("}")[-1]: e.text for e in utc.iter()}
+    names = ("Year", "Month", "Day", "Hour", "Minute", "Second")
+    try:
+        return datetime.datetime(*(int(parts[n]) for n in names), tzinfo=datetime.UTC)
+    except (KeyError, TypeError) as e:
+        raise ValueError("неполный UTCDateTime") from e
 
 
 @dataclass
@@ -92,9 +112,11 @@ class SoapClient:
     timeout: float = 5.0
     exchanges: list[Exchange] = field(default_factory=list)
 
-    def _security_header(self) -> str:
+    def _security_header(self, url: str) -> str:
         nonce = os.urandom(16)
-        created = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        offset = _clock_offsets.get(urlsplit(url).netloc, datetime.timedelta())
+        now = datetime.datetime.now(datetime.UTC) + offset
+        created = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         raw = nonce + created.encode() + self.password.encode()
         digest = base64.b64encode(hashlib.sha1(raw).digest()).decode()
         return (
@@ -124,10 +146,40 @@ class SoapClient:
             ValueError: ответ с DTD или ENTITY — defusedxml его не разбирает.
         """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
-        envelope = (
-            f"<s:Envelope {_ENVELOPE_XMLNS}>"
-            f"<s:Header>{self._security_header()}</s:Header><s:Body>{body}</s:Body></s:Envelope>"
-        )
+        try:
+            return self._post(url, self._secured(url, body))
+        except OnvifFault as fault:
+            if _FAILED_AUTHENTICATION not in fault.code.lower() or not self._camera_clock_differs(
+                url
+            ):
+                raise
+        return self._post(url, self._secured(url, body))
+
+    def _secured(self, url: str, body: str) -> str:
+        header = f"<s:Header>{self._security_header(url)}</s:Header>"
+        return f"<s:Envelope {_ENVELOPE_XMLNS}>{header}<s:Body>{body}</s:Body></s:Envelope>"
+
+    def _camera_clock_differs(self, url: str) -> bool:
+        """Сверить часы с камерой один раз; True — поправка новая, вход стоит повторить.
+
+        wsse:FailedAuthentication приходит и на верный пароль, если часы камеры ушли: она
+        считает отметку времени просроченной. GetSystemDateAndTime пароля не требует (ONVIF
+        Core), поэтому сверка не тратит попытку входа.
+        """
+        host = urlsplit(url).netloc
+        if host in _clock_offsets:
+            return False
+        body = "<s:Body><tds:GetSystemDateAndTime/></s:Body>"
+        request = f"<s:Envelope {_ENVELOPE_XMLNS}>{body}</s:Envelope>"
+        try:
+            camera_now = _camera_utc(self._post(url, request))
+        except (CameraUnreachable, OnvifFault, ValueError):
+            return False
+        offset = camera_now - datetime.datetime.now(datetime.UTC)
+        _clock_offsets[host] = offset
+        return abs(offset.total_seconds()) > CLOCK_TOLERANCE_S
+
+    def _post(self, url: str, envelope: str) -> Element:
         try:
             response = http.request(
                 "POST",
@@ -147,12 +199,13 @@ class SoapClient:
         try:
             root = ElementTree.fromstring(response.content)
         except ElementTree.ParseError as e:
-            raise OnvifFault(f"ответ не SOAP (HTTP {response.status_code})") from e
+            status = response.status_code
+            raise OnvifFault(f"ответ не SOAP (HTTP {status})", status=status) from e
         fault = root.find("s:Body/s:Fault", NS)
         if fault is not None:
             reason = fault.findtext(".//s:Text", default="", namespaces=NS)
             code = fault.findtext(".//s:Subcode/s:Value", default="", namespaces=NS)
-            raise OnvifFault(f"{code} {reason}".strip())
+            raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code)
         body_el = root.find("s:Body", NS)
         if body_el is None or not len(body_el):
             raise OnvifFault("пустой ответ")
