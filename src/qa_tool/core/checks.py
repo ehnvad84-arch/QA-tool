@@ -121,6 +121,7 @@ class CheckContext:
     # галочки сценария: составным проверкам (onvif-tt) решать, что из своего запускать
     allow_writes: bool = False
     allow_destructive: bool = False
+    stress_minutes: int = 60
     # долгая составная проверка спрашивает здесь: остановка не снимает её посреди записи
     stop_requested: Callable[[], bool] = lambda: False
 
@@ -143,11 +144,16 @@ class CheckSpec:
     places: frozenset[Place] | None = None  # None — любое место стенда
     writes: bool = False
     destructive: bool = False
+    stress: bool = False  # идёт только с галочкой стресс-теста, длится сколько задано в сценарии
     severity: Severity = Severity.MAJOR
     order: int = 100  # порядок внутри фазы; CORE-CONNECT-1 — первым
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
     group: str = ""  # подгруппа внутри модуля на экране «Сценарий»; пусто — прямо в модуле
     help_id: str = ""  # раздел справки F1 для строки проверки; пусто — общий раздел «Проверки»
+
+    def time_limit_s(self, scenario: Scenario) -> float:
+        """Срок, после которого проверка считается зависшей, с учётом длительности стресс-теста."""
+        return self.timeout_s + (scenario.stress_minutes * 60 if self.stress else 0)
 
     def applies_to(self, camera: Camera) -> bool:
         """Подходит ли проверка производителю камеры (AD-4: адаптерные — только своим)."""
@@ -224,6 +230,8 @@ def skip_reason(spec: CheckSpec, scenario: Scenario, place: Place) -> str | None
         return "не разрешено сценарием: разрушающая проверка"
     if spec.writes and not scenario.allow_writes:
         return "не разрешено сценарием: изменяющая проверка"
+    if spec.stress and not scenario.allow_stress:
+        return "не разрешено сценарием: стресс-тест выключен"
     if spec.places is not None and place not in spec.places:
         needed = ", ".join(sorted(p.title for p in spec.places))
         return f"нужно другое место стенда: {needed}"

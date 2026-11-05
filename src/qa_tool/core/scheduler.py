@@ -125,6 +125,7 @@ class Runner:
                 extra=self.extra,
                 allow_writes=self.scenario.allow_writes,
                 allow_destructive=self.scenario.allow_destructive,
+                stress_minutes=self.scenario.stress_minutes,
             )
             process = self._mp.Process(
                 target=worker_main, args=(args, inbox, self.outbox, self._stop), daemon=True
@@ -178,7 +179,7 @@ class Runner:
         if kind == "started":
             check_id = message[2]
             spec = self.registry.get(check_id)
-            c.running = (check_id, time.monotonic() + spec.timeout_s)
+            c.running = (check_id, time.monotonic() + spec.time_limit_s(self.scenario))
             self.on_event(Event("started", slot, check_id, spec.title))
         elif kind == "result":
             _, _, check_id, result, started = message
@@ -322,7 +323,7 @@ class Runner:
         for c in self._alive():
             if c.running and now > c.running[1]:
                 check_id = c.running[0]
-                timeout = self.registry.get(check_id).timeout_s
+                timeout = self.registry.get(check_id).time_limit_s(self.scenario)
                 self._record(
                     c,
                     check_id,

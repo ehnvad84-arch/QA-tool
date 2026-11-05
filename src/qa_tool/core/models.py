@@ -91,6 +91,7 @@ class Scenario:
     checks: list[str] | None = None
     allow_writes: bool = False
     allow_destructive: bool = False
+    allow_stress: bool = False  # решение директора 05.11: иначе обычный прогон длиннее на час
     stress_minutes: int = 60
 
 
