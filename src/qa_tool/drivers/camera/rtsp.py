@@ -59,12 +59,14 @@ class Response:
 @dataclass
 class Track:
     """Дорожка из SDP: тип (video, audio, application), кодек, адрес для SETUP и частота
-    меток времени RTP, Гц (из rtpmap; для видео по RFC 3551 почти всегда 90 000)."""
+    меток времени RTP, Гц (из rtpmap; для видео по RFC 3551 почти всегда 90 000); `fmtp` —
+    параметры формата из SDP без его номера: в них наборы параметров кодека."""
 
     media: str
     encoding: str
     control: str
     clock_rate: int = 90_000
+    fmtp: str = ""
 
 
 @dataclass(frozen=True)
@@ -492,6 +494,8 @@ def parse_sdp(sdp: str, base: str) -> list[Track]:
             rate = rest.split("/")[0]
             if rate.isdigit() and int(rate):
                 tracks[-1].clock_rate = int(rate)
+        elif tracks and line.startswith("a=fmtp:"):
+            tracks[-1].fmtp = line.partition(" ")[2].strip()
         elif tracks and line.startswith("a=control:"):
             control = line[len("a=control:") :]
             if "://" in control:

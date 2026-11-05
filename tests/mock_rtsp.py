@@ -221,6 +221,7 @@ class MockRtspServer:
         session_timeout: int = 0,
         ping: str = "answer",
         ping_delay_s: float = 0.0,
+        sets_in_stream: bool = True,
     ):
         self.metadata = metadata
         self.silent = silent  # поток запущен, но камера ничего не шлёт
@@ -232,6 +233,8 @@ class MockRtspServer:
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
+        if not sets_in_stream:  # такие камеры отдают SPS и PPS только в SDP
+            self.frames = [[n for n in f if n[0] & 0x1F not in (7, 8)] for f in self.frames]
         self.sprop = ",".join(base64.b64encode(x).decode() for x in (sps, pps) if x)
         self.requests: list[str] = []
         self._server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), self._handler())
