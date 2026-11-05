@@ -275,6 +275,7 @@ class BrowserSession:
         self.page_errors: list[str] = []
         self.dialogs: list[str] = []
         self.popups: list[str] = []
+        self.answers: list[int] = []
         self.sandboxed = False
         self.screens_allowed = True
         self._stop_requested = stop_requested
@@ -494,11 +495,12 @@ class BrowserSession:
             check_onvif(text)
         except TabooViolation:
             return Verdict.STOP_TABOO
+        in_session_window = self._window in (Window.LOGIN, Window.LOGOUT)
         try:
-            check_web_danger(method, url, text)
+            check_web_danger(method, url, text, self._credentials if in_session_window else None)
         except WebDangerViolation:
             return Verdict.STOP_DANGER
-        if self._window in (Window.LOGIN, Window.LOGOUT):
+        if in_session_window:
             return self._judge_session_window(method, url, body, write)
         try:
             if not is_soap({}, text):
@@ -579,6 +581,7 @@ class BrowserSession:
         method, url = request.method, request.url
         for _ in range(MAX_REDIRECTS):
             answer = route.fetch(url=url, method=method, max_redirects=0)
+            self.answers.append(answer.status)
             if answer.status not in _REDIRECT_CODES:
                 self._finish_write_window()
                 route.fulfill(response=answer)
@@ -733,6 +736,14 @@ class BrowserSession:
                     }
                     found.append(ElementInfo(frame=number, **trimmed))
         return found
+
+    def page_text(self) -> str:
+        """Текст страницы: сообщения об отказе есть только в нём."""
+        self._check()
+        try:
+            return self._page.locator("body").inner_text(timeout=CALL_LIMIT_MS)
+        except PlaywrightError:
+            return ""
 
     def password_fields(self) -> int:
         """Сколько видимых полей пароля на странице: вход и его смена различаются этим числом."""

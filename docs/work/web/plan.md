@@ -29,7 +29,7 @@
 - [x] T7 — Фасад BrowserSession: элементы, поля, диалоги, снимки с маской, остановка, падение, storage_state в памяти, песочница Chromium, временные файлы · сценарий: S20, S21, S22 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/browser.py, src/qa_tool/core/secrets.py, tests/drivers/test_browser.py, tests/core/test_secrets.py.
   Готово, когда: «Стоп» закрывает браузер за 5 с и на зависшей странице; падение браузера одной камеры не задевает другую; после закрытия нет папок `qa-web-*`; `confirm` не вешает нажатие; поле пароля закрыто маской на снимке; песочница включена, где запускается, итог для Ubuntu 24.04 и Windows записан в progress.md.
-- [ ] T8 — Вход через форму: одна попытка, общая память отказа, экран смены пароля, пороги web.* · сценарий: S4, S5, S6 · проверка: auto · исполнитель: main
+- [x] T8 — Вход через форму: одна попытка, общая память отказа, экран смены пароля, пороги web.* · сценарий: S4, S5, S6 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/checks/rtsp_refusal.py, tests/mock_web.py; новые src/qa_tool/checks/web/__init__.py, src/qa_tool/checks/web/limits.py, src/qa_tool/checks/web/login.py, tests/checks/test_web_login.py.
   Готово, когда: при неверном пароле `login_attempts` у mock равен 1; отказ из RTSP не открывает браузер, отказ в вебе виден RTSP; экран смены пароля не получает ни одного запроса с паролем.
 - [ ] T9 — Вход Basic и Digest, лимит сессий, нет веб-интерфейса, сертификат, выход · сценарий: S4, S5, S17, S18 · проверка: auto · исполнитель: main

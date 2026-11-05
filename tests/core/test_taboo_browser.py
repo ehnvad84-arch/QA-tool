@@ -197,3 +197,12 @@ def test_logout_window():
 )
 def test_logout_labels(label, logout):
     assert is_logout_label(label) is logout
+
+
+def test_danger_ignores_credentials_only_inside_window():
+    body = json.dumps({"username": "admin", "password": "resetNew1"})
+    with pytest.raises(WebDangerViolation):
+        check_web_danger("POST", CAM + "/api/auth/login", body)
+    check_web_danger("POST", CAM + "/api/auth/login", body, ("admin", "resetNew1"))
+    with pytest.raises(WebDangerViolation):
+        check_web_danger("POST", CAM + "/cmd", '{"action": "reboot"}', ("admin", "x"))

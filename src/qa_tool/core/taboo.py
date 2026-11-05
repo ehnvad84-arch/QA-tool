@@ -513,8 +513,17 @@ def is_static_asset(method: str, url: str) -> bool:
     return not (path.endswith((".html", ".htm")) and web_danger_word(path))
 
 
-def check_web_danger(method: str, url: str, body: str = "") -> None:
+def check_web_danger(
+    method: str, url: str, body: str = "", secrets: tuple[str, ...] | None = None
+) -> None:
     """Не пропустить опасное действие браузера ни при каких галочках.
+
+    Args:
+        method: метод запроса.
+        url: адрес запроса.
+        body: тело запроса.
+        secrets: только в окнах входа и выхода: значения логина и пароля. Они и случайные токены
+            не проверяются, иначе пароль `resetNew1` сорвал бы вход.
 
     Raises:
         WebDangerViolation: в пути, параметрах или теле есть признак опасного действия.
@@ -526,6 +535,8 @@ def check_web_danger(method: str, url: str, body: str = "") -> None:
         raise WebDangerViolation(f"{method.upper()} {url} не отправлен: опасное действие")
     query_names, query_values = _named_parts(query)
     body_names, body_values = _named_parts(body)
+    if secrets is not None:
+        body_values = [v for v in body_values if v not in secrets and not _TOKEN_VALUE.match(v)]
     named = [word for word in words(*query_names, *body_names) if word != WEB_DANGER_VALUE_WORD]
     word = web_danger_word(path, *query_values, *body_values, *named)
     if word:
