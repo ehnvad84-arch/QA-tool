@@ -34,3 +34,7 @@
 ## T4, 05.11
 
 `drivers/camera/depacket.py`: H.264 и H.265, наборы параметров из SDP (`Track.fmtp`). 22 теста, поток mock декодируется ffmpeg без ошибок и при SPS/PPS только в SDP. H.265 проверен только на собранных вручную пакетах: кодировщика в сборке ffmpeg нет, настоящий поток — в T14.
+
+## T5, 05.11
+
+`media_profiles` в onvif_generic.py: все профили, Media2 с запасным Media1, адрес и настройки кодировщика. Тот же разбор ответов в mock (MockStream). `first_stream` использует общий `stream_uri`.

@@ -66,6 +66,21 @@ def _text(element: ET.Element, local_name: str, default: str = "") -> str:
     return default
 
 
+@dataclass(frozen=True)
+class MockStream:
+    """Медиапрофиль виртуальной камеры: что она заявляет и по какому пути отдаёт поток."""
+
+    token: str
+    path: str = "/live"
+    encoding: str = "H264"
+    width: int = 320
+    height: int = 240
+    fps: float = 10
+    kbps: int = 4000
+    constant: bool = False
+    gop: int = 10
+
+
 @dataclass
 class OnvifState:
     """Что «умеет» и что «хранит» виртуальная камера."""
@@ -110,6 +125,11 @@ class OnvifState:
     metadata_stream: bool = True  # Profile M объявлен, но в потоке нет дорожки метаданных
     analytics_modules: tuple[str, ...] = ("tt:CellMotionEngine",)  # настроенные модули
     foreign_services: tuple[str, ...] = ()  # эти службы отдают внутренний адрес камеры (NAT)
+    streams: tuple[MockStream, ...] = ()  # пусто — один профиль profile_token
+    media1_empty: bool = False  # Media1 без настроек кодировщика: так Dahua отдаёт H.265
+    media2_empty: bool = False  # в Media2 настроек нет: остаётся Media1
+    media2_absent: bool = False  # Media2 не объявлена
+    uri_fault_for: str = ""  # GetStreamUri этого профиля отказывает
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
@@ -133,6 +153,8 @@ class OnvifServices:
 
     def op_GetServices(self, _request) -> str:  # noqa: N802
         services = ["device", "media", "media2", "events", "imaging", "ptz", "deviceio"]
+        if self.state.media2_absent:
+            services.remove("media2")
         if "G" in self.state.profiles:
             services += ["recording", "search", "replay"]
         if "M" in self.state.profiles:
@@ -167,21 +189,69 @@ class OnvifServices:
 
     # --- Media2 -------------------------------------------------------------------------------
 
-    def op_GetProfiles(self, _request) -> str:  # noqa: N802
+    def _streams(self) -> tuple[MockStream, ...]:
+        return self.state.streams or (MockStream(self.state.profile_token),)
+
+    @staticmethod
+    def _encoder(stream: MockStream, media2: bool) -> str:
+        rate = (
+            f"<tt:FrameRateLimit>{stream.fps:g}</tt:FrameRateLimit>"
+            f"<tt:BitrateLimit>{stream.kbps}</tt:BitrateLimit>"
+        )
+        size = (
+            f"<tt:Resolution><tt:Width>{stream.width}</tt:Width>"
+            f"<tt:Height>{stream.height}</tt:Height></tt:Resolution>"
+        )
+        if media2:
+            constant = str(stream.constant).lower()
+            return (
+                f"<tr2:Configurations><tr2:VideoEncoder token={quoteattr('ve-' + stream.token)} "
+                f'GovLength="{stream.gop}"><tt:Name>Кодировщик</tt:Name>'
+                f"<tt:Encoding>{stream.encoding}</tt:Encoding>{size}"
+                f'<tt:RateControl ConstantBitRate="{constant}">{rate}</tt:RateControl>'
+                "</tr2:VideoEncoder></tr2:Configurations>"
+            )
+        return (
+            f"<tt:VideoEncoderConfiguration token={quoteattr('ve-' + stream.token)}>"
+            "<tt:Name>Кодировщик</tt:Name>"
+            f"<tt:Encoding>{stream.encoding}</tt:Encoding>{size}"
+            f"<tt:RateControl>{rate}<tt:EncodingInterval>1</tt:EncodingInterval></tt:RateControl>"
+            f"<tt:H264><tt:GovLength>{stream.gop}</tt:GovLength></tt:H264>"
+            "</tt:VideoEncoderConfiguration>"
+        )
+
+    def op_GetProfiles(self, request) -> str:  # noqa: N802
+        if request.tag.startswith("{" + SERVICE_NS["media"] + "}"):
+            items = "".join(
+                f'<trt:Profiles token={quoteattr(s.token)} fixed="true"><tt:Name>Основной</tt:Name>'
+                f"{'' if self.state.media1_empty else self._encoder(s, False)}</trt:Profiles>"
+                for s in self._streams()
+            )
+            return f"<trt:GetProfilesResponse>{items}</trt:GetProfilesResponse>"
         metadata = (
             '<tr2:Configurations><tr2:Metadata token="meta-1"><tt:Name>Метаданные</tt:Name>'
             "</tr2:Metadata></tr2:Configurations>"
             if "M" in self.state.profiles
             else ""
         )
-        return (
-            f"<tr2:GetProfilesResponse><tr2:Profiles token={quoteattr(self.state.profile_token)} "
-            f'fixed="true"><tr2:Name>Основной</tr2:Name>{metadata}</tr2:Profiles>'
-            "</tr2:GetProfilesResponse>"
+        items = "".join(
+            f'<tr2:Profiles token={quoteattr(s.token)} fixed="true"><tr2:Name>Основной</tr2:Name>'
+            f"{'' if self.state.media2_empty else self._encoder(s, True)}{metadata}</tr2:Profiles>"
+            for s in self._streams()
         )
+        return f"<tr2:GetProfilesResponse>{items}</tr2:GetProfilesResponse>"
 
-    def op_GetStreamUri(self, _request) -> str:  # noqa: N802
-        uri = f"{self.rtsp_url}/live"
+    def op_GetStreamUri(self, request) -> str | None:  # noqa: N802
+        token = next((e.text or "" for e in request.iter() if e.tag.endswith("}ProfileToken")), "")
+        if token and token == self.state.uri_fault_for:
+            return None
+        path = next((s.path for s in self._streams() if s.token == token), "/live")
+        uri = f"{self.rtsp_url}{path}"
+        if request.tag.startswith("{" + SERVICE_NS["media"] + "}"):
+            return (
+                f"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>{uri}</tt:Uri></trt:MediaUri>"
+                "</trt:GetStreamUriResponse>"
+            )
         return f"<tr2:GetStreamUriResponse><tr2:Uri>{uri}</tr2:Uri></tr2:GetStreamUriResponse>"
 
     def op_GetMetadataConfigurations(self, _request) -> str:  # noqa: N802

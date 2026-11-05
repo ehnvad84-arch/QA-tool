@@ -19,7 +19,7 @@
 - [x] T4 — Сборка RTP в Annex-B для H.264 и H.265, параметры из SDP, разрешение MJPEG из заголовка · сценарий: S8 · проверка: auto · исполнитель: main
   Новый файл: drivers/camera/depacket.py; файлы: drivers/camera/rtsp.py (parse_sdp), tests/drivers/test_depacket.py.
   Готово, когда: поток mock декодируется ffmpeg без ошибок, в том числе без SPS/PPS в потоке; тесты на FU, STAP/AP и битые пакеты зелёные.
-- [ ] T5 — Все медиапрофили и настройки кодировщика из ONVIF, Media2 → Media1; те же ответы в mock · сценарий: S1, S3 · проверка: auto · исполнитель: main
+- [x] T5 — Все медиапрофили и настройки кодировщика из ONVIF, Media2 → Media1; те же ответы в mock · сценарий: S1, S3 · проверка: auto · исполнитель: main
   Файлы: drivers/camera/onvif_generic.py, tests/mock_onvif.py, tests/drivers/.
   Готово, когда: тесты на Media2, пустом Media1 и без настроек зелёные, запросы проходят табу.
 - [ ] T6 — mock RTSP: несколько профилей, сбои по заказу: потери, частота, обрыв, отказ в сессии · сценарий: S2, S4, S7, S11, S12 · проверка: auto · исполнитель: main
