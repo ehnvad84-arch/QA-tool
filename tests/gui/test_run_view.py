@@ -208,3 +208,8 @@ def test_aborted_run_leaves_nothing_looking_alive():
 def test_api_step_counts_operations():
     step = Step("09:12", "API-RUVER-1", "API «Рувер»", parts=["прошла"] * 300)
     assert step.label == "API «Рувер»: 300 операций"
+
+
+def test_stream_step_counts_rows():
+    step = Step("09:12", "STREAM-PARAMS-1", "Параметры потоков", parts=["прошла"] * 6)
+    assert step.label == "Параметры потоков: 6 строк"

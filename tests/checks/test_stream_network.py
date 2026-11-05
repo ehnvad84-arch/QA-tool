@@ -6,6 +6,7 @@ from qa_tool.checks import load_all
 from qa_tool.checks.stream import network
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place, Threshold
+from qa_tool.drivers.camera.rtsp import WatchEnd
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import MockStream, OnvifState
@@ -62,10 +63,11 @@ def test_loss_above_threshold_fails():
 
 
 def test_jitter_above_threshold_fails():
-    strict = {"stream.jitter_ms": Threshold(0.0, "мс", "тест")}
-    row = check(state(), thresholds=strict)["STREAM-NET-1"]
-    assert row.status is Status.FAILED
-    assert "джиттер" in row.reason
+    context = CheckContext(Camera(1, "10.0.0.1", username="admin"), "x", Place.COLOR_BOX)
+    stats = {"seconds": 30, "lost": 0, "loss_pct": 0.0, "jitter_ms": 45.0}
+    result = network._verdict(context, stats, WatchEnd.TIME_UP, [])
+    assert result.status is Status.FAILED
+    assert "джиттер 45 мс" in result.reason
 
 
 def test_blocked_udp_is_not_the_cameras_fault(monkeypatch):
