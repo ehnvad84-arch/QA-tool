@@ -7,7 +7,7 @@
 """
 
 from qa_tool.core.checks import CheckContext, CheckResult
-from qa_tool.drivers.camera.rtsp import PASSWORD_REFUSED_CODES, RtspError
+from qa_tool.drivers.camera.rtsp import PASSWORD_REFUSED_CODES, RTSP_UNAUTHORIZED, RtspError
 
 MEMORY_KEY = "rtsp_password_refused"
 
@@ -25,8 +25,16 @@ def refused_password(ctx: CheckContext) -> str:
 
 
 def is_refusal(error: Exception) -> bool:
-    """Ошибка RTSP значит отказ в пароле: 403 — так камера отвечает при блокировке входа."""
-    return isinstance(error, RtspError) and error.status in PASSWORD_REFUSED_CODES
+    """Ошибка RTSP значит отказ в пароле.
+
+    403 считается только на DESCRIBE: так камера отвечает при блокировке входа. На SETUP и PLAY
+    пароль уже подошёл, а 403 значит предел потоков или запрет именно этого действия.
+    """
+    if not isinstance(error, RtspError):
+        return False
+    return error.status == RTSP_UNAUTHORIZED or (
+        error.status in PASSWORD_REFUSED_CODES and error.method == "DESCRIBE"
+    )
 
 
 def refusal_result(ctx: CheckContext, error: Exception) -> CheckResult | None:

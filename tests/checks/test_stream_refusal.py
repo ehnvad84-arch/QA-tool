@@ -72,6 +72,8 @@ def test_one_refusal_covers_every_check_of_the_camera(camera):
 
 
 def test_forbidden_counts_as_refusal():
-    assert is_refusal(RtspError("DESCRIBE → 403 Forbidden", 403))
-    assert not is_refusal(RtspError("DESCRIBE → 404 Not Found", 404))
+    assert is_refusal(RtspError("DESCRIBE → 403 Forbidden", 403, "DESCRIBE"))
+    assert is_refusal(RtspError("PLAY → 401 Unauthorized", 401, "PLAY"))
+    assert not is_refusal(RtspError("SETUP → 403 Forbidden", 403, "SETUP"))
+    assert not is_refusal(RtspError("DESCRIBE → 404 Not Found", 404, "DESCRIBE"))
     assert not is_refusal(OSError("нет связи"))

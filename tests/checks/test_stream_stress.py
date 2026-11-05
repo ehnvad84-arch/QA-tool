@@ -10,6 +10,7 @@ from qa_tool.checks import load_all
 from qa_tool.checks.stream import stress
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place, Scenario, Threshold
+from qa_tool.drivers.camera.rtsp import RtspClient
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import MockStream, OnvifState
@@ -279,7 +280,14 @@ def test_clock_drift_is_not_a_queue(growth, seconds, failed):
     assert bool(stress.delay_problem(context, stats)) is failed
 
 
-def test_several_streams_breaking_at_once_send_the_password_once():
+def test_several_streams_breaking_at_once_send_the_password_once(monkeypatch):
+    real = RtspClient.close
+
+    def slow_close(self):
+        time.sleep(0.02)  # закрытие не должно давать соседу окно для попытки с паролем
+        real(self)
+
+    monkeypatch.setattr(RtspClient, "close", slow_close)
     streams = tuple(MockStream(f"s{n}", path=f"/s{n}") for n in range(4))
     faults = {
         stream.path: StreamFault(break_after_s=0.5, rejects_after_break=True) for stream in streams
@@ -317,3 +325,24 @@ def test_stop_at_first_open_is_not_a_failure(monkeypatch):
     monkeypatch.setattr(stress, "start_video", lambda client: (_ for _ in ()).throw(TimeoutError()))
     _, rows = check(stop=lambda: True, extra={"stress_seconds": 1})
     assert rows["STREAM-STRESS-1"].status is Status.SKIPPED
+
+
+def test_keepalives_of_streams_opened_in_turn_do_not_meet():
+    late = [n * stress.PING_SPREAD_S for n in (1, 2, 3)]
+    opened = [n * 0.7 for n in (1, 2, 3)]
+    moments = [start + 30 + extra for start, extra in zip(opened, late, strict=True)]
+    gaps = [b - a for a, b in zip(moments, moments[1:], strict=False)]
+    assert min(gaps) > stress.POLL_S
+
+
+def test_closing_time_is_not_counted_as_held(monkeypatch):
+    real = RtspClient.close
+
+    def slow_close(self):
+        time.sleep(1.5)
+        real(self)
+
+    monkeypatch.setattr(RtspClient, "close", slow_close)
+    moment = time.monotonic() + 1.2
+    _, rows = check(extra={"stress_seconds": 10}, stop=lambda: time.monotonic() > moment)
+    assert "видео шло" not in rows["STREAM-STRESS-1"].reason

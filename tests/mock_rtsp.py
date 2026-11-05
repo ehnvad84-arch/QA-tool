@@ -189,7 +189,8 @@ class _Session:
         if "metadata" in self.channels:
             threading.Thread(target=self._metadata, daemon=True).start()
         if "video" in self.channels:
-            with contextlib.suppress(OSError):  # клиент закрыл соединение посреди кадра
+            # клиент закрыл соединение посреди кадра: сокет или уже закрытый файл обработчика
+            with contextlib.suppress(OSError, ValueError):
                 self._video()
 
     def _video(self) -> None:
@@ -275,12 +276,14 @@ class MockRtspServer:
         silent_teardown: bool = False,
         assigned_channel: int | None = None,
         ping_refused: bool = False,
+        basic_auth: bool = False,
     ):
         self.metadata = metadata
         self.reject_password = reject_password  # 401 на любой пароль
         self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
         self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
         self.ping_refused = ping_refused  # посреди сессии пароль перестал подходить
+        self.basic_auth = basic_auth  # камера просит вход Basic
         self.assigned_channel = assigned_channel  # канал, который камера назначает сама
         self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
@@ -405,6 +408,12 @@ class MockRtspServer:
                             write(
                                 f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
                                 'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if server.basic_auth and "authorization" not in headers:
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Basic realm="r"\r\n\r\n'.encode()
                             )
                             continue
                         late_refusal = fault.rejects_on_play_after_break and after_break

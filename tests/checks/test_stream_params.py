@@ -6,7 +6,7 @@ import pytest
 
 from qa_tool.checks import load_all
 from qa_tool.checks.stream import common, params
-from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
+from qa_tool.core.checks import REGISTRY, CheckContext, Severity, Status, run_check
 from qa_tool.core.models import Camera, Place
 from qa_tool.drivers.camera.depacket import START_CODE
 from qa_tool.drivers.camera.onvif_generic import EncoderSettings
@@ -289,3 +289,29 @@ def test_jpeg_size_rounds_up_to_blocks_of_eight():
     settings = encoder(encoding="JPEG", width=960, height=540)
     assert params.param_problems(CONTEXT, settings, STATS, "JPEG", (960, 544)) == []
     assert params.param_problems(CONTEXT, settings, STATS, "JPEG", (640, 480))
+
+
+def check_with_server(state, **server):
+    cam = MockCamera(Passport("X", "M", "1", "S1"), password="s3cret-pw", state=state).start()
+    for key, value in server.items():
+        setattr(cam.rtsp, key, value)
+    camera = Camera(
+        slot=1, address="127.0.0.1", port=cam.port, rtsp_port=cam.rtsp_port, username="admin"
+    )
+    try:
+        result = run_check(SPEC, CheckContext(camera, "s3cret-pw", Place.COLOR_BOX))
+    finally:
+        cam.stop()
+    return {row.check_id: row for row in result.children}
+
+
+def test_basic_login_is_a_security_remark_and_nothing_more():
+    rows = check_with_server(OnvifState(streams=(GOOD,)), basic_auth=True)
+    assert rows["STREAM-AUTH-1"].result.status is Status.FAILED
+    assert rows["STREAM-AUTH-1"].severity is Severity.MINOR
+    assert "Basic" in rows["STREAM-AUTH-1"].result.reason
+    assert rows["STREAM-PARAMS-1"].result.status is Status.PASSED
+
+
+def test_digest_or_open_camera_has_no_remark():
+    assert "STREAM-AUTH-1" not in check_with_server(OnvifState(streams=(GOOD,)))

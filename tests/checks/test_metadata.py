@@ -128,3 +128,8 @@ def test_impossible_port_from_camera_is_not_a_crash():
 def test_ipv6_stand_address_keeps_brackets():
     uri = metadata.to_stand_address("rtsp://[fd00::1]/live", "fd00::1", 8554)
     assert uri == "rtsp://[fd00::1]:8554/live"
+
+
+def test_special_port_of_the_camera_survives_a_stand_port():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1:8555/replay", "10.0.0.1", 8554)
+    assert uri == "rtsp://10.0.0.1:8555/replay"

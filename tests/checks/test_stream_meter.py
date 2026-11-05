@@ -264,3 +264,17 @@ def test_queue_late_in_a_long_run_is_seen_in_its_window():
     worst, window = meter.worst_growth()
     assert 25 < worst <= 31
     assert window == 3600
+
+
+def test_single_timestamp_back_does_not_hide_lost_frames():
+    meter = StreamMeter("H264")
+    sent = 0
+    for n in range(800):
+        if n % 13 == 12:
+            continue  # пропущен кадр
+        meter.add(packet(sent, n * STEP, n * 0.04))
+        sent += 1
+        if n == 100:  # одна случайная метка назад
+            meter.add(packet(sent, (n - 1) * STEP + 100, n * 0.04 + 0.001))
+            sent += 1
+    assert meter.stats()["dropped"] > 40

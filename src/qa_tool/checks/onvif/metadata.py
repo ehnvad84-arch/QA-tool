@@ -105,7 +105,7 @@ def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     """Адрес потока на хосте камеры со стенда (security.md: только адреса стенда).
 
     Камера за NAT или с несколькими интерфейсами отдаёт свой внутренний адрес; ходить по нему
-    нельзя — подставляем адрес камеры из стенда. Порт: нестандартный порт стенда важнее ответа.
+    нельзя — подставляем адрес камеры из стенда. Порт стенда заменяет только порт по умолчанию.
     """
     parts = urlsplit(uri)
     try:
@@ -114,7 +114,8 @@ def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
         port = 0
     if parts.hostname == address and rtsp_port == RTSP_DEFAULT_PORT and port != 0:
         return uri
-    if rtsp_port != RTSP_DEFAULT_PORT:  # за NAT и туннелем камера не знает своего внешнего порта
+    # за NAT и туннелем камера не знает внешнего порта, но свой особый порт (архив) называет верно
+    if rtsp_port != RTSP_DEFAULT_PORT and port in (None, 0, RTSP_DEFAULT_PORT):
         port = rtsp_port
     host = f"[{address}]" if ":" in address else address
     return urlunsplit(parts._replace(netloc=f"{host}:{port or rtsp_port}"))

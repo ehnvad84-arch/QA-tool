@@ -47,16 +47,19 @@ UDP_LAST_PORT = 65534
 UDP_MAX_PORT = 65535
 SESSION_TIMEOUT_S = 60.0  # RFC 2326 §12.37: столько живёт сессия, если камера не сказала иначе
 TEARDOWN_S = 2.0  # сессия всё равно умрёт по сроку, а «Стоп» обещан за секунды
-PASSWORD_REFUSED_CODES = (401, 403)
+RTSP_UNAUTHORIZED = 401
+PASSWORD_REFUSED_CODES = (RTSP_UNAUTHORIZED, 403)
 JPEG_PAYLOAD_TYPE = "26"  # RFC 3551: статический тип, `a=rtpmap` для него необязателен
 
 
 class RtspError(ConnectionError):
-    """Ответ RTSP не 2xx (код — в `status`) или соединение оборвалось (`status` = 0)."""
+    """Ответ RTSP не 2xx (код — в `status`, запрос — в `method`) или соединение оборвалось
+    (`status` = 0)."""
 
-    def __init__(self, message: str, status: int = 0):
+    def __init__(self, message: str, status: int = 0, method: str = ""):
         super().__init__(message)
         self.status = status
+        self.method = method
 
 
 @dataclass
@@ -129,8 +132,9 @@ class RtspClient:
     нет: адрес очищен от логина, заголовок Authorization не записывается. `rtp_channel` — канал
     видео, который назначила камера; `udp_buffer` — фактический буфер приёма UDP, байт;
     `rejected` — камера отвергла пароль: больше с ним ничего не шлём, даже TEARDOWN;
-    `ping_early_s` — насколько раньше послать первое удержание, с: потоки одной камеры не должны
-    слать его разом, иначе при отказе пароль уйдёт от каждого.
+    `ping_late_s` — насколько позже послать первое удержание, с: потоки одной камеры не должны
+    слать его разом, иначе при отказе пароль уйдёт от каждого; `basic_used` — камера запросила
+    вход Basic, пароль ушёл почти открытым.
     """
 
     url: str
@@ -157,7 +161,8 @@ class RtspClient:
     rtp_channel: int = 0
     udp_buffer: int = 0
     rejected: bool = False
-    ping_early_s: float = 0.0
+    ping_late_s: float = 0.0
+    basic_used: bool = False
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.url)
@@ -211,6 +216,7 @@ class RtspClient:
         if not self._challenge or not self.user:
             return ""
         if self._challenge["scheme"] == "basic":
+            self.basic_used = True
             token = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
             return f"Basic {token}"
         realm, nonce = self._challenge.get("realm", ""), self._challenge.get("nonce", "")
@@ -260,13 +266,14 @@ class RtspClient:
         Ждать следующей отправки при отказе нельзя: она придётся на конец срока сессии.
         """
         ok = 200 <= response.status < 300
-        if response.status == 401:
+        if response.status == RTSP_UNAUTHORIZED:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
-            # первый отказ — обычно устаревший nonce; второй подряд значит, что камера больше не
-            # принимает пароль, а каждый новый запрос с ним может приблизить блокировку
-            self.rejected = self._ping_failed
         elif not ok:
             self._ping_method = "OPTIONS"
+        if response.status in PASSWORD_REFUSED_CODES:
+            # первый отказ — обычно устаревший nonce или запрет метода; второй подряд значит, что
+            # камера больше не принимает пароль, а новый запрос с ним может приблизить блокировку
+            self.rejected = self._ping_failed
         if not ok or not self._ping_logged:
             self.exchanges.append(f"удержание сессии → {response.status} {response.reason}".strip())
             self._ping_logged = True
@@ -378,14 +385,14 @@ class RtspClient:
         """
         check_rtsp(method)
         response = self._send(method, uri, headers or {})
-        if response.status == 401 and self.user:
+        if response.status == RTSP_UNAUTHORIZED and self.user:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
             response = self._send(method, uri, headers or {})
         self.exchanges.append(f"{method} {uri} → {response.status} {response.reason}".strip())
         self.rejected = self.rejected or response.status in PASSWORD_REFUSED_CODES
         if not 200 <= response.status < 300:
             raise RtspError(
-                f"{method} → {response.status} {response.reason}".strip(), response.status
+                f"{method} → {response.status} {response.reason}".strip(), response.status, method
             )
         return response
 
@@ -551,7 +558,7 @@ class RtspClient:
         silence_s = self.timeout if silence_s is None else silence_s
         deadline = time.perf_counter() + seconds
         heard = time.perf_counter()
-        next_ping = heard + self._lease_s / 2 - min(self.ping_early_s, self._lease_s / 4)
+        next_ping = heard + self._lease_s / 2 + min(self.ping_late_s, self._lease_s / 4)
         self._sock.settimeout(POLL_S)
         while True:
             now = time.perf_counter()

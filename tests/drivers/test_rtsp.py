@@ -504,6 +504,15 @@ def test_keepalive_stops_after_second_refusal():
     assert client.rejected
 
 
+def test_keepalive_forbidden_twice_counts_as_refusal():
+    client = RtspClient("rtsp://127.0.0.1/live", "admin", "x")
+    forbidden = rtsp.Response(403, "Forbidden", {})
+    assert client._ping_answered(forbidden) is True
+    assert not client.rejected
+    assert client._ping_answered(forbidden) is False
+    assert client.rejected
+
+
 def test_static_jpeg_needs_no_rtpmap():
     (track,) = parse_sdp("m=video 0 RTP/AVP 26\r\na=control:track1\r\n", "rtsp://c/")
     assert track.encoding == "JPEG"

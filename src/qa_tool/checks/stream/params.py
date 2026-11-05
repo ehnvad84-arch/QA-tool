@@ -169,6 +169,7 @@ class ProfileRun:
         self.sdp = ""
         self.channel = 0
         self.decoder_problem = ""
+        self.basic_used = False
         self.exchanges: list[str] = []
 
     def row(self, kind: str, title: str, result: CheckResult, severity: Severity) -> ChildResult:
@@ -220,6 +221,7 @@ class ProfileRun:
             return [self._failed_open(f"поток не открывается: {e}")]
         finally:
             has_sample = self.sampler.close() if self.sampler else False
+            self.basic_used = client.basic_used
         self.exchanges = client.exchanges
         if end is WatchEnd.REFUSED:
             result = CheckResult.stand_error(remember_refusal(self.ctx, end.value))
@@ -379,6 +381,24 @@ def _plain_row(profile: MediaProfile, number: int, result: CheckResult) -> Child
     )
 
 
+def _basic_row(number: int) -> ChildResult:
+    """Замечание по безопасности: решение директора 2026-11-05 — вход разрешён, но не молчим."""
+    result = CheckResult(
+        Status.FAILED,
+        reason="камера запросила вход Basic: пароль уходит по сети почти открытым",
+        expected="вход Digest: пароль не передаётся по сети",
+        actual=f"Basic при открытии профиля {number}",
+        evidence=[Evidence("rtsp-auth.txt", "камера ответила 401 с WWW-Authenticate: Basic")],
+    )
+    return ChildResult(
+        "STREAM-AUTH-1",
+        "Видео: способ входа",
+        result,
+        "Какой способ входа камера запрашивает для видео.",
+        Severity.MINOR,
+    )
+
+
 @REGISTRY.check(
     CHECK_ID,
     module="stream",
@@ -401,6 +421,7 @@ def stream_params(ctx: CheckContext) -> CheckResult:
     seconds = sample_seconds(ctx)
     deadline = time.monotonic() + MAX_PROFILES * (seconds + OPEN_RESERVE_S)
     rows: list[ChildResult] = []
+    basic_at = 0
     with tempfile.TemporaryDirectory(prefix="qa-stream-") as folder:
         for number, profile in enumerate(profiles, start=1):
             reason = ""
@@ -415,11 +436,15 @@ def stream_params(ctx: CheckContext) -> CheckResult:
             if reason:
                 rows.append(_plain_row(profile, number, CheckResult.skipped(reason)))
                 continue
+            run = ProfileRun(ctx, profile, number, Path(folder))
             try:
-                rows += ProfileRun(ctx, profile, number, Path(folder)).run(seconds)
+                rows += run.run(seconds)
+                basic_at = basic_at or (number if run.basic_used else 0)
             except Exception as e:  # данные одной камеры не должны стоить строк остальных профилей
                 result = CheckResult.stand_error(f"сбой проверки профиля: {type(e).__name__}")
                 rows.append(_plain_row(profile, number, result))
+    if basic_at:
+        rows.append(_basic_row(basic_at))
     add_onvif_evidence(rows, evidence)
     return CheckResult(
         Status.PASSED,

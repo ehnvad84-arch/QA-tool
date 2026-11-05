@@ -20,6 +20,7 @@ SLICE_S = 60
 SECONDS_IN_HOUR = 3600
 # Камера с кэшем группы кадров отдаёт его пачкой сразу после PLAY: это не джиттер сети и не темп
 WARMUP_S = 3.0
+B_FRAMES_SHARE = 0.05  # реже — это не кадры B, а случайная метка назад: пропуски считаем обычно
 MAX_B_RUN = 16  # предел H.264 и H.265 на практике; длинная серия назад — это сброс меток камеры
 
 
@@ -36,6 +37,7 @@ class Tally:
     ticks: int = 0  # сумма промежутков между кадрами в единицах метки RTP
     intervals: int = 0  # сколько промежутков: кадры B в ticks не входят, а в частоту входят
     b_run: int = 0  # самая длинная серия кадров B: на столько кадров законно шагают метки
+    b_frames: int = 0
     time_jumps: int = 0  # сколько раз метки отпрыгнули назад дальше кадров B
     steps: Counter = field(default_factory=Counter)  # промежуток, мс → сколько раз
     min_delay_s: float | None = None
@@ -52,7 +54,7 @@ class Tally:
         seconds = self.ticks / clock_rate
         usual = self.steps.most_common(1)[0][0] if self.steps else 0
         legal, limit = 1, usual * DROP_FACTOR
-        if self.b_run and self.intervals:
+        if self.b_run and self.b_frames >= self.frames * B_FRAMES_SHARE:
             # с кадрами B метка вперёд шагает через серию: обычный шаг берётся средний за кадр,
             # а он сам растёт от пропусков, поэтому порог на кадр дальше законного шага
             usual, legal = seconds * 1000 / self.intervals, self.b_run + 1
@@ -203,6 +205,8 @@ class StreamMeter:
     def _count_backward(self, packet: RtpPacket, tallies: tuple[Tally, Tally]) -> None:
         """Кадр показывается раньше уже пришедшего: это кадр B или сброс меток камеры."""
         self._b_run += 1
+        for tally in tallies:
+            tally.b_frames += 1
         if self._b_run <= MAX_B_RUN:
             return
         self._b_run = 0

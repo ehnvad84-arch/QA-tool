@@ -98,7 +98,7 @@ class StreamWatch(threading.Thread):
         self._last_packet: float | None = None
         self._lost_at: float | None = None
         self._started_at: float | None = None
-        self.held_s = 0.0  # от первого PLAY до конца нити
+        self.held_s = 0.0  # от первого PLAY до конца последнего чтения; закрытие сюда не входит
 
     def run(self) -> None:
         """Держать поток; сбой нити становится строкой «ошибка стенда»."""
@@ -109,8 +109,6 @@ class StreamWatch(threading.Thread):
         finally:
             self._close_outage()
             self.stopped = self.ctx.stop_requested() and self._left() > 0
-            if self._started_at is not None:
-                self.held_s = time.monotonic() - self._started_at
             self.opened.set()
 
     def _left(self) -> float:
@@ -139,13 +137,18 @@ class StreamWatch(threading.Thread):
                 return None
             client.connect()
             return start_video(client)[1]
+        except RtspError as e:
+            # внутри очереди: следующая нить должна увидеть отказ, не успев послать пароль
+            if is_refusal(e):
+                remember_refusal(self.ctx, e)
+            raise
         finally:
             self.opening.release()
 
     def _session(self) -> WatchEnd:
         """Одна сессия потока до срока, обрыва или «Стоп»."""
         client = client_for(self.ctx, self.profile, OPEN_TIMEOUT_S)
-        client.ping_early_s = self.number * PING_SPREAD_S
+        client.ping_late_s = self.number * PING_SPREAD_S
         try:
             track = self._open(client)
             if track is None:
@@ -165,6 +168,7 @@ class StreamWatch(threading.Thread):
                     self.meter.add(packet)
 
             end = client.watch(on_packet, self._left(), self._stop_reading, self.silence_s)
+            self.held_s = time.monotonic() - self._started_at
             if end is WatchEnd.REFUSED:
                 remember_refusal(self.ctx, end.value)
             return end
@@ -178,13 +182,12 @@ class StreamWatch(threading.Thread):
             try:
                 end = self._session()
             except (OSError, RtspError, ValueError) as e:
-                if is_refusal(e):
-                    remember_refusal(self.ctx, e)
-                elif self.ctx.stop_requested():
-                    return
-                elif not self.playing:
-                    self.refused = str(e)
-                    return
+                if not is_refusal(e):
+                    if self.ctx.stop_requested():
+                        return
+                    if not self.playing:
+                        self.refused = str(e)
+                        return
                 end = WatchEnd.BROKEN
             if refused_password(self.ctx):
                 self.stand_problem = refused_password(self.ctx)
