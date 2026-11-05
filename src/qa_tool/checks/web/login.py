@@ -15,7 +15,6 @@ from qa_tool.core.taboo import is_logout_label
 from qa_tool.drivers.camera.browser import BrowserSession, ElementInfo
 from qa_tool.drivers.camera.probe import tcp_open
 
-FORM_APPEARS_S = 3.0  # интерфейс на Vue рисует форму после загрузки страницы
 POLL_MS = 200
 HTTPS_PORT = 443
 HTTP_PORT = 80
@@ -62,9 +61,13 @@ def web_address(ctx: CheckContext) -> str | None:
     return None
 
 
-def _wait_for_form(session: BrowserSession) -> list[ElementInfo]:
-    """Элементы страницы, как только появилось поле пароля или кончилось время."""
-    deadline = time.monotonic() + FORM_APPEARS_S
+def _wait_for_form(ctx: CheckContext, session: BrowserSession) -> list[ElementInfo]:
+    """Элементы страницы, как только появилось поле пароля или кончилось время.
+
+    Интерфейсы камер рисуют форму после загрузки скриптов, и не успевшая форма выглядела бы как
+    камера без входа, поэтому ждём с запасом: лишнее ожидание стоит секунд один раз на камеру.
+    """
+    deadline = time.monotonic() + limit(ctx, "web.login_form_s")
     while True:
         items = session.elements()
         if any(item.kind == "password" for item in items) or time.monotonic() > deadline:
@@ -153,7 +156,7 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     load = session.open(address, limit(ctx, "web.login_timeout_s"))
     if load.status == HTTP_UNAUTHORIZED:
         return _http_login(ctx, session, address)
-    items = _wait_for_form(session)
+    items = _wait_for_form(ctx, session)
     if not any(item.kind == "password" for item in items):
         return LoginResult(Entry.NOT_NEEDED)
     if _change_required(session, items):

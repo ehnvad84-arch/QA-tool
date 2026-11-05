@@ -5,7 +5,7 @@ import pytest
 from qa_tool.checks.rtsp_refusal import MEMORY_KEY, refused_password
 from qa_tool.checks.web.login import Entry, login, logout, web_address
 from qa_tool.core.checks import CheckContext
-from qa_tool.core.models import Camera, Place
+from qa_tool.core.models import Camera, Place, Threshold
 from qa_tool.drivers.camera.browser import BrowserSession
 from tests.mock_web import MockWebCamera
 
@@ -31,6 +31,16 @@ def test_correct_password_enters():
     assert result.walk_allowed
     assert camera.login_attempts == 1
     assert camera.sessions == 1
+
+
+def test_form_drawn_late_is_not_a_camera_without_login():
+    form = "'<input type=password><button>Войти</button>'"
+    page = f"<script>setTimeout(() => document.body.innerHTML = {form}, 4000)</script>"
+    ctx = context()
+    ctx.thresholds["web.login_timeout_s"] = Threshold(1.0, "с", "тест")
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        result = login(ctx, session, camera.url + "/")
+    assert result.entry is Entry.REFUSED
 
 
 def test_wrong_password_tries_once_and_is_remembered():

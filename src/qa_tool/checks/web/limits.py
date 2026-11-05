@@ -8,6 +8,7 @@ DEFAULTS: dict[str, Threshold] = {
     "web.page_load_s": Threshold(5.0, "с", START),
     "web.click_response_s": Threshold(2.0, "с", START),
     "web.login_timeout_s": Threshold(15.0, "с", START),
+    "web.login_form_s": Threshold(10.0, "с", START),
     "web.same_elements_limit": Threshold(3.0, "шт", START),
     "web.pages_limit": Threshold(100.0, "шт", START),
     "web.elements_limit": Threshold(1000.0, "шт", START),
