@@ -29,6 +29,7 @@ NETWORK_MODULES = {
     "http.server",
     "socketserver",
     "asyncio",
+    "playwright",
 }
 ALLOWED = {
     "drivers/camera/http.py": {"httpx"},
@@ -37,6 +38,8 @@ ALLOWED = {
     "drivers/camera/rtsp.py": {"socket"},
     # посредник табу слушает только 127.0.0.1, к камере пересылает через http.py
     "drivers/camera/taboo_proxy.py": {"http.server"},
+    # браузер веб-обхода: перехват и проверки табу стоят внутри этого модуля
+    "drivers/camera/browser.py": {"playwright"},
 }
 GUARDED = "qa_tool.drivers.camera.http"
 
@@ -82,6 +85,7 @@ def test_import_tricks_are_caught():
         "from qa_tool.drivers.camera.http import httpx",
         "from qa_tool.drivers.camera import http\nhttp.httpx.post('x')",
         "import zeep.transports",
+        "from playwright.sync_api import sync_playwright",
     ]
     for trick in tricks:
         assert network_imports(trick), trick

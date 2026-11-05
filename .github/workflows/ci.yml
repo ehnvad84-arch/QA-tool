@@ -29,6 +29,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Windows ]; then target=ffmpeg-windows; else target=ffmpeg-linux; fi
           uv run python packaging/fetch.py "$target" >> "$GITHUB_PATH"
+      - name: Браузер для тестов веб-обхода
+        run: uv run playwright install --with-deps --only-shell chromium
       - name: Линтер
         run: uv run ruff check . && uv run ruff format --check .
       - name: Правила комментирования (docs/rules/comments.md)
