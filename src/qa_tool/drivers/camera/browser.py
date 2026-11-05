@@ -9,13 +9,27 @@
 """
 
 import contextlib
-from collections.abc import Iterator
-from dataclasses import dataclass
+import os
+import shutil
+import tempfile
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from urllib.parse import urljoin, urlsplit
 
+from playwright.sync_api import (
+    Dialog,
+    Page,
+    Request,
+    Response,
+    Route,
+    WebSocket,
+    WebSocketRoute,
+    sync_playwright,
+)
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, Request, Route, WebSocket, WebSocketRoute, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from qa_tool.core.taboo import (
     TabooViolation,
@@ -30,6 +44,7 @@ from qa_tool.core.taboo import (
     is_web_action,
     is_write_message,
     is_write_request,
+    web_danger_word,
     web_forbidden_word,
 )
 from qa_tool.drivers.camera.http import is_soap
@@ -73,8 +88,79 @@ _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 _KEEPS_METHOD_CODES = frozenset({307, 308})
 
 
+STEP_MS = 200  # шаг ожидания: «Стоп» должен срабатывать между шагами
+CALL_LIMIT_MS = 1000  # предел одного вызова Playwright, иначе «Стоп» не уложится в 5 с
+PAGE_LIMIT_S = 30.0
+TEXT_LIMIT = 200  # подписи и ошибки приходят от камеры: длинный текст ломает протокол
+TEMP_PREFIX = "qa-web-"
+# Подпись, тип и контекст элемента собираются в странице. Путь без индексов не годится: он нужен
+# только для нажатия, поэтому индексы здесь есть, а сравнение «похожих» идёт по другим полям.
+_SCAN_SCRIPT = """() => {
+  const picks = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=tab],' +
+    '[role=menuitem],[role=treeitem],[role=switch],[role=checkbox],[role=radio],[role=slider],' +
+    '[role=combobox]';
+  const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const path = (node) => {
+    const parts = [];
+    for (let item = node; item && item.nodeType === 1 && item !== document.documentElement;
+         item = item.parentElement) {
+      let index = 1;
+      for (let other = item.previousElementSibling; other; other = other.previousElementSibling) {
+        if (other.tagName === item.tagName) index += 1;
+      }
+      parts.unshift(`${item.tagName.toLowerCase()}:nth-of-type(${index})`);
+    }
+    return parts.join(' > ');
+  };
+  const label = (node) => {
+    const own = node.labels && node.labels[0] ? node.labels[0].innerText : '';
+    return text(node.getAttribute('aria-label') || own || node.innerText || node.placeholder ||
+                node.title || (node.type === 'submit' ? node.value : ''));
+  };
+  const area = (node) => {
+    const legend = node.closest('fieldset')?.querySelector('legend')?.innerText || '';
+    const tab = document.querySelector('[role=tab][aria-selected=true]')?.innerText || '';
+    let heading = '';
+    for (let item = node; item && !heading; item = item.parentElement) {
+      heading = item.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4')
+        ?.innerText || '';
+    }
+    return text([legend, heading, tab].join(' '));
+  };
+  const blocked = (node) => {
+    if (node.disabled || node.matches('[aria-disabled=true],[inert],fieldset[disabled] *')) {
+      return true;
+    }
+    const box = node.getBoundingClientRect();
+    const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return Boolean(top) && top !== node && !node.contains(top) && !top.contains(node);
+  };
+  return [...document.querySelectorAll(picks)].filter((node) => {
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden';
+  }).map((node) => ({
+    path: path(node), tag: node.tagName.toLowerCase(), kind: node.type || '',
+    role: node.getAttribute('role') || '', label: label(node), name: node.name || '',
+    id: node.id || '', href: node.getAttribute('href') || '', area: area(node),
+    disabled: blocked(node),
+  }));
+}"""
+
+
 class BrowserMissing(Exception):
     """Браузер не запустился: на стенде это «ошибка стенда», а не вина камеры."""
+
+
+class BrowserCrashed(Exception):
+    """Браузер упал: «ошибка стенда» только у этой камеры."""
+
+
+class CameraSilent(Exception):
+    """Камера не ответила в отведённый срок."""
+
+
+class Stopped(Exception):
+    """Нажат «Стоп» или истекло время проверки."""
 
 
 class Verdict(StrEnum):
@@ -104,6 +190,43 @@ class StoppedRequest:
     verdict: Verdict
 
 
+@dataclass(frozen=True)
+class ElementInfo:
+    """Элемент страницы; `frame` и `path` нужны только для нажатия."""
+
+    frame: int
+    path: str
+    tag: str
+    kind: str
+    role: str
+    label: str
+    name: str
+    id: str
+    href: str
+    area: str
+    disabled: bool
+
+
+@dataclass(frozen=True)
+class PageLoad:
+    """Итог открытия страницы."""
+
+    status: int | None
+    elapsed_s: float
+    url: str
+
+
+@dataclass
+class Reaction:
+    """Что случилось после нажатия."""
+
+    requests: list[str] = field(default_factory=list)
+    stopped: list[StoppedRequest] = field(default_factory=list)
+    navigated: bool = False
+    dialog: str = ""
+    elapsed_s: float = 0.0
+
+
 def is_camera_url(url: str, host: str, ports: frozenset[int]) -> bool:
     """Идёт ли адрес на эту камеру: совпали хост и один из её веб-портов.
 
@@ -125,12 +248,20 @@ class BrowserSession:
     Использовать как контекстный менеджер: при выходе браузер закрыт при любом исходе.
     """
 
-    def __init__(self, base_url: str, ports: frozenset[int] = frozenset()) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        ports: frozenset[int] = frozenset(),
+        stop_requested: Callable[[], bool] = lambda: False,
+        temp_tag: str = "0",
+    ) -> None:
         """Подготовить сессию; браузер запускается в `__enter__`.
 
         Args:
             base_url: адрес веб-интерфейса камеры, например `http://192.168.1.10:80`.
             ports: дополнительные порты камеры; порт `base_url`, 80 и 443 разрешены всегда.
+            stop_requested: опрашивается между шагами ожидания.
+            temp_tag: метка папки временных файлов, обычно место камеры.
         """
         parts = urlsplit(base_url)
         self.base_url = base_url
@@ -141,6 +272,17 @@ class BrowserSession:
         self.unwatched_sockets: list[str] = []
         self.late_redirects: list[StoppedRequest] = []
         self.page_label = ""
+        self.page_errors: list[str] = []
+        self.dialogs: list[str] = []
+        self.popups: list[str] = []
+        self.sandboxed = False
+        self.screens_allowed = True
+        self._stop_requested = stop_requested
+        self._temp_tag = temp_tag
+        self._temp_dir = ""
+        self._crashed = False
+        self._seen_requests: list[str] = []
+        self._document_status: int | None = None
         self._watched_sockets: set[str] = set()
         self._window = Window.NONE
         self._window_writes = 0
@@ -159,34 +301,124 @@ class BrowserSession:
         Raises:
             BrowserMissing: браузер не установлен или не запускается.
         """
-        self._playwright = sync_playwright().start()
+        self._temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_PREFIX}{self._temp_tag}-")
+        self._start_driver()
         try:
-            self._browser = self._playwright.chromium.launch(
-                headless=True, proxy={"server": _DEAD_PROXY, "bypass": f"<-loopback>,{self.host}"}
-            )
+            self._browser = self._launch()
         except PlaywrightError as e:
             self.close()
             raise BrowserMissing(f"браузер не запустился: {e}") from e
-        self._context = self._browser.new_context(
-            service_workers="block",  # запросы Service Worker перехват не видит
-            ignore_https_errors=True,
-            accept_downloads=False,
-        )
-        self._context.add_init_script(_GUARD_SCRIPT)
-        self._context.route("**/*", self._decide)
-        self._context.route_web_socket("**/*", self._watch_socket)
-        self._context.on("page", self._watch_page)
-        self._context.on("request", self._watch_redirect)
+        self._context = self._new_context()
+        self._prepare_context()
         self._page = self._context.new_page()
+        self._prepare_main_page()
         return self
 
     def __exit__(self, *_exc: object) -> None:
         """Закрыть браузер."""
         self.close()
 
+    def _start_driver(self) -> None:
+        """Запустить драйвер с временной папкой этой сессии.
+
+        Профиль браузера драйвер кладёт в системную временную папку. Своя папка нужна, чтобы её
+        можно было удалить целиком и найти остатки после снятого процесса.
+        """
+        names = ("TMPDIR", "TEMP", "TMP")
+        saved = {name: os.environ.get(name) for name in names}
+        os.environ.update(dict.fromkeys(names, self._temp_dir))
+        try:
+            self._playwright = sync_playwright().start()
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    del os.environ[name]
+                else:
+                    os.environ[name] = value
+
+    def _launch(self):
+        """Запустить браузер, по возможности в песочнице: он исполняет код камеры.
+
+        Ubuntu 24.04 может запретить песочнице пространства имён, поэтому при отказе браузер
+        запускается без неё, а `sandboxed` остаётся False для протокола.
+        """
+        options = {
+            "headless": True,
+            "proxy": {"server": _DEAD_PROXY, "bypass": f"<-loopback>,{self.host}"},
+        }
+        try:
+            browser = self._playwright.chromium.launch(chromium_sandbox=True, **options)
+        except PlaywrightError:
+            return self._playwright.chromium.launch(**options)
+        self.sandboxed = True
+        return browser
+
+    def _new_context(self):
+        """Новый контекст: Service Worker закрыт, потому что его запросы перехват не видит."""
+        return self._browser.new_context(
+            service_workers="block", ignore_https_errors=True, accept_downloads=False
+        )
+
+    def _prepare_context(self) -> None:
+        """Поставить перехват до первой страницы."""
+        self._context.add_init_script(_GUARD_SCRIPT)
+        self._context.route("**/*", self._decide)
+        self._context.route_web_socket("**/*", self._watch_socket)
+        self._context.on("page", self._watch_page)
+        self._context.on("request", self._watch_redirect)
+
+    def _prepare_main_page(self) -> None:
+        """Слушатели главной страницы."""
+        page = self._page
+        page.on("dialog", self._answer_dialog)
+        page.on("crash", self._note_crash)
+        page.on("pageerror", lambda error: self._note_error(str(error)))
+        page.on("console", self._note_console)
+        page.on("response", self._note_response)
+        page.on("request", lambda request: self._seen_requests.append(request.url))
+
+    def _note_crash(self, _page: Page) -> None:
+        self._crashed = True
+
+    def _note_error(self, text: str) -> None:
+        self.page_errors.append(text[:TEXT_LIMIT])
+
+    def _note_console(self, message) -> None:
+        if message.type == "error":
+            self._note_error(message.text)
+
+    def _note_response(self, response: Response) -> None:
+        """Код ответа самой страницы и ошибки камеры на её ресурсы."""
+        request = response.request
+        if request.is_navigation_request() and request.frame == self._page.main_frame:
+            self._document_status = response.status
+
+    def _answer_dialog(self, dialog: Dialog) -> None:
+        """Ответить на диалог: без ответа нажатие зависнет.
+
+        `confirm` принимается только в окне записи и без запретных и опасных слов.
+        """
+        text = dialog.message[:TEXT_LIMIT]
+        self.dialogs.append(text)
+        accept = dialog.type in ("alert", "beforeunload") or (
+            dialog.type == "confirm"
+            and self._window is Window.WRITE
+            and not web_danger_word(text)
+            and not web_forbidden_word(text)
+        )
+        with contextlib.suppress(PlaywrightError):
+            if accept:
+                dialog.accept()
+            else:
+                dialog.dismiss()
+
     def _watch_page(self, page: Page) -> None:
-        """Следить за сокетами страницы, в том числе всплывающего окна."""
+        """Следить за сокетами страницы; всплывающее окно записать и закрыть."""
         page.on("websocket", self._note_socket)
+        if self._page is not None and page is not self._page:
+            self.popups.append(page.url[:TEXT_LIMIT])
+            with contextlib.suppress(PlaywrightError):
+                page.close()
 
     def _note_socket(self, socket: WebSocket) -> None:
         """Запомнить сокет, который обошёл перехват: так открываются сокеты из воркера."""
@@ -417,24 +649,160 @@ class BrowserSession:
         finally:
             self._pressing = False
 
-    def open(self, url: str) -> int | None:
-        """Открыть страницу и дождаться загрузки.
+    def _check(self) -> None:
+        """Прервать работу, если браузер упал или нажат «Стоп».
+
+        Raises:
+            BrowserCrashed: браузер упал.
+            Stopped: нажат «Стоп».
+        """
+        if self._crashed:
+            raise BrowserCrashed("браузер упал")
+        if self._stop_requested():
+            raise Stopped("нажат «Стоп»")
+
+    def open(self, url: str, limit_s: float = PAGE_LIMIT_S) -> PageLoad:
+        """Открыть страницу и дождаться загрузки короткими шагами.
 
         Args:
             url: адрес страницы на камере.
+            limit_s: предел ожидания, с.
 
         Returns:
-            Код ответа; None — ответа нет, например запрос остановлен.
+            Код ответа (None — ответа нет или запрос остановлен), время и итоговый адрес.
+
+        Raises:
+            CameraSilent: страница не загрузилась за `limit_s`.
+            Stopped: нажат «Стоп».
+            BrowserCrashed: браузер упал.
         """
+        self._check()
+        self._document_status = None
+        started = time.monotonic()
+        # Истечение этого срока навигацию не отменяет: она идёт дальше, а ждём мы шагами ниже.
         try:
-            response = self._page.goto(url, wait_until="load")
+            self._page.goto(url, wait_until="commit", timeout=CALL_LIMIT_MS)
+        except PlaywrightTimeout:
+            pass
         except PlaywrightError:
-            return None
-        return response.status if response else None
+            return PageLoad(None, time.monotonic() - started, url)
+        while True:
+            self._check()
+            try:
+                self._page.wait_for_load_state("load", timeout=STEP_MS)
+                break
+            except PlaywrightTimeout:
+                if time.monotonic() - started > limit_s:
+                    raise CameraSilent(f"страница не загрузилась за {limit_s:.0f} с") from None
+        return PageLoad(self._document_status, time.monotonic() - started, self._page.url)
 
     def wait(self, ms: int) -> None:
-        """Подождать, не останавливая перехват: `time.sleep` повесил бы обработчики."""
-        self._page.wait_for_timeout(ms)
+        """Подождать шагами, не останавливая перехват: `time.sleep` повесил бы обработчики.
+
+        Raises:
+            Stopped: нажат «Стоп».
+            BrowserCrashed: браузер упал.
+        """
+        left = ms
+        while left > 0:
+            self._check()
+            step = min(left, STEP_MS)
+            self._page.wait_for_timeout(step)
+            left -= step
+
+    def _frame(self, number: int):
+        """Кадр по номеру из `elements`."""
+        return self._page.frames[number]
+
+    def elements(self) -> list[ElementInfo]:
+        """Видимые элементы всех кадров страницы.
+
+        Зависший скрипт камеры не вешает программу: чтение идёт с пределом и даёт пустой список.
+        """
+        self._check()
+        found: list[ElementInfo] = []
+        for number, frame in enumerate(self._page.frames):
+            with contextlib.suppress(PlaywrightError):
+                items = frame.locator("html").evaluate(_SCAN_SCRIPT, timeout=CALL_LIMIT_MS)
+                for item in items:
+                    trimmed = {
+                        key: value[:TEXT_LIMIT]
+                        if isinstance(value, str) and key != "path"
+                        else value
+                        for key, value in item.items()
+                    }
+                    found.append(ElementInfo(frame=number, **trimmed))
+        return found
+
+    def password_fields(self) -> int:
+        """Сколько видимых полей пароля на странице: вход и его смена различаются этим числом."""
+        return sum(item.kind == "password" for item in self.elements())
+
+    def _locator(self, element: ElementInfo):
+        return self._frame(element.frame).locator(element.path).first
+
+    def click(self, element: ElementInfo, wait_ms: int = 1000) -> Reaction:
+        """Нажать элемент и собрать реакцию за `wait_ms`.
+
+        Args:
+            element: элемент из `elements`.
+            wait_ms: сколько ждать реакцию, мс.
+
+        Returns:
+            Запросы, остановленные запросы, смена адреса, текст диалога, время.
+        """
+        self._check()
+        address = self._page.url
+        seen, stopped, dialogs = (
+            len(self._seen_requests),
+            len(self.stopped),
+            len(self.dialogs),
+        )
+        started = time.monotonic()
+        with contextlib.suppress(PlaywrightError):
+            self._locator(element).click(timeout=CALL_LIMIT_MS)
+        self.wait(wait_ms)
+        return Reaction(
+            requests=self._seen_requests[seen:],
+            stopped=self.stopped[stopped:],
+            navigated=self._page.url != address,
+            dialog=" ".join(self.dialogs[dialogs:]),
+            elapsed_s=time.monotonic() - started,
+        )
+
+    def set_field(self, element: ElementInfo, value: str) -> None:
+        """Записать значение в поле: только в браузере, до камеры оно идёт нажатием."""
+        self._check()
+        locator = self._locator(element)
+        if element.tag == "select":
+            locator.select_option(value, timeout=CALL_LIMIT_MS)
+        elif element.kind in ("checkbox", "radio"):
+            locator.set_checked(value == "true", timeout=CALL_LIMIT_MS)
+        else:
+            locator.fill(value, timeout=CALL_LIMIT_MS)
+
+    def read_field(self, element: ElementInfo) -> str:
+        """Значение поля текстом."""
+        self._check()
+        locator = self._locator(element)
+        if element.kind in ("checkbox", "radio"):
+            return "true" if locator.is_checked(timeout=CALL_LIMIT_MS) else "false"
+        return locator.input_value(timeout=CALL_LIMIT_MS)
+
+    def screenshot(self) -> bytes | None:
+        """Снимок с закрытыми полями пароля; во время входа и на запретных страницах снимка нет."""
+        self._check()
+        if self._window is Window.LOGIN or not self.screens_allowed:
+            return None
+        try:
+            mask = [self._page.locator("input[type=password]")]
+            return self._page.screenshot(mask=mask, timeout=CALL_LIMIT_MS * 3)
+        except PlaywrightError:
+            return None
+
+    def session_state(self) -> dict:
+        """Куки сессии только в памяти: для новой сессии после падения браузера, на диск нельзя."""
+        return self._context.storage_state()
 
     def close(self) -> None:
         """Закрыть браузер и драйвер; повторный вызов безопасен."""
@@ -445,3 +813,6 @@ class BrowserSession:
         if self._playwright is not None:
             self._playwright.stop()
         self._context = self._browser = self._page = self._playwright = None
+        if self._temp_dir:
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = ""

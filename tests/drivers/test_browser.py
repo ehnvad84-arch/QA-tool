@@ -1,10 +1,12 @@
 """Браузер веб-обхода: запись не доходит до камеры, чтение доходит."""
 
 import contextlib
+import time
+from pathlib import Path
 
 import pytest
 
-from qa_tool.drivers.camera.browser import BrowserSession, Verdict, is_camera_url
+from qa_tool.drivers.camera.browser import BrowserSession, Stopped, Verdict, is_camera_url
 from tests.mock_web import MockWebCamera
 
 SEND_ON_LOAD = """<script>
@@ -32,7 +34,7 @@ def test_camera_url(url, expected):
 def test_write_does_not_reach_camera_and_read_does():
     with MockWebCamera({"/": SEND_ON_LOAD, "/status.json": "{}"}) as camera:
         with BrowserSession(camera.url) as session:
-            assert session.open(camera.url + "/") == 200
+            assert session.open(camera.url + "/").status == 200
             session.wait(300)
             stopped = list(session.stopped)
         assert camera.writes() == []
@@ -125,10 +127,13 @@ def test_form_redirect_of_write_is_followed_by_new_request():
     page = '<form id="f" method="post" action="/save"></form><script>f.submit()</script>'
     pages = {"/": page, "/done": "сохранено"}
     jump = {"/save": (303, "/done")}
-    with MockWebCamera(pages, jump) as camera, BrowserSession(camera.url) as session:
-        with session.write_window():
-            session.open(camera.url + "/")
-            session.wait(500)
+    with (
+        MockWebCamera(pages, jump) as camera,
+        BrowserSession(camera.url) as session,
+        session.write_window(),
+    ):
+        session.open(camera.url + "/")
+        session.wait(500)
     assert ("POST", "/save") in camera.arrived
     assert ("GET", "/done") in camera.arrived
 
@@ -218,3 +223,126 @@ def test_binary_socket_message_is_stopped():
     </script>"""
     camera, _ = visit(page)
     assert camera.ws_messages == []
+
+
+FORM = """<h2>Изображение</h2><label for="b">Яркость</label><input id="b" name="brightness" value="5">
+<input type="password" name="p"><button id="save">Сохранить</button>
+<button disabled>Недоступно</button><select name="mode"><option>a</option><option>b</option></select>
+<input type="checkbox" name="on"><button style="display:none">Скрыта</button>"""
+
+
+def by_label(items, label):
+    return next(item for item in items if item.label == label)
+
+
+def test_elements_are_collected_with_labels_and_state():
+    with MockWebCamera({"/": FORM}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        items = session.elements()
+        assert session.password_fields() == 1
+    labels = [item.label for item in items]
+    assert "Яркость" in labels
+    assert "Скрыта" not in labels
+    assert by_label(items, "Недоступно").disabled
+    assert not by_label(items, "Сохранить").disabled
+    assert "Изображение" in by_label(items, "Яркость").area
+
+
+def test_fields_read_and_write_in_browser_only():
+    with MockWebCamera({"/": FORM}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        items = session.elements()
+        field = by_label(items, "Яркость")
+        assert session.read_field(field) == "5"
+        session.set_field(field, "7")
+        assert session.read_field(field) == "7"
+        box = next(item for item in items if item.kind == "checkbox")
+        session.set_field(box, "true")
+        assert session.read_field(box) == "true"
+        select = next(item for item in items if item.tag == "select")
+        session.set_field(select, "b")
+        assert session.read_field(select) == "b"
+    assert camera.writes() == []
+
+
+def test_click_reports_stopped_request():
+    page = """<button onclick="fetch('/api/image/save', {method: 'POST', body: '1'})">Сохранить</button>"""
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        reaction = session.click(by_label(session.elements(), "Сохранить"), wait_ms=300)
+    assert [s.url.rsplit("/", 1)[1] for s in reaction.stopped] == ["save"]
+    assert camera.writes() == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "accepted"),
+    [("alert('a')", True), ("confirm('b')", False), ("prompt('c')", False)],
+)
+def test_dialogs_do_not_hang(kind, accepted):
+    page = f"<button onclick=\"const r = {kind}; fetch('/result?' + r)\">Нажать</button>"
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        session.click(by_label(session.elements(), "Нажать"), wait_ms=300)
+        assert session.dialogs
+    assert any(path.startswith("/result") for _, path in camera.arrived) or not accepted
+
+
+def test_confirm_with_danger_word_is_refused_in_write_window():
+    page = (
+        """<button onclick="fetch('/seen?' + confirm('Перезагрузить камеру?'))">Нажать</button>"""
+    )
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        element = by_label(session.elements(), "Нажать")
+        with session.write_window():
+            session.click(element, wait_ms=300)
+    assert ("GET", "/seen?true") not in camera.arrived
+
+
+def test_stop_works_on_hung_page_and_cleans_up():
+    page = "<script>setTimeout(() => { while (true) {} }, 50)</script><img src='/slow.png'>"
+    flag = {"stop": False}
+    with MockWebCamera({"/": page}) as camera:
+        session = BrowserSession(camera.url, stop_requested=lambda: flag["stop"], temp_tag="t")
+        with session:
+            session.open(camera.url + "/")
+            temp = session._temp_dir
+            assert session.elements() == []
+            flag["stop"] = True
+            with pytest.raises(Stopped):
+                session.wait(5000)
+            started = time.monotonic()
+        assert time.monotonic() - started < 5
+    assert not Path(temp).exists()
+
+
+def test_screenshot_hides_password_and_skips_login_and_forbidden_pages():
+    with MockWebCamera({"/": FORM}) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        assert session.screenshot().startswith(b"\x89PNG")
+        session.screens_allowed = False
+        assert session.screenshot() is None
+        session.screens_allowed = True
+        with session.login_window("admin", "x"):
+            assert session.screenshot() is None
+
+
+def test_popup_is_closed_and_noted():
+    page = "<script>window.open('/other')</script>"
+    pages = {"/": page, "/other": "x"}
+    with MockWebCamera(pages) as camera, BrowserSession(camera.url) as session:
+        session.open(camera.url + "/")
+        session.wait(400)
+        assert session.popups
+
+
+def test_sessions_are_isolated():
+    page = "<script>document.cookie = 'sid=1'; fetch('/seen?' + document.cookie)</script>"
+    with MockWebCamera({"/": page}) as camera:
+        with BrowserSession(camera.url) as first:
+            first.open(camera.url + "/")
+            first.wait(200)
+            state = first.session_state()
+        assert state["cookies"]
+        with BrowserSession(camera.url) as second:
+            assert second.session_state()["cookies"] == []
