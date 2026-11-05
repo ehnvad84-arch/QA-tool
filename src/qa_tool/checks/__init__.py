@@ -13,6 +13,7 @@ MODULES = [
     "qa_tool.checks.onvif.storage",
     "qa_tool.checks.onvif.profiles",
     "qa_tool.checks.api.ruver",
+    "qa_tool.checks.stream.params",
 ]
 
 
