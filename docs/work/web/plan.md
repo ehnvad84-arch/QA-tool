@@ -20,7 +20,7 @@
 - [x] T4 — Чистые решения табу: опасные слова, окна входа и выхода, сообщения WebSocket, статика · сценарий: S4, S7, S9, S10, S11 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/core/taboo.py, tests/core/test_taboo_browser.py.
   Готово, когда: тесты без браузера зелёные: `?format=jpeg` не опасно, `/api/sdcard/prepare` опасно, `/reboot.html` остановлен, `/js/reboot.js` пропущен, пароль `network1` не срывает вход, new/old/confirm запрещены и в окне, подпись «Тревожный выход» не считается выходом из системы; `check_web_request` и старые тесты табу не изменились.
-- [ ] T5 — Расчёт Digest вынесен из rtsp.py · сценарий: S4, S12 · проверка: auto · исполнитель: main
+- [x] T5 — Расчёт Digest вынесен из rtsp.py · сценарий: S4, S12 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/rtsp.py, новый src/qa_tool/drivers/camera/digest.py, новый tests/drivers/test_digest.py.
   Готово, когда: старые тесты Digest в RTSP зелёные без правок.
 - [ ] T6 — Девять правил решения по запросу, окно записи, запись через route.fetch без перенаправлений · сценарий: S7, S9, S10, S11, S12 · проверка: auto · исполнитель: main
