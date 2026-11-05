@@ -11,12 +11,18 @@ from enum import Enum
 from qa_tool.checks.rtsp_refusal import refused_password, remember_web_refusal
 from qa_tool.checks.web.limits import limit
 from qa_tool.core.checks import CheckContext
+from qa_tool.core.taboo import is_logout_label
 from qa_tool.drivers.camera.browser import BrowserSession, ElementInfo
+from qa_tool.drivers.camera.probe import tcp_open
 
 FORM_APPEARS_S = 3.0  # интерфейс на Vue рисует форму после загрузки страницы
 POLL_MS = 200
+HTTPS_PORT = 443
+HTTP_PORT = 80
 SESSIONS_FULL_CODE = 409
-REFUSED_CODES = frozenset({401, 403, 423})
+SESSIONS_FULL_HTTP_CODES = frozenset({409, 503})
+HTTP_UNAUTHORIZED = 401
+REFUSED_CODES = frozenset({HTTP_UNAUTHORIZED, 403, 423})
 REFUSED_WORDS = ("неверн", "заблокир", "wrong", "invalid", "locked", "incorrect", "failed")
 SESSIONS_WORDS = ("слишком много", "too many", "maxconnectionsallowed", "нет свободн")
 CHANGE_WORDS = ("смена пароля", "новый пароль", "подтвердите пароль", "activate", "активац")
@@ -45,6 +51,15 @@ class LoginResult:
     def walk_allowed(self) -> bool:
         """Можно ли начинать обход."""
         return self.entry in (Entry.OK, Entry.NOT_NEEDED)
+
+
+def web_address(ctx: CheckContext) -> str | None:
+    """Адрес интерфейса: первый открытый порт из порта камеры, 80 и 443; None — закрыты все."""
+    for port in dict.fromkeys((ctx.camera.port, HTTP_PORT, HTTPS_PORT)):
+        if tcp_open(ctx.camera.address, port):
+            scheme = "https" if port == HTTPS_PORT else "http"
+            return f"{scheme}://{ctx.camera.address}:{port}/"
+    return None
 
 
 def _wait_for_form(session: BrowserSession) -> list[ElementInfo]:
@@ -106,6 +121,17 @@ def _outcome(ctx: CheckContext, session: BrowserSession) -> LoginResult | None:
     return LoginResult(Entry.OK) if items and not passwords else None
 
 
+def _http_login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResult:
+    """Вход Basic или Digest: браузер отвечает камере сам, отказ обрывает все запросы."""
+    session.use_http_login(ctx.camera.username, ctx.password)
+    load = session.open(address, limit(ctx, "web.login_timeout_s"))
+    if load.status in SESSIONS_FULL_HTTP_CODES:
+        return LoginResult(Entry.SESSIONS_FULL, "камера не принимает новых подключений")
+    if session.http_refused or load.status in REFUSED_CODES or load.status is None:
+        return _refused(ctx, f"код ответа {load.status}")
+    return LoginResult(Entry.OK)
+
+
 def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResult:
     """Войти в интерфейс камеры одной попыткой.
 
@@ -124,7 +150,9 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     """
     if refused_password(ctx):
         return LoginResult(Entry.REFUSED, refused_password(ctx))
-    session.open(address, limit(ctx, "web.login_timeout_s"))
+    load = session.open(address, limit(ctx, "web.login_timeout_s"))
+    if load.status == HTTP_UNAUTHORIZED:
+        return _http_login(ctx, session, address)
     items = _wait_for_form(session)
     if not any(item.kind == "password" for item in items):
         return LoginResult(Entry.NOT_NEEDED)
@@ -147,3 +175,17 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
                 return outcome
             session.wait(POLL_MS)
     return _refused(ctx, "форма входа осталась на экране")
+
+
+def logout(session: BrowserSession) -> str:
+    """Выйти одним нажатием, чтобы освободить подключение камеры.
+
+    Returns:
+        Пометка для сводки; пусто — выход выполнен.
+    """
+    for item in session.elements():
+        if is_logout_label(item.label) and not item.disabled:
+            with session.logout_window():
+                session.click(item, wait_ms=POLL_MS * 3)
+            return ""
+    return "кнопки выхода нет: подключение освободится по тайм-ауту камеры"

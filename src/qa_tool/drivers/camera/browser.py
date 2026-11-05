@@ -47,6 +47,7 @@ from qa_tool.core.taboo import (
     web_danger_word,
     web_forbidden_word,
 )
+from qa_tool.drivers.camera.digest import digest_header, parse_challenge, uses_qop
 from qa_tool.drivers.camera.http import is_soap
 
 # без сетевого обмена: содержимое лежит в самой странице
@@ -276,6 +277,9 @@ class BrowserSession:
         self.dialogs: list[str] = []
         self.popups: list[str] = []
         self.answers: list[int] = []
+        self.http_refused = False
+        self._http_login: tuple[str, str] | None = None
+        self._digest_count = 0
         self.sandboxed = False
         self.screens_allowed = True
         self._stop_requested = stop_requested
@@ -354,11 +358,38 @@ class BrowserSession:
         self.sandboxed = True
         return browser
 
-    def _new_context(self):
+    def _new_context(self, credentials: dict | None = None):
         """Новый контекст: Service Worker закрыт, потому что его запросы перехват не видит."""
         return self._browser.new_context(
-            service_workers="block", ignore_https_errors=True, accept_downloads=False
+            service_workers="block",
+            ignore_https_errors=True,
+            accept_downloads=False,
+            http_credentials=credentials,
         )
+
+    def use_http_login(self, username: str, password: str) -> None:
+        """Перейти на вход Basic или Digest: новый контекст с логином только для этой камеры.
+
+        Вызывается один раз и только после ответа 401. Браузер отвечает на запрос пароля сам и на
+        каждый запрос страницы, поэтому первый отказ обрывает все следующие запросы: иначе каждая
+        картинка потратила бы попытку на счётчике камеры.
+        """
+        if self._http_login is not None:
+            raise RuntimeError("вход по HTTP выполняется один раз")
+        self._http_login = (username, password)
+        self._context.close()
+        parts = urlsplit(self.base_url)
+        self._context = self._new_context(
+            {
+                "username": username,
+                "password": password,
+                "origin": f"{parts.scheme}://{parts.netloc}",
+            }
+        )
+        self._prepare_context()
+        self._page = None  # иначе новая страница сочтётся всплывающим окном и закроется
+        self._page = self._context.new_page()
+        self._prepare_main_page()
 
     def _prepare_context(self) -> None:
         """Поставить перехват до первой страницы."""
@@ -391,6 +422,8 @@ class BrowserSession:
     def _note_response(self, response: Response) -> None:
         """Код ответа самой страницы и ошибки камеры на её ресурсы."""
         request = response.request
+        if self._http_login is not None and response.status == 401:
+            self.http_refused = True
         if request.is_navigation_request() and request.frame == self._page.main_frame:
             self._document_status = response.status
 
@@ -556,6 +589,10 @@ class BrowserSession:
 
     def _decide(self, route: Route, request: Request) -> None:
         """Пропустить запрос или остановить его до камеры."""
+        if self.http_refused:
+            with contextlib.suppress(PlaywrightError):
+                route.abort("blockedbyclient")
+            return
         body = self._body(request)
         verdict = self._judge(request.method, request.url, body)
         # страница могла закрыться, пока обработчик ждал очереди: запроса уже нет
@@ -581,6 +618,7 @@ class BrowserSession:
         method, url = request.method, request.url
         for _ in range(MAX_REDIRECTS):
             answer = route.fetch(url=url, method=method, max_redirects=0)
+            answer = self._answer_digest(route, request, answer, url, method)
             self.answers.append(answer.status)
             if answer.status not in _REDIRECT_CODES:
                 self._finish_write_window()
@@ -606,6 +644,24 @@ class BrowserSession:
                 return
             url = target
         self._stop(route, method, url, Verdict.STOP_WRITE)
+
+    def _answer_digest(self, route: Route, request: Request, answer, url: str, method: str):
+        """Повторить запись с Digest: `route.fetch` умеет только Basic.
+
+        Первый 401 здесь не отказ, а вопрос камеры: браузер за нас на него не ответит.
+        """
+        offer = answer.headers.get("www-authenticate", "")
+        digest_asked = answer.status == 401 and offer.lower().startswith("digest")
+        if not digest_asked or self._http_login is None:
+            return answer
+        challenge = parse_challenge(offer)
+        if uses_qop(challenge):
+            self._digest_count += 1
+        parts = urlsplit(url)
+        uri = parts.path + (f"?{parts.query}" if parts.query else "")
+        header = digest_header(*self._http_login, challenge, method, uri, self._digest_count)
+        headers = {**request.headers, "authorization": header}
+        return route.fetch(url=url, method=method, headers=headers, max_redirects=0)
 
     def _finish_write_window(self) -> None:
         """Окно записи закрывается по первому ответу камеры: одно нажатие — одно сохранение."""

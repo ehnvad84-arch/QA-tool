@@ -7,10 +7,15 @@
 import base64
 import hashlib
 import json
+import re
+import ssl
 import struct
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
+DIGEST_NONCE = "mock-nonce"
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
@@ -39,16 +44,18 @@ class MockWebCamera:
         password: str = "secret",
         sessions_limit: int = 3,
         must_change_password: bool = False,
+        tls_dir: Path | None = None,
     ) -> None:
         """Запускается в `__enter__`.
 
         Args:
             pages: страницы; адреса вне словаря отвечают 404, запросы записи — 200.
             redirects: перенаправления «путь → (код, адрес)».
-            auth: вид входа: «form»; пусто — вход не нужен.
+            auth: вид входа: «form», «basic», «digest»; пусто — вход не нужен.
             password: верный пароль; логин всегда admin.
             sessions_limit: сколько входов камера держит одновременно.
             must_change_password: вместо входа показывать смену пароля.
+            tls_dir: папка для самоподписанного сертификата: сервер работает по HTTPS.
         """
         self.pages = pages or {}
         self.redirects = redirects or {}
@@ -58,9 +65,11 @@ class MockWebCamera:
         self.password = password
         self.sessions_limit = sessions_limit
         self.must_change_password = must_change_password
+        self.tls_dir = tls_dir
         self.login_attempts = 0
         self.sessions = 0
         self.bodies: list[str] = []
+        self.http_login_seen = False
         self._server: ThreadingHTTPServer | None = None
 
     def __enter__(self) -> "MockWebCamera":
@@ -77,7 +86,9 @@ class MockWebCamera:
                     camera.bodies.append(body)
                 camera.arrived.append((self.command, self.path))
                 path = self.path.split("?")[0]
-                if camera.auth and self._session_answered(path, body):
+                if camera.auth in ("basic", "digest") and not self._http_auth_passed():
+                    return
+                if camera.auth == "form" and self._session_answered(path, body):
                     return
                 if self.headers.get("Upgrade", "").lower() == "websocket":
                     self._websocket()
@@ -110,6 +121,24 @@ class MockWebCamera:
                     self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _http_auth_passed(self) -> bool:
+                """Basic или Digest; False — отказ уже отправлен."""
+                given = self.headers.get("Authorization", "")
+                if given and self._authorized(given):
+                    camera.login_attempts += not camera.http_login_seen
+                    camera.http_login_seen = True
+                    return True
+                # каждый неверный ответ считается: на настоящей камере это расход счётчика попыток
+                camera.login_attempts += bool(given)
+                self._send(401, "нет доступа", {"WWW-Authenticate": camera.challenge()})
+                return False
+
+            def _authorized(self, given: str) -> bool:
+                if camera.auth == "basic":
+                    token = base64.b64encode(f"admin:{camera.password}".encode()).decode()
+                    return given == f"Basic {token}"
+                return camera.digest_valid(given, self.command)
 
             def _logged_in(self) -> bool:
                 return "sid=ok" in self.headers.get("Cookie", "")
@@ -162,6 +191,8 @@ class MockWebCamera:
             do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _answer  # noqa: N815
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        if self.tls_dir is not None:
+            self._server.socket = self._tls().wrap_socket(self._server.socket, server_side=True)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         return self
 
@@ -169,10 +200,46 @@ class MockWebCamera:
         self._server.shutdown()
         self._server.server_close()
 
+    def _tls(self) -> ssl.SSLContext:
+        """Самоподписанный сертификат создаётся при запуске: ключ не лежит в репозитории."""
+        key, cert = self.tls_dir / "key.pem", self.tls_dir / "cert.pem"
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                "-subj", "/CN=camera", "-keyout", str(key), "-out", str(cert),
+            ],
+            check=True,
+            capture_output=True,
+        )  # fmt: skip
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        return context
+
     @property
     def url(self) -> str:
         """Адрес интерфейса."""
-        return f"http://127.0.0.1:{self._server.server_address[1]}"
+        scheme = "https" if self.tls_dir is not None else "http"
+        return f"{scheme}://127.0.0.1:{self._server.server_address[1]}"
+
+    def challenge(self) -> str:
+        """Заголовок `WWW-Authenticate` для выбранного вида входа."""
+        if self.auth == "basic":
+            return 'Basic realm="camera"'
+        return f'Digest realm="camera", nonce="{DIGEST_NONCE}", qop="auth"'
+
+    def digest_valid(self, header: str, method: str) -> bool:
+        """Верен ли ответ Digest; считается независимо от кода программы."""
+        fields = dict(re.findall(r'(\w+)="?([^",]*)"?', header))
+
+        def md5(text: str) -> str:
+            return hashlib.md5(text.encode()).hexdigest()  # noqa: S324
+
+        ha1 = md5(f"admin:camera:{self.password}")
+        ha2 = md5(f"{method}:{fields.get('uri', '')}")
+        expected = md5(
+            f"{ha1}:{DIGEST_NONCE}:{fields.get('nc', '')}:{fields.get('cnonce', '')}:auth:{ha2}"
+        )
+        return fields.get("response") == expected
 
     def writes(self) -> list[tuple[str, str]]:
         """Дошедшие запросы, кроме чтения."""
