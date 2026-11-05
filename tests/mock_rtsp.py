@@ -202,6 +202,8 @@ class _Session:
             return
         replay = self.path.startswith("/replay")
         fault, server = self.fault, self.server
+        if self.stop.wait(server.first_frame_delay_s):
+            return
         index = shown = 0
         started = time.monotonic()
         archive_start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60)
@@ -281,6 +283,7 @@ class MockRtspServer:
         ping_refused: bool = False,
         basic_auth: bool = False,
         both_auth: bool = False,
+        first_frame_delay_s: float = 0.0,
     ):
         self.metadata = metadata
         self.reject_password = reject_password  # 401 на любой пароль
@@ -289,6 +292,7 @@ class MockRtspServer:
         self.ping_refused = ping_refused  # посреди сессии пароль перестал подходить
         self.basic_auth = basic_auth  # камера просит вход Basic
         self.both_auth = both_auth  # камера предлагает Digest, а следом Basic
+        self.first_frame_delay_s = first_frame_delay_s  # пауза между PLAY и первым кадром
         self.assigned_channel = assigned_channel  # канал, который камера назначает сама
         self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет

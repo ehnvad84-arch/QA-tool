@@ -289,7 +289,8 @@ def verdict(ctx: CheckContext, watch: StreamWatch, held: int) -> CheckResult:
     if stats["time_jumps"]:
         problems.append(f"метки времени прыгали назад {stats['time_jumps']} раз")
     video_s = stats["seconds"] + watch.down_s
-    if stats["seconds"] and video_s < watch.held_s * ENOUGH_OF_SAMPLE:
+    # после «Стоп» срок оборван: сравнивать видео с ним бессмысленно
+    if stats["seconds"] and not watch.stopped and video_s < watch.held_s * ENOUGH_OF_SAMPLE:
         problems.append(f"видео шло {stats['seconds']:g} с из {watch.held_s:.0f}")
     note = "; прервано оператором" if watch.stopped else ""
     summary = {**stats, "breaks": watch.breaks, "down_s": round(watch.down_s, 1)}

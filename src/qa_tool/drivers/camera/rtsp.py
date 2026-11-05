@@ -342,8 +342,10 @@ class RtspClient:
                 raise RtspError(f"в ответе RTSP больше {MAX_HEADERS} заголовков")
             key, _, value = raw.partition(":")
             name = key.strip().lower()
-            # камера может предложить оба способа входа: Basic не должен заменить Digest
-            if name != "www-authenticate" or not _offers_digest(headers.get(name, "")):
+            # камера может предложить несколько способов входа: берём тот, что умеем лучше всего
+            if name != "www-authenticate" or _offer_rank(value) > _offer_rank(
+                headers.get(name, "")
+            ):
                 headers[name] = value.strip()
         raw_length = headers.get("content-length", "0") or "0"
         if not raw_length.isdigit() or int(raw_length) > MAX_BODY:
@@ -598,8 +600,19 @@ class RtspClient:
                 return WatchEnd.REFUSED
 
 
-def _offers_digest(header: str) -> bool:
-    return header.lower().startswith("digest")
+def _offer_rank(header: str) -> int:
+    """Насколько подходит способ входа: Digest с MD5 считать умеем, другой алгоритм — нет.
+
+    Вход с неверным ответом стоит попытки на счётчике камеры, поэтому Digest SHA-256 идёт ниже
+    Digest MD5, а Basic ниже всех: он отдаёт пароль почти открытым.
+    """
+    offer = header.strip().lower()
+    if not offer:
+        return -1
+    if not offer.startswith("digest"):
+        return 0
+    algorithm = re.search(r'algorithm\s*=\s*"?([\w-]+)', offer)
+    return 2 if algorithm is None or algorithm[1] == "md5" else 1
 
 
 def _parse_challenge(header: str) -> dict[str, str]:

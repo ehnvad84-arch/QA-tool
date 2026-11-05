@@ -340,14 +340,13 @@ def test_closing_time_is_not_counted_as_held(monkeypatch):
     assert "видео шло" not in rows["STREAM-STRESS-1"].reason
 
 
-def test_late_first_frame_is_not_short_video(monkeypatch):
-    real = RtspClient.watch
+def test_late_first_frame_is_not_short_video():
+    _, rows = check(extra={"stress_seconds": 2.5, "stream_silence_s": 2}, first_frame_delay_s=1.0)
+    row = rows["STREAM-STRESS-1"]
+    assert row.status is Status.PASSED, row.reason
 
-    def late(self, on_packet, seconds, stop=lambda: False, silence_s=None):
-        time.sleep(1.0)  # первый кадр пришёл позже PLAY
-        return real(self, on_packet, seconds - 1.0, stop, silence_s)
 
-    monkeypatch.setattr(RtspClient, "watch", late)
-    moment = time.monotonic() + 2.4
+def test_stop_right_after_first_frame_is_not_short_video():
+    moment = time.monotonic() + 0.5
     _, rows = check(extra={"stress_seconds": 10}, stop=lambda: time.monotonic() > moment)
     assert "видео шло" not in rows["STREAM-STRESS-1"].reason

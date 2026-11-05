@@ -518,14 +518,18 @@ def test_keepalive_forbidden_twice_counts_as_refusal():
     [
         ('Digest realm="r", nonce="n"', 'Basic realm="r"'),
         ('Basic realm="r"', 'Digest realm="r", nonce="n"'),
+        ('Digest realm="r", nonce="n", algorithm=SHA-256', 'Digest realm="r", nonce="n"'),
+        ('Digest realm="r", nonce="n", algorithm="SHA-256"', 'Digest nonce="n", algorithm=MD5'),
+        ('Basic realm="r"', 'Digest nonce="n", algorithm=SHA-256', 'Digest realm="r", nonce="n"'),
     ],
 )
-def test_digest_wins_whatever_the_header_order(offers):
+def test_best_login_we_can_do_wins_whatever_the_header_order(offers):
     client = RtspClient("rtsp://127.0.0.1/live", "admin", "x")
     lines = "".join(f"WWW-Authenticate: {offer}\r\n" for offer in offers)
     client._buf += f"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n{lines}\r\n".encode()
-    response = client._take_response()
-    assert response.headers["www-authenticate"].startswith("Digest")
+    offer = client._take_response().headers["www-authenticate"]
+    assert offer.startswith("Digest")
+    assert "sha-256" not in offer.lower()
 
 
 def test_forbidden_setup_is_not_a_password_refusal(monkeypatch):
