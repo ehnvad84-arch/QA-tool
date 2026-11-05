@@ -94,6 +94,9 @@ CALL_LIMIT_MS = 1000  # предел одного вызова Playwright, ин�
 PAGE_LIMIT_S = 30.0
 TEXT_LIMIT = 200  # подписи и ошибки приходят от камеры: длинный текст ломает протокол
 TEMP_PREFIX = "qa-web-"
+HTTP_ERROR = 400
+FAVICON = "/favicon.ico"  # значок браузер просит сам, у камеры его может не быть, это не ошибка
+BROWSER_LOAD_MESSAGES = ("Failed to load resource", "ERR_BLOCKED_BY_CLIENT")
 # Подпись, тип и контекст элемента собираются в странице. Путь без индексов не годится: он нужен
 # только для нажатия, поэтому индексы здесь есть, а сравнение «похожих» идёт по другим полям.
 _SCAN_SCRIPT = """() => {
@@ -189,6 +192,7 @@ class StoppedRequest:
     method: str
     url: str
     verdict: Verdict
+    at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True)
@@ -274,6 +278,8 @@ class BrowserSession:
         self.late_redirects: list[StoppedRequest] = []
         self.page_label = ""
         self.page_errors: list[str] = []
+        self.bad_answers: list[str] = []
+        self._error_times: list[float] = []
         self.dialogs: list[str] = []
         self.popups: list[str] = []
         self.answers: list[int] = []
@@ -414,6 +420,7 @@ class BrowserSession:
 
     def _note_error(self, text: str) -> None:
         self.page_errors.append(text[:TEXT_LIMIT])
+        self._error_times.append(time.monotonic())
 
     def _note_console(self, message) -> None:
         if message.type == "error":
@@ -426,6 +433,8 @@ class BrowserSession:
             self.http_refused = True
         if request.is_navigation_request() and request.frame == self._page.main_frame:
             self._document_status = response.status
+        elif response.status >= HTTP_ERROR and not request.url.endswith(FAVICON):
+            self.bad_answers.append(f"{response.status} {request.method} {request.url}")
 
     def _answer_dialog(self, dialog: Dialog) -> None:
         """Ответить на диалог: без ответа нажатие зависнет.
@@ -791,6 +800,32 @@ class BrowserSession:
                         for key, value in item.items()
                     }
                     found.append(ElementInfo(frame=number, **trimmed))
+        return found
+
+    def activity(self) -> tuple[int, int, int, str]:
+        """Отметка активности страницы: изменилась — значит, что-то произошло."""
+        return len(self._seen_requests), len(self.stopped), len(self.dialogs), self._page.url
+
+    def errors_since(self, mark: int, quiet_s: float) -> list[str]:
+        """Ошибки страницы после отметки, кроме вызванных нашей остановкой запроса.
+
+        Страница падает, когда запрос оборвали, поэтому ошибка в течение `quiet_s` после остановки
+        не считается дефектом камеры. Сообщения браузера о загрузке ресурсов не считаются тоже:
+        настоящие ответы камеры с ошибкой лежат в `bad_answers`.
+
+        Args:
+            mark: длина `page_errors` до шага.
+            quiet_s: сколько секунд после остановки ошибки не считаются.
+
+        Returns:
+            Тексты ошибок.
+        """
+        found = []
+        for text, moment in zip(self.page_errors[mark:], self._error_times[mark:], strict=True):
+            if any(part in text for part in BROWSER_LOAD_MESSAGES):
+                continue
+            if not any(0 <= moment - stop.at <= quiet_s for stop in self.stopped):
+                found.append(text)
         return found
 
     def page_text(self) -> str:
