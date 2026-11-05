@@ -1,5 +1,5 @@
 """Табу держится в коде (AD-7): к камере ходят только через drivers/camera/http.py
-(HTTP), drivers/camera/probe.py, discovery.py (сокеты только на чтение) и rtsp.py
+(HTTP), drivers/camera/browser.py (браузер веб-обхода), drivers/camera/probe.py, discovery.py (сокеты только на чтение) и rtsp.py
 (поток: методы проверяет core/taboo.check_rtsp); taboo_proxy.py принимает запросы onvif-tt
 на 127.0.0.1 и пересылает их через http.py.
 

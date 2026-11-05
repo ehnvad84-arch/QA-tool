@@ -7,7 +7,7 @@
 
 Спека: docs/work/web/feature-spec.md · Ветка: feature/web
 
-- [ ] T1 — Поправка AD-7 в правилах проекта по тексту спеки · сценарий: S4, S9, S10 · проверка: auto · исполнитель: main
+- [x] T1 — Поправка AD-7 в правилах проекта по тексту спеки · сценарий: S4, S9, S10 · проверка: auto · исполнитель: main
   Предусловие: директор утвердил текст на Гейте 1.
   Файлы: docs/rules/architecture.md, docs/rules/never.md, src/qa_tool/core/taboo.py (комментарий 313-314), src/qa_tool/drivers/camera/http.py (шапка), tests/test_architecture.py (шапка).
   Готово, когда: правила и шапки согласованы с разделом «Поправка AD-7» спеки, код поведения не менялся, тесты зелёные.
