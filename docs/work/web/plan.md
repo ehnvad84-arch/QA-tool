@@ -14,7 +14,7 @@
 - [x] T2 — Playwright закреплённой версии, запуск браузера, запрет на весь контекст, базовый mock веб-камеры со свидетелем · сценарий: S7, S21 · проверка: auto · исполнитель: main
   Файлы: pyproject.toml, uv.lock, .github/workflows/ci.yml, tests/test_architecture.py; новые src/qa_tool/drivers/camera/browser.py, tests/mock_web.py, tests/test_mock_web.py, tests/drivers/test_browser.py.
   Готово, когда: `playwright` только в browser.py (архитектурный тест); POST со страницы не доходит до mock по счётчику `arrived`; pip-audit зелёный; замер памяти 8 браузеров записан в progress.md.
-- [ ] T3 — Шлюз: ловушки перехвата на mock · сценарий: S7, S9, S10, S11 · проверка: auto · исполнитель: main
+- [x] T3 — Шлюз: ловушки перехвата на mock · сценарий: S7, S9, S10, S11 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/browser.py, tests/mock_web.py; новый tests/drivers/test_browser_traps.py.
   Готово, когда: по счётчику сервера не дошли 302 на чужой хост, sendBeacon и keepalive на pagehide, запрос из снятого iframe, Service Worker, SharedWorker, форма во всплывающем окне; WebRTC и WebTransport убраны со страницы; WebSocket из воркера прекращает нажатия. Ловушка, которую закрыть нельзя, — стоп, возврат в Этап 1 с замером, дальше не идём.
 - [ ] T4 — Чистые решения табу: опасные слова, окна входа и выхода, сообщения WebSocket, статика · сценарий: S4, S7, S9, S10, S11 · проверка: auto · исполнитель: main

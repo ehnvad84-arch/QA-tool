@@ -14,13 +14,39 @@ from enum import StrEnum
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Request, Route, sync_playwright
+from playwright.sync_api import Page, Request, Route, WebSocket, WebSocketRoute, sync_playwright
 
 from qa_tool.core.taboo import is_write_request
 
 # без сетевого обмена: содержимое лежит в самой странице
 _LOCAL_SCHEMES = frozenset({"data", "blob", "about"})
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+# Закрытый порт вместо посредника: перенаправление на чужой хост перехват не видит, а так запрос
+# никуда не уйдёт. Адрес камеры идёт мимо него. `<-loopback>` снимает встроенное исключение Chromium
+# для localhost: иначе перенаправление на сам компьютер стенда прошло бы.
+_DEAD_PROXY = "http://127.0.0.1:9"
+# Запрос без кадра Playwright отпускает мимо перехвата: это keepalive и sendBeacon при уходе со
+# страницы и SharedWorker. WebRTC и WebTransport перехват не видит совсем. Скрипт — не граница
+# безопасности: он закрывает случайные обходы обычного интерфейса, а не намеренные.
+_GUARD_SCRIPT = """(() => {
+  for (const name of ['SharedWorker', 'RTCPeerConnection', 'webkitRTCPeerConnection',
+                      'RTCDataChannel', 'WebTransport']) {
+    try { Object.defineProperty(window, name, {value: undefined, configurable: false}); }
+    catch (e) {}
+  }
+  const plainFetch = window.fetch;
+  window.fetch = function (input, init) {
+    if (init && init.keepalive) init = Object.assign({}, init, {keepalive: false});
+    if (input instanceof Request && input.keepalive) {
+      input = new Request(input, {keepalive: false});
+    }
+    return plainFetch.call(this, input, init);
+  };
+  navigator.sendBeacon = function (url, data) {
+    window.fetch(url, {method: 'POST', body: data}).catch(() => {});
+    return true;
+  };
+})();"""
 
 
 class BrowserMissing(Exception):
@@ -77,6 +103,8 @@ class BrowserSession:
         own_port = parts.port or _DEFAULT_PORTS.get(parts.scheme, 80)
         self.ports = frozenset({own_port, 80, 443}) | ports
         self.stopped: list[StoppedRequest] = []
+        self.unwatched_sockets: list[str] = []
+        self._watched_sockets: set[str] = set()
         self._playwright = None
         self._browser = None
         self._context = None
@@ -90,7 +118,9 @@ class BrowserSession:
         """
         self._playwright = sync_playwright().start()
         try:
-            self._browser = self._playwright.chromium.launch(headless=True)
+            self._browser = self._playwright.chromium.launch(
+                headless=True, proxy={"server": _DEAD_PROXY, "bypass": f"<-loopback>,{self.host}"}
+            )
         except PlaywrightError as e:
             self.close()
             raise BrowserMissing(f"браузер не запустился: {e}") from e
@@ -99,13 +129,44 @@ class BrowserSession:
             ignore_https_errors=True,
             accept_downloads=False,
         )
+        self._context.add_init_script(_GUARD_SCRIPT)
         self._context.route("**/*", self._decide)
+        self._context.route_web_socket("**/*", self._watch_socket)
+        self._context.on("page", self._watch_page)
         self._page = self._context.new_page()
         return self
 
     def __exit__(self, *_exc: object) -> None:
         """Закрыть браузер."""
         self.close()
+
+    def _watch_page(self, page: Page) -> None:
+        """Следить за сокетами страницы, в том числе всплывающего окна."""
+        page.on("websocket", self._note_socket)
+
+    def _note_socket(self, socket: WebSocket) -> None:
+        """Запомнить сокет, который обошёл перехват: так открываются сокеты из воркера."""
+        if socket.url not in self._watched_sockets:
+            self.unwatched_sockets.append(socket.url)
+
+    def _watch_socket(self, socket: WebSocketRoute) -> None:
+        """Сокет страницы: сообщения к камере проходят через проверку, от камеры — свободно."""
+        self._watched_sockets.add(socket.url)
+        if not is_camera_url(socket.url, self.host, self.ports):
+            self.stopped.append(StoppedRequest("WS", socket.url, Verdict.STOP_FOREIGN))
+            socket.close()
+            return
+        server = socket.connect_to_server()
+        socket.on_message(lambda message: self._forward_message(server, socket.url, message))
+
+    def _forward_message(self, server: WebSocketRoute, url: str, message: str | bytes) -> None:
+        """Пока правил нет, к камере не идёт ни одно сообщение страницы."""
+        self.stopped.append(StoppedRequest("WS", url, Verdict.STOP_WRITE))
+
+    @property
+    def sockets_unwatched(self) -> bool:
+        """Открыт ли сокет мимо перехвата: нажимать на такой странице нельзя."""
+        return bool(self.unwatched_sockets)
 
     def _decide(self, route: Route, request: Request) -> None:
         """Пропустить запрос или остановить его до камеры."""
