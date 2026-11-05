@@ -7,17 +7,15 @@ TCP прячет потери сети повторной отправкой, п
 import json
 import time
 
+from qa_tool.checks.rtsp_refusal import is_refusal, refused_password, remember_refusal
 from qa_tool.checks.stream.common import (
     MAX_PROFILES,
     OPEN_RESERVE_S,
-    RTSP_UNAUTHORIZED,
     add_onvif_evidence,
     check_timeout_s,
     client_for,
     limit,
     read_profiles,
-    refused_password,
-    remember_refusal,
     sample_seconds,
 )
 from qa_tool.checks.stream.meter import StreamMeter
@@ -136,7 +134,7 @@ def measure(ctx: CheckContext, profile: MediaProfile, number: int, seconds: floa
             meter = StreamMeter(track.encoding, track.clock_rate)
             end = client.watch(meter.add, seconds, ctx.stop_requested, UDP_SILENCE_S)
     except RtspError as e:
-        if e.status == RTSP_UNAUTHORIZED:
+        if is_refusal(e):
             return _row(profile, number, CheckResult.stand_error(remember_refusal(ctx, e)))
         result = CheckResult(
             Status.FAILED,
@@ -147,10 +145,13 @@ def measure(ctx: CheckContext, profile: MediaProfile, number: int, seconds: floa
         return _row(profile, number, result)
     except (OSError, ValueError) as e:
         return _row(profile, number, CheckResult.stand_error(f"UDP не открылся: {e}"))
+    if end is WatchEnd.REFUSED:
+        return _row(profile, number, CheckResult.stand_error(remember_refusal(ctx, end.value)))
     stats = meter.stats()
     if end is WatchEnd.STOPPED:
         return _row(profile, number, CheckResult.skipped("прогон остановлен"))
-    if end is WatchEnd.SILENT and not stats["packets"]:
+    # срок мог выйти раньше порога тишины: при короткой выборке молчание выглядит как TIME_UP
+    if end in (WatchEnd.SILENT, WatchEnd.TIME_UP) and not stats["packets"]:
         reason = "UDP не дошёл до стенда: брандмауэр компьютера или туннель; это не ошибка камеры"
         return _row(profile, number, CheckResult.skipped(reason))
     evidence = [

@@ -1,3 +1,5 @@
+import time
+
 import keyring
 import pytest
 from keyring.backend import KeyringBackend
@@ -145,3 +147,18 @@ def test_session_header_is_cut():
 
 def test_password_with_at_sign_in_address_is_redacted_whole():
     assert redact("rtsp://admin:p@ss@w0rd@10.0.0.1/live") == "rtsp://admin:***@10.0.0.1/live"
+
+
+def test_login_with_at_sign_in_address_is_redacted():
+    assert redact("rtsp://a@b:pw@10.0.0.1/") == "rtsp://a@b:***@10.0.0.1/"
+
+
+def test_one_line_soap_is_not_eaten_up_to_the_last_at():
+    soap = "<a>http://10.0.0.1:80/onvif</a><b>x@a.org</b><c>y@b.org</c>"
+    assert "y@b.org" in redact(soap)
+
+
+def test_long_text_without_spaces_is_quick():
+    started = time.monotonic()
+    redact("a" * 200_000 + "://" + "b:" * 100_000)
+    assert time.monotonic() - started < 2

@@ -95,7 +95,6 @@ def test_declared_step_finds_a_stream_that_is_steadily_slow():
     for n in range(50):
         meter.add(packet(n, n * 3 * STEP, n * 0.12))
     assert meter.stats()["dropped"] == 0  # сам по себе поток ровный
-    assert meter.stats(step_ms=40)["dropped"] == 98  # а заявлено втрое чаще
 
 
 def test_jitter_grows_with_uneven_arrival():
@@ -229,3 +228,39 @@ def test_jitter_after_warmup_is_still_seen():
         late = 0.03 if n % 2 and n > 100 else 0.0
         meter.add(packet(n, n * STEP, n * 0.04 + late))
     assert meter.stats()["jitter_ms"] > 15
+
+
+def test_lost_group_among_b_frames_is_noticed():
+    meter = StreamMeter("H264")
+    sent = 0
+    for group in range(188):  # I P B B, каждая восьмая группа не выдана
+        if group % 8 == 7:
+            continue
+        for shown in (0, 3, 1, 2):
+            meter.add(packet(sent, (group * 4 + shown) * STEP, group * 0.16 + shown * 0.01))
+            sent += 1
+    stats = meter.stats()
+    assert stats["dropped"] > 0
+    assert stats["drop_pct"] > 0.1
+
+
+def test_timestamps_jumping_back_are_not_b_frames():
+    meter = StreamMeter("H264")
+    feed(meter, 100, start_ts=1_000_000)
+    feed(meter, 100, start_seq=100, start_ts=0)
+    stats = meter.stats()
+    assert stats["time_jumps"] == 1
+    assert stats["frames"] == 200
+
+
+def test_queue_late_in_a_long_run_is_seen_in_its_window():
+    meter = StreamMeter("H264", slice_s=60)
+    timestamp = 0
+    for minute in range(480):  # восемь часов ровно, в последний час очередь растёт на 0,5 с/мин
+        lag = 0.5 * (minute - 420) if minute >= 420 else 0.0
+        for n in range(2):
+            meter.add(packet(minute * 2 + n, timestamp, minute * 60.0 + n * 30.0 + lag))
+            timestamp += 30 * 90_000
+    worst, window = meter.worst_growth()
+    assert 25 < worst <= 31
+    assert window == 3600

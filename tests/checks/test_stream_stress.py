@@ -267,12 +267,53 @@ def test_onvif_exchange_reaches_the_first_row():
     ("growth", "seconds", "failed"),
     [
         (3.5, 3600, False),  # часы: 29,97 кадра/с с метками на 30
-        (4.3, 86_400, False),  # уход 50 ppm за сутки
+        (0.18, 86_400, False),  # уход 50 ppm: худший час суток
+        (30.0, 28_800, True),  # очередь в последний час восьми
         (2.0, 600, True),  # очередь: 12 с/ч
         (0.3, 60, False),  # быстро, но незаметно
     ],
 )
 def test_clock_drift_is_not_a_queue(growth, seconds, failed):
     context = CheckContext(Camera(1, "10.0.0.1", username="admin"), "", Place.COLOR_BOX)
-    stats = {"delay_growth_s": growth, "seconds": seconds}
+    stats = {"delay_worst_s": growth, "delay_window_s": min(seconds, 3600)}
     assert bool(stress.delay_problem(context, stats)) is failed
+
+
+def test_several_streams_breaking_at_once_send_the_password_once():
+    streams = tuple(MockStream(f"s{n}", path=f"/s{n}") for n in range(4))
+    faults = {
+        stream.path: StreamFault(break_after_s=0.5, rejects_after_break=True) for stream in streams
+    }
+    _, rows, cam = run_with_camera(streams, faults)
+    assert cam.rtsp.password_tries == 1
+    assert all(row.status is Status.STAND_ERROR for row in rows.values())
+
+
+def test_refusal_on_play_sends_no_teardown():
+    faults = {"/live": StreamFault(break_after_s=0.5, rejects_on_play_after_break=True)}
+    _, rows, cam = run_with_camera((MAIN,), faults)
+    assert rows["STREAM-STRESS-1"].status is Status.STAND_ERROR
+    assert "TEARDOWN /live" not in cam.rtsp.requests[-3:]
+
+
+def test_refusal_in_keepalive_stops_every_stream_of_the_camera():
+    _, rows, cam = run_with_camera(
+        (MAIN, SUB), None, {"stress_seconds": 6}, session_timeout=2, ping_refused=True
+    )
+    assert all(row.status is Status.STAND_ERROR for row in rows.values())
+    assert cam.rtsp.requests.count("TEARDOWN /live") == 0
+    assert cam.rtsp.password_tries <= 3
+
+
+def test_rtcp_is_not_a_sign_of_life():
+    faults = {"/live": StreamFault(rtcp_only_after_s=0.5)}
+    _, rows = check(faults=faults, extra={"stress_seconds": 4})
+    row = rows["STREAM-STRESS-1"]
+    assert row.status is Status.FAILED
+    assert "обрывов" in row.reason
+
+
+def test_stop_at_first_open_is_not_a_failure(monkeypatch):
+    monkeypatch.setattr(stress, "start_video", lambda client: (_ for _ in ()).throw(TimeoutError()))
+    _, rows = check(stop=lambda: True, extra={"stress_seconds": 1})
+    assert rows["STREAM-STRESS-1"].status is Status.SKIPPED

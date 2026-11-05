@@ -6,9 +6,11 @@
 import pytest
 
 from qa_tool.checks import load_all
+from qa_tool.checks.rtsp_refusal import is_refusal
 from qa_tool.checks.stream import network, params, stress
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
+from qa_tool.drivers.camera.rtsp import RtspError
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import MockStream, OnvifState
@@ -67,3 +69,9 @@ def test_one_refusal_covers_every_check_of_the_camera(camera):
     for check_id in (params.CHECK_ID, network.CHECK_ID, stress.CHECK_ID):
         rows_of(check_id, ctx)
     assert camera.rtsp.password_tries == 1
+
+
+def test_forbidden_counts_as_refusal():
+    assert is_refusal(RtspError("DESCRIBE → 403 Forbidden", 403))
+    assert not is_refusal(RtspError("DESCRIBE → 404 Not Found", 404))
+    assert not is_refusal(OSError("нет связи"))

@@ -269,7 +269,7 @@ def encoder(**values):
     return EncoderSettings(**{"encoding": "H264", **values})
 
 
-STATS = {"fps": 25.0, "arrival_fps": 0.0, "kbps": 1000.0, "gop": 25}
+STATS = {"fps": 25.0, "arrival_fps": 0.0, "kbps": 1000.0, "gop": 25, "time_jumps": 0}
 CONTEXT = CheckContext(Camera(1, "10.0.0.1", username="admin"), "", Place.COLOR_BOX)
 
 

@@ -499,9 +499,9 @@ def test_keepalive_stops_after_second_refusal():
         401, "Unauthorized", {"www-authenticate": 'Digest realm="r", nonce="n"'}
     )
     assert client._ping_answered(refused) is True  # устаревший nonce: повторить сразу
-    assert not client._ping_off
+    assert not client.rejected
     assert client._ping_answered(refused) is False
-    assert client._ping_off
+    assert client.rejected
 
 
 def test_static_jpeg_needs_no_rtpmap():
@@ -569,3 +569,28 @@ def test_actual_receive_buffer_is_known():
     assert client.udp_buffer > 0
     client.close()
     server.stop()
+
+
+def test_refused_client_sends_no_teardown():
+    server = MockRtspServer(metadata=False).start()
+    client = _playing(server)
+    client.rejected = True
+    client.close()
+    time.sleep(0.1)
+    server.stop()
+    assert "TEARDOWN /live" not in server.requests
+
+
+def test_dripping_camera_cannot_hold_close(monkeypatch):
+    client = RtspClient("rtsp://127.0.0.1/live")
+    client._answer_s = 0.2
+
+    def one_byte():
+        time.sleep(0.05)
+        client._buf += b"R"
+
+    monkeypatch.setattr(client, "_fill", one_byte)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        client._read_response()
+    assert time.monotonic() - started < 1

@@ -21,6 +21,7 @@ import re
 import select
 import socket
 import struct
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ UDP_LAST_PORT = 65534
 UDP_MAX_PORT = 65535
 SESSION_TIMEOUT_S = 60.0  # RFC 2326 §12.37: столько живёт сессия, если камера не сказала иначе
 TEARDOWN_S = 2.0  # сессия всё равно умрёт по сроку, а «Стоп» обещан за секунды
+PASSWORD_REFUSED_CODES = (401, 403)
 JPEG_PAYLOAD_TYPE = "26"  # RFC 3551: статический тип, `a=rtpmap` для него необязателен
 
 
@@ -109,6 +111,7 @@ class WatchEnd(Enum):
     STOPPED = "остановлено"
     SILENT = "камера молчит"
     BROKEN = "соединение оборвалось"
+    REFUSED = "камера отвергла пароль"
 
 
 @dataclass
@@ -124,7 +127,10 @@ class RtspClient:
 
     `exchanges` — строки «метод адрес → код» для доказательств протокола; учётных данных в них
     нет: адрес очищен от логина, заголовок Authorization не записывается. `rtp_channel` — канал
-    видео, который назначила камера; `udp_buffer` — фактический буфер приёма UDP, байт.
+    видео, который назначила камера; `udp_buffer` — фактический буфер приёма UDP, байт;
+    `rejected` — камера отвергла пароль: больше с ним ничего не шлём, даже TEARDOWN;
+    `ping_early_s` — насколько раньше послать первое удержание, с: потоки одной камеры не должны
+    слать его разом, иначе при отказе пароль уйдёт от каждого.
     """
 
     url: str
@@ -143,7 +149,6 @@ class RtspClient:
     _ping_method: str = "GET_PARAMETER"  # часть камер его не умеет — тогда OPTIONS
     _ping_logged: bool = False
     _ping_failed: bool = False
-    _ping_off: bool = False
     _answer_s: float = 0.0  # 0 — ответ ждём `timeout`
     _udp: socket.socket | None = field(default=None, repr=False)
     _udp_rtcp: socket.socket | None = field(default=None, repr=False)
@@ -151,6 +156,8 @@ class RtspClient:
     exchanges: list[str] = field(default_factory=list)
     rtp_channel: int = 0
     udp_buffer: int = 0
+    rejected: bool = False
+    ping_early_s: float = 0.0
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.url)
@@ -178,7 +185,7 @@ class RtspClient:
         """Завершить сессию (TEARDOWN, если она открыта) и закрыть соединение."""
         if self._sock is None:
             return
-        if self._session:
+        if self._session and not self.rejected:
             # камера уже закрыла сессию — освобождать нечего
             with contextlib.suppress(OSError, RtspError, ValueError):
                 self._answer_s = TEARDOWN_S
@@ -257,7 +264,7 @@ class RtspClient:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
             # первый отказ — обычно устаревший nonce; второй подряд значит, что камера больше не
             # принимает пароль, а каждый новый запрос с ним может приблизить блокировку
-            self._ping_off = self._ping_failed
+            self.rejected = self._ping_failed
         elif not ok:
             self._ping_method = "OPTIONS"
         if not ok or not self._ping_logged:
@@ -355,9 +362,11 @@ class RtspClient:
         # Пакеты сбрасывают тайм-аут сокета, поэтому без общего срока камера, которая шлёт видео
         # и не отвечает на запрос, держала бы нас вечно
         deadline = time.monotonic() + (self._answer_s or self.timeout)
-        while not isinstance(frame := self._read_frame(), Response):
+        while not isinstance(frame := self._take_frame(), Response):
             if time.monotonic() >= deadline:
                 raise TimeoutError("камера шлёт видео, но не отвечает на запрос")
+            if frame is None:
+                self._fill()
         return frame
 
     def request(self, method: str, uri: str, headers: dict[str, str] | None = None) -> Response:
@@ -373,6 +382,7 @@ class RtspClient:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
             response = self._send(method, uri, headers or {})
         self.exchanges.append(f"{method} {uri} → {response.status} {response.reason}".strip())
+        self.rejected = self.rejected or response.status in PASSWORD_REFUSED_CODES
         if not 200 <= response.status < 300:
             raise RtspError(
                 f"{method} → {response.status} {response.reason}".strip(), response.status
@@ -405,6 +415,8 @@ class RtspClient:
                     rtp.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFFER)
                     # система молча режет запрос по своему пределу (на Linux — rmem_max)
                     self.udp_buffer = rtp.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+                    if sys.platform == "linux":  # ядро отвечает удвоенным размером (socket(7))
+                        self.udp_buffer //= 2
                     rtp.setblocking(False)
                     self._udp, self._udp_rtcp = rtp, rtcp
                     return port, port + 1
@@ -533,12 +545,13 @@ class RtspClient:
             Причина окончания. После `SILENT` соединение исправно, после `BROKEN` — нет.
 
         Раз в половину срока сессии шлёт запрос удержания: без него камера закрыла бы сессию.
-        Камера, которая на него не отвечает, чтение не останавливает.
+        Камера, которая на него не отвечает, чтение не останавливает. Тишина считается только по
+        видео: RTCP идёт, пока жива сессия, даже если кодировщик умер.
         """
         silence_s = self.timeout if silence_s is None else silence_s
         deadline = time.perf_counter() + seconds
         heard = time.perf_counter()
-        next_ping = heard + self._lease_s / 2
+        next_ping = heard + self._lease_s / 2 - min(self.ping_early_s, self._lease_s / 4)
         self._sock.settimeout(POLL_S)
         while True:
             now = time.perf_counter()
@@ -549,7 +562,7 @@ class RtspClient:
             if now - heard >= silence_s:
                 return WatchEnd.SILENT
             try:
-                if now >= next_ping and not self._ping_off:
+                if now >= next_ping:
                     next_ping = now + self._lease_s / 2
                     self._ping()
                 if self._udp is not None and self._drain_udp(on_packet):
@@ -563,10 +576,13 @@ class RtspClient:
             except (RtspError, OSError):
                 return WatchEnd.BROKEN
             if isinstance(frame, RtpPacket):
-                heard = time.perf_counter()
+                if frame.channel == self.rtp_channel:
+                    heard = time.perf_counter()
                 on_packet(frame)
             elif self._ping_answered(frame):
                 next_ping = now
+            if self.rejected:
+                return WatchEnd.REFUSED
 
 
 def _parse_challenge(header: str) -> dict[str, str]:

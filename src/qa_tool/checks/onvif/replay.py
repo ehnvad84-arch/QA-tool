@@ -25,6 +25,7 @@ from xml.sax.saxutils import escape
 
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.storage import parse_time
+from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -297,7 +298,7 @@ def play(client: RtspClient, seconds: float, start: datetime.datetime | None) ->
     clock = {"elapsed": 0, "last": None}
 
     def enough(packet: RtpPacket) -> bool:
-        if packet.channel != 0:
+        if packet.channel != client.rtp_channel:
             return False
         if clock["last"] is not None:
             step = (packet.timestamp - clock["last"]) % 2**32
@@ -306,7 +307,7 @@ def play(client: RtspClient, seconds: float, start: datetime.datetime | None) ->
         return packet.marker and clock["elapsed"] >= goal
 
     packets = client.read_packets(seconds + START_DELAY_S, limit=200_000, until=enough)
-    return sdp, summarize(packets, track, 0)
+    return sdp, summarize(packets, track, client.rtp_channel)
 
 
 def start_point(recording: dict, seconds: float) -> datetime.datetime | None:
@@ -401,6 +402,8 @@ def replay(ctx: CheckContext) -> CheckResult:
             evidence=evidence,
             threshold=minimum,
         )
+    if refused_password(ctx):
+        return CheckResult.skipped(refused_password(ctx))
     client = RtspClient(
         to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
         ctx.camera.username,
@@ -413,7 +416,7 @@ def replay(ctx: CheckContext) -> CheckResult:
             sdp, stats = play(client, minimum.value, start_point(latest, minimum.value))
         evidence.append(Evidence("sdp.txt", sdp))
     except (OSError, RtspError, ValueError) as e:
-        return CheckResult(
+        return refusal_result(ctx, e) or CheckResult(
             Status.FAILED,
             reason=f"архив не открывается: {e}",
             expected=expected,

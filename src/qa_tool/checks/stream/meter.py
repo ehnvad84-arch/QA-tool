@@ -17,8 +17,10 @@ TIMESTAMP_SPACE = 1 << 32
 JITTER_GAIN = 16  # RFC 3550 §6.4.1
 DROP_FACTOR = 2  # промежуток вдвое длиннее обычного — кадр пропущен
 SLICE_S = 60
+SECONDS_IN_HOUR = 3600
 # Камера с кэшем группы кадров отдаёт его пачкой сразу после PLAY: это не джиттер сети и не темп
 WARMUP_S = 3.0
+MAX_B_RUN = 16  # предел H.264 и H.265 на практике; длинная серия назад — это сброс меток камеры
 
 
 @dataclass
@@ -34,25 +36,33 @@ class Tally:
     ticks: int = 0  # сумма промежутков между кадрами в единицах метки RTP
     intervals: int = 0  # сколько промежутков: кадры B в ticks не входят, а в частоту входят
     b_run: int = 0  # самая длинная серия кадров B: на столько кадров законно шагают метки
+    time_jumps: int = 0  # сколько раз метки отпрыгнули назад дальше кадров B
     steps: Counter = field(default_factory=Counter)  # промежуток, мс → сколько раз
     min_delay_s: float | None = None
 
-    def stats(self, clock_rate: int, step_ms: int | None = None) -> dict:
+    def stats(self, clock_rate: int) -> dict:
         """Итог счёта.
+
+        Пропуски с кадрами B считаются приближённо: выпавший кадр B меток вперёд не двигает и
+        виден только в частоте. Выпавшая группа кадров видна, поэтому строка не проходит.
 
         Args:
             clock_rate: частота меток RTP, Гц.
-            step_ms: заявленный промежуток между кадрами, мс; None — самый частый измеренный.
         """
         seconds = self.ticks / clock_rate
-        usual = step_ms or (self.steps.most_common(1)[0][0] if self.steps else 0)
-        legal = 1
-        if self.b_run and self.intervals and not step_ms:
-            # с кадрами B метка вперёд шагает через серию: обычный шаг берётся средний за кадр
+        usual = self.steps.most_common(1)[0][0] if self.steps else 0
+        legal, limit = 1, usual * DROP_FACTOR
+        if self.b_run and self.intervals:
+            # с кадрами B метка вперёд шагает через серию: обычный шаг берётся средний за кадр,
+            # а он сам растёт от пропусков, поэтому порог на кадр дальше законного шага
             usual, legal = seconds * 1000 / self.intervals, self.b_run + 1
-        limit = usual * legal * DROP_FACTOR
+            limit = usual * (legal + 1)
         dropped = (
-            sum(n * (round(gap / usual) - legal) for gap, n in self.steps.items() if gap >= limit)
+            sum(
+                n * max(round(gap / usual) - legal, 1)
+                for gap, n in self.steps.items()
+                if gap >= limit
+            )
             if usual
             else 0
         )
@@ -71,6 +81,7 @@ class Tally:
             "dropped": dropped,
             "drop_pct": round(100 * dropped / shown, 3) if shown else 0.0,
             "longest_gap_s": round(max(self.steps, default=0) / 1000, 3),
+            "time_jumps": self.time_jumps,
         }
 
 
@@ -182,22 +193,30 @@ class StreamMeter:
             tally.frames += 1
             tally.intervals += step is not None
         if step is not None and step >= TIMESTAMP_SPACE // 2:
-            self._count_b_frame(tallies)  # кадр показывается раньше уже пришедшего
+            self._count_backward(packet, tallies)
         else:
             self._move_timeline(packet, step, tallies)
         self._count_arrival(packet)
         if key:
             self._mark_key(tallies)
 
-    def _count_b_frame(self, tallies: tuple[Tally, Tally]) -> None:
+    def _count_backward(self, packet: RtpPacket, tallies: tuple[Tally, Tally]) -> None:
+        """Кадр показывается раньше уже пришедшего: это кадр B или сброс меток камеры."""
         self._b_run += 1
+        if self._b_run <= MAX_B_RUN:
+            return
+        self._b_run = 0
+        self._timeline = packet.timestamp
+        self._rebase = True
         for tally in tallies:
-            tally.b_run = max(tally.b_run, self._b_run)
+            tally.time_jumps += 1
 
     def _move_timeline(
         self, packet: RtpPacket, step: int | None, tallies: tuple[Tally, Tally]
     ) -> None:
         self._timeline = packet.timestamp
+        for tally in tallies:
+            tally.b_run = max(tally.b_run, self._b_run)
         self._b_run = 0
         if step is not None:
             self._elapsed_ticks += step
@@ -268,24 +287,44 @@ class StreamMeter:
         delays = [s.min_delay_s for s in self.slices if s.min_delay_s is not None]
         return round(delays[-1] - delays[0], 3) if len(delays) > 1 else 0.0
 
+    def worst_growth(self, window_s: float = SECONDS_IN_HOUR) -> tuple[float, float]:
+        """Самый большой рост задержки внутри окна: поздняя очередь не тонет в среднем за сутки.
+
+        Args:
+            window_s: длина окна, с.
+
+        Returns:
+            Рост, с, и длина окна, с: на коротком потоке окно равно потоку.
+        """
+        delays = [s.min_delay_s for s in self.slices if s.min_delay_s is not None]
+        reach = max(round(window_s / self.slice_s), 1)
+        worst = 0.0
+        for start, delay in enumerate(delays):
+            for later in delays[start + 1 : start + 1 + reach]:
+                worst = max(worst, later - delay)
+        return round(worst, 3), min(window_s, max(len(delays) - 1, 1) * self.slice_s)
+
     @property
     def arrival_fps(self) -> float:
         """Частота по времени прихода, без разгона; 0 — поток короче разгона."""
         seconds = self._steady_to - (self._steady_from or 0.0)
         return round(self._steady_frames / seconds, 2) if self._steady_frames and seconds else 0.0
 
-    def stats(self, step_ms: int | None = None) -> dict:
-        """Итог по всему потоку; `step_ms` — заявленный промежуток между кадрами, мс."""
+    def stats(self) -> dict:
+        """Итог по всему потоку."""
+        worst, window_s = self.worst_growth()
         mean = self._jitter_sum / self._jitter_count if self._jitter_count else 0.0
         return {
-            **self.total.stats(self.clock_rate, step_ms),
+            **self.total.stats(self.clock_rate),
             "arrival_fps": self.arrival_fps,
             "gop": self.gop,
             "jitter_ms": round(self.max_jitter_s * 1000, 1),
             "jitter_mean_ms": round(mean * 1000, 1),
             "delay_growth_s": self.delay_growth_s,
+            "delay_worst_s": worst,
+            "delay_window_s": window_s,
         }
 
-    def minutes(self, step_ms: int | None = None) -> list[dict]:
+    def minutes(self) -> list[dict]:
         """Итоги по минутам — для таблицы стресс-теста."""
-        return [s.stats(self.clock_rate, step_ms) for s in self.slices]
+        return [s.stats(self.clock_rate) for s in self.slices]

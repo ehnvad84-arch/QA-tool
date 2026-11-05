@@ -8,6 +8,7 @@ Authorization, адрес потока — на хосте камеры из с�
 
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.replay import play, soap_evidence
+from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -85,6 +86,8 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             evidence=evidence,
             threshold=minimum,
         )
+    if refused_password(ctx):
+        return CheckResult.skipped(refused_password(ctx))
     client = RtspClient(
         to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
         ctx.camera.username,
@@ -96,7 +99,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             sdp, stats = play(client, minimum.value, None)
         evidence.append(Evidence("sdp.txt", sdp))
     except (OSError, RtspError, ValueError) as e:
-        return CheckResult(
+        return refusal_result(ctx, e) or CheckResult(
             Status.FAILED,
             reason=f"поток профиля {profile} не открывается: {e}",
             expected=expected,

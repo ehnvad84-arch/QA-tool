@@ -12,6 +12,7 @@ UDP не поддерживается: клиент получает 461 и до
 """
 
 import base64
+import contextlib
 import datetime
 import hashlib
 import os
@@ -144,6 +145,8 @@ class StreamFault:
     setup_refused_after_break: bool = False  # после обрыва DESCRIBE отвечает, SETUP — 453
     no_frames_after_break: bool = False  # после обрыва RTSP жив, а кадров нет: умер кодировщик
     rejects_after_break: bool = False  # после обрыва камера отвергает пароль
+    rejects_on_play_after_break: bool = False  # то же, но DESCRIBE и SETUP ещё проходят
+    rtcp_only_after_s: float = 0.0  # через столько секунд кодировщик умирает, RTCP идёт дальше
 
 
 class _Session:
@@ -186,7 +189,8 @@ class _Session:
         if "metadata" in self.channels:
             threading.Thread(target=self._metadata, daemon=True).start()
         if "video" in self.channels:
-            self._video()
+            with contextlib.suppress(OSError):  # клиент закрыл соединение посреди кадра
+                self._video()
 
     def _video(self) -> None:
         if not self.frames:
@@ -203,6 +207,9 @@ class _Session:
             if lease and time.monotonic() - self.last_seen > lease:
                 server.expired = True
                 self.hang_up()
+                return
+            if fault.rtcp_only_after_s and elapsed > fault.rtcp_only_after_s:
+                self._rtcp_forever()
                 return
             due = fault.break_after_s and elapsed > fault.break_after_s
             if due and self.path not in server.broken:
@@ -226,6 +233,11 @@ class _Session:
             index += 1
             shown += 1
             self.stop.wait(max(started + shown / FPS - time.monotonic(), 0))
+
+    def _rtcp_forever(self) -> None:
+        report = b"\x80\xc8\x00\x06" + bytes(24)  # отчёт отправителя, RFC 3550 §6.4.1
+        while not self.stop.wait(0.1):
+            self.write(b"$" + bytes([self.channels["video"] + 1]) + struct.pack("!H", 28) + report)
 
     def _metadata(self) -> None:
         started = time.monotonic()
@@ -262,11 +274,13 @@ class MockRtspServer:
         reject_password: bool = False,
         silent_teardown: bool = False,
         assigned_channel: int | None = None,
+        ping_refused: bool = False,
     ):
         self.metadata = metadata
         self.reject_password = reject_password  # 401 на любой пароль
         self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
         self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
+        self.ping_refused = ping_refused  # посреди сессии пароль перестал подходить
         self.assigned_channel = assigned_channel  # канал, который камера назначает сама
         self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
@@ -387,6 +401,16 @@ class MockRtspServer:
                         fault = server.faults.get(path, StreamFault())
                         after_break = path in server.broken
                         if server.reject_password or (fault.rejects_after_break and after_break):
+                            server.password_tries += "authorization" in headers
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n'.encode()
+                            )
+                            continue
+                        late_refusal = fault.rejects_on_play_after_break and after_break
+                        if (method == "PLAY" and late_refusal) or (
+                            method in ("GET_PARAMETER", "OPTIONS") and server.ping_refused
+                        ):
                             server.password_tries += "authorization" in headers
                             write(
                                 f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"

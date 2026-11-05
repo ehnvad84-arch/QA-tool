@@ -39,8 +39,7 @@ DECODE_TIMEOUT_S = 20.0
 SAMPLE_LIMIT = 64 << 20  # 30 с потока 16 Мбит/с; больше декодеру не нужно
 CODEC_FORMATS = {"H264": "h264", "H265": "hevc", "HEVC": "hevc"}
 DECODER_LINES_LIMIT = 20  # строк ошибок декодера в доказательствах
-RTSP_UNAUTHORIZED = 401
-PASSWORD_REFUSED = "stream_password_refused"  # ключ в ctx.extra: общий на проверки и нити
+ENOUGH_OF_SAMPLE = 0.8  # меньше — поток прервался, а не «немного короче»
 
 
 class ToolMissing(RuntimeError):
@@ -87,23 +86,6 @@ def client_for(ctx: CheckContext, profile: MediaProfile, timeout: float = 10.0) 
     """Клиент RTSP на адрес камеры со стенда: хост из ответа камеры недоверенный (NAT)."""
     url = to_stand_address(profile.uri, ctx.camera.address, ctx.camera.rtsp_port)
     return RtspClient(url, ctx.camera.username, ctx.password, timeout=timeout)
-
-
-def remember_refusal(ctx: CheckContext, error: Exception) -> str:
-    """Запомнить отказ в пароле на весь прогон камеры и вернуть причину для строки.
-
-    Неверный пароль на камере уменьшает счётчик попыток (блокировка), поэтому после отказа ни
-    одна проверка потока и ни одна нить с этим паролем больше не идёт. ONVIF при этом может
-    пройти: у камеры бывают разные учётные записи для ONVIF и RTSP.
-    """
-    reason = f"камера не приняла логин и пароль для видео: {error}"
-    ctx.extra[PASSWORD_REFUSED] = reason
-    return reason
-
-
-def refused_password(ctx: CheckContext) -> str:
-    """Причина, если камера уже отвергла пароль на этом прогоне; пусто — не отвергала."""
-    return ctx.extra.get(PASSWORD_REFUSED, "")
 
 
 def add_onvif_evidence(rows: list[ChildResult], evidence: list[Evidence]) -> None:

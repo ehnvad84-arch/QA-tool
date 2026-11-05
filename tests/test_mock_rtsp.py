@@ -135,7 +135,7 @@ def test_fault_lost_packets_seen_by_meter():
 
 
 def test_fault_dropped_frames_seen_by_meter():
-    stats = measure(StreamFault(drop_every=4))[0].stats(step_ms=1000 // FPS)
+    stats = measure(StreamFault(drop_every=4))[0].stats()
     assert stats["lost"] == 0
     assert stats["dropped"] > 0
 

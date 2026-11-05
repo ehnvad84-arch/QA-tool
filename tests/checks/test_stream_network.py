@@ -77,6 +77,11 @@ def test_small_receive_buffer_is_shown():
     assert "буфер приёма стенда мал: 200 КБ" in result.actual
 
 
+def test_short_sample_without_packets_is_not_a_pass():
+    row = check(state(rtsp_udp_blackhole=True))["STREAM-NET-1"]
+    assert row.status is Status.SKIPPED
+
+
 def test_cut_before_first_packet_is_not_blamed_on_the_firewall(monkeypatch):
     monkeypatch.setattr(RtspClient, "watch", lambda *args, **kwargs: WatchEnd.BROKEN)
     row = check(state())["STREAM-NET-1"]

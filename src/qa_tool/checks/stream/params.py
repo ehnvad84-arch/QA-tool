@@ -11,11 +11,12 @@ import tempfile
 import time
 from pathlib import Path
 
+from qa_tool.checks.rtsp_refusal import is_refusal, refused_password, remember_refusal
 from qa_tool.checks.stream.common import (
     CODEC_FORMATS,
+    ENOUGH_OF_SAMPLE,
     MAX_PROFILES,
     OPEN_RESERVE_S,
-    RTSP_UNAUTHORIZED,
     DecoderFailed,
     Sampler,
     ToolMissing,
@@ -25,8 +26,6 @@ from qa_tool.checks.stream.common import (
     decode,
     limit,
     read_profiles,
-    refused_password,
-    remember_refusal,
     sample_seconds,
     start_video,
 )
@@ -47,7 +46,6 @@ from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, Track,
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
 
 CHECK_ID = "STREAM-PARAMS-1"
-ENOUGH_OF_SAMPLE = 0.8  # меньше — поток прервался, а не «немного короче»
 JPEG_NAMES = {"JPEG", "MJPEG"}
 
 
@@ -116,6 +114,8 @@ def param_problems(
             f"кадры приходят с частотой {arrival:g} кадр/с, а метки времени "
             f"показывают {stats['fps']:g}: частота и битрейт по меткам неверны"
         )
+    if stats["time_jumps"]:
+        problems.append(f"метки времени прыгали назад {stats['time_jumps']} раз")
     bitrate = bitrate_problem(encoder, stats["kbps"], limit(ctx, "stream.bitrate_pct").value)
     if bitrate:
         problems.append(bitrate)
@@ -211,7 +211,7 @@ class ProfileRun:
             end = self._read(client, seconds)
         except RtspError as e:
             self.exchanges = client.exchanges
-            if e.status == RTSP_UNAUTHORIZED:
+            if is_refusal(e):
                 result = CheckResult.stand_error(remember_refusal(self.ctx, e))
                 return [self.row("PARAMS", "параметры", result, Severity.MAJOR)]
             return [self._failed_open(f"поток не открывается: {e}")]
@@ -221,6 +221,9 @@ class ProfileRun:
         finally:
             has_sample = self.sampler.close() if self.sampler else False
         self.exchanges = client.exchanges
+        if end is WatchEnd.REFUSED:
+            result = CheckResult.stand_error(remember_refusal(self.ctx, end.value))
+            return [self.row("PARAMS", "параметры", result, Severity.MAJOR)]
         stats = self.meter.stats()
         cut = self._cut_short(end, stats, seconds)
         if end is WatchEnd.STOPPED:
