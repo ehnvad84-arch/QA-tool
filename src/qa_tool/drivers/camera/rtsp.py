@@ -35,6 +35,7 @@ MAX_BODY = 1 << 20
 RECV_SIZE = 1 << 16
 POLL_S = 0.5  # как часто `watch` проверяет «Стоп», когда камера молчит
 HEAD_END = re.compile(rb"\r?\n\r?\n")
+SESSION_TIMEOUT_S = 60.0  # RFC 2326 §12.37: столько живёт сессия, если камера не сказала иначе
 
 
 class RtspError(ConnectionError):
@@ -120,6 +121,10 @@ class RtspClient:
     _session: str = ""
     _challenge: dict[str, str] = field(default_factory=dict, repr=False)
     _nc: int = 0
+    _lease_s: float = SESSION_TIMEOUT_S
+    _ping_method: str = "GET_PARAMETER"  # часть камер его не умеет — тогда OPTIONS
+    _ping_logged: bool = False
+    _ping_failed: bool = False
     exchanges: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -187,7 +192,7 @@ class RtspClient:
             header += f', opaque="{self._challenge["opaque"]}"'
         return f'{header}, response="{response}"'
 
-    def _send(self, method: str, uri: str, headers: dict[str, str]) -> Response:
+    def _compose(self, method: str, uri: str, headers: dict[str, str]) -> bytes:
         self._cseq += 1
         lines = [f"{method} {uri} RTSP/1.0", f"CSeq: {self._cseq}", "User-Agent: QA-tool"]
         lines += [f"{k}: {v}" for k, v in {**self.extra_headers, **headers}.items()]
@@ -196,8 +201,37 @@ class RtspClient:
         auth = self._authorization(method, uri)
         if auth:
             lines.append(f"Authorization: {auth}")
-        self._sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+        return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+    def _send(self, method: str, uri: str, headers: dict[str, str]) -> Response:
+        self._sock.sendall(self._compose(method, uri, headers))
         return self._read_response()
+
+    def _ping(self) -> None:
+        """Продлить сессию, не дожидаясь ответа.
+
+        `request` здесь нельзя: он ждёт ответ и выбрасывает весь RTP, что придёт за это время, а
+        разрыв номеров считается потерей у камеры. Ответ разбирает цикл `watch`.
+        """
+        check_rtsp(self._ping_method)
+        self._sock.sendall(self._compose(self._ping_method, self.url, {}))
+
+    def _ping_answered(self, response: Response) -> bool:
+        """Разобрать ответ на удержание; True — повторить сразу.
+
+        Ждать следующей отправки при отказе нельзя: она придётся на конец срока сессии.
+        """
+        ok = 200 <= response.status < 300
+        if response.status == 401:
+            self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
+        elif not ok:
+            self._ping_method = "OPTIONS"
+        if not ok or not self._ping_logged:
+            self.exchanges.append(f"удержание сессии → {response.status} {response.reason}".strip())
+            self._ping_logged = True
+        retry = not ok and not self._ping_failed
+        self._ping_failed = not ok
+        return retry
 
     def _fill(self) -> None:
         """Дочитать из соединения в буфер; тайм-аут ничего не портит: начатый кадр остаётся в нём.
@@ -327,7 +361,11 @@ class RtspClient:
         """
         transport = f"RTP/AVP/TCP;unicast;interleaved={channel}-{channel + 1}"
         response = self.request("SETUP", track.control, {"Transport": transport})
-        self._session = self._session or response.headers.get("session", "").split(";")[0]
+        session, _, options = response.headers.get("session", "").partition(";")
+        self._session = self._session or session.strip()
+        lease = re.search(r"timeout\s*=\s*(\d+)", options)
+        if lease and int(lease[1]):
+            self._lease_s = float(lease[1])
 
     def play(self, headers: dict[str, str] | None = None) -> None:
         """Запустить поток с начала (`Range: npt=0-`); `headers` — например, Range архива.
@@ -384,10 +422,14 @@ class RtspClient:
 
         Returns:
             Причина окончания. После `SILENT` соединение исправно, после `BROKEN` — нет.
+
+        Раз в половину срока сессии шлёт запрос удержания: без него камера закрыла бы сессию.
+        Камера, которая на него не отвечает, чтение не останавливает.
         """
         silence_s = self.timeout if silence_s is None else silence_s
         deadline = time.perf_counter() + seconds
         heard = time.perf_counter()
+        next_ping = heard + self._lease_s / 2
         self._sock.settimeout(POLL_S)
         while True:
             now = time.perf_counter()
@@ -398,6 +440,9 @@ class RtspClient:
             if now - heard >= silence_s:
                 return WatchEnd.SILENT
             try:
+                if now >= next_ping:
+                    next_ping = now + self._lease_s / 2
+                    self._ping()
                 frame = self._take_frame()
                 if frame is None:
                     self._fill()
@@ -409,6 +454,8 @@ class RtspClient:
             if isinstance(frame, RtpPacket):
                 heard = time.perf_counter()
                 on_packet(frame)
+            elif self._ping_answered(frame):
+                next_ping = now
 
 
 def _parse_challenge(header: str) -> dict[str, str]:

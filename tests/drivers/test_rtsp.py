@@ -262,3 +262,76 @@ def test_endless_header_raises():
     client._buf += b"RTSP/1.0 200 OK\r\nX: " + b"a" * 2_000_000
     with pytest.raises(RtspError):
         client._take_frame()
+
+
+def _numbers_after_watch(server: MockRtspServer, seconds: float) -> tuple[list[int], WatchEnd]:
+    packets: list[RtpPacket] = []
+    client = _playing(server)
+    end = client.watch(packets.append, seconds)
+    client.close()
+    return [p.sequence for p in packets], end
+
+
+@needs_video
+def test_session_dies_without_keepalive_on_mock():
+    """Сам mock закрывает сессию без удержания: иначе тесты ниже ничего бы не доказывали."""
+    server = MockRtspServer(metadata=False, session_timeout=1).start()
+    try:
+        client = _playing(server)
+        assert client.read_packets(3, limit=1_000_000)
+        assert server.expired
+        client.close()
+    finally:
+        server.stop()
+
+
+@needs_video
+def test_keepalive_holds_session_and_loses_no_packets():
+    server = MockRtspServer(metadata=False, session_timeout=1, ping_delay_s=0.2).start()
+    try:
+        numbers, end = _numbers_after_watch(server, 2.5)
+    finally:
+        server.stop()
+    assert end is WatchEnd.TIME_UP
+    assert not server.expired
+    assert server.requests.count("GET_PARAMETER /live") >= 3
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+
+
+@needs_video
+def test_camera_silent_on_keepalive_does_not_stop_reading():
+    server = MockRtspServer(metadata=False, session_timeout=1, ping="silent").start()
+    try:
+        numbers, end = _numbers_after_watch(server, 2.5)
+    finally:
+        server.stop()
+    assert end is WatchEnd.TIME_UP
+    assert len(numbers) > 30
+
+
+@needs_video
+def test_keepalive_falls_back_to_options_when_refused():
+    server = MockRtspServer(metadata=False, session_timeout=1, ping="refused").start()
+    try:
+        _, end = _numbers_after_watch(server, 2.5)
+    finally:
+        server.stop()
+    assert end is WatchEnd.TIME_UP
+    assert not server.expired
+    assert server.requests.count("GET_PARAMETER /live") == 1
+    assert server.requests.count("OPTIONS /live") >= 2
+
+
+def test_keepalive_goes_through_taboo(monkeypatch):
+    seen = []
+    monkeypatch.setattr("qa_tool.drivers.camera.rtsp.check_rtsp", seen.append)
+
+    class Sink:
+        def sendall(self, data):
+            pass
+
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._sock = Sink()
+    client._ping()
+    client._sock = None
+    assert seen == ["GET_PARAMETER"]

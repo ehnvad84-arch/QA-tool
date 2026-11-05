@@ -16,6 +16,7 @@ import datetime
 import hashlib
 import os
 import shutil
+import socket
 import socketserver
 import struct
 import subprocess
@@ -130,8 +131,12 @@ def rtp_packets(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
 
 
 class _Session:
-    def __init__(self, path: str, frames, write, channels: dict[str, int]):
+    def __init__(
+        self, path: str, frames, write, channels: dict[str, int], timeout_s=0, on_expire=None
+    ):
         self.path, self.frames, self.write = path, frames, write
+        self.timeout_s, self.on_expire = timeout_s, on_expire
+        self.last_seen = time.monotonic()
         self.channels = channels  # дорожка («video», «metadata») → канал interleaved
         self.stop = threading.Event()
         self.seq = {"video": 1, "metadata": 1}
@@ -167,6 +172,9 @@ class _Session:
         started = time.monotonic()
         archive_start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60)
         while not self.stop.is_set():
+            if self.timeout_s and time.monotonic() - self.last_seen > self.timeout_s:
+                self.on_expire()
+                return
             if index >= len(self.frames):
                 if replay:
                     return  # конец архива: дальше камера молчит
@@ -206,10 +214,20 @@ class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
     def __init__(
-        self, metadata: bool = True, require_unsupported: bool = False, silent: bool = False
+        self,
+        metadata: bool = True,
+        require_unsupported: bool = False,
+        silent: bool = False,
+        session_timeout: int = 0,
+        ping: str = "answer",
+        ping_delay_s: float = 0.0,
     ):
         self.metadata = metadata
         self.silent = silent  # поток запущен, но камера ничего не шлёт
+        self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
+        self.ping = ping  # GET_PARAMETER: answer, silent (молчит, но считает), refused (405)
+        self.ping_delay_s = ping_delay_s
+        self.expired = False
         self.require_unsupported = require_unsupported
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
@@ -266,6 +284,10 @@ class MockRtspServer:
                         self.wfile.write(data)
                         self.wfile.flush()
 
+                def expire() -> None:
+                    server.expired = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+
                 try:
                     while True:
                         line = self.rfile.readline()
@@ -287,6 +309,17 @@ class MockRtspServer:
                         server.requests.append(f"{method} {path}")
                         server.headers.append((method, path, headers))
                         cseq = headers.get("cseq", "0")
+                        if method == "GET_PARAMETER" and server.ping == "refused":
+                            write(
+                                f"RTSP/1.0 405 Method Not Allowed\r\nCSeq: {cseq}\r\n\r\n".encode()
+                            )
+                            continue
+                        if session:
+                            session.last_seen = time.monotonic()
+                        if method == "GET_PARAMETER" and server.ping == "silent":
+                            continue
+                        if method == "GET_PARAMETER":
+                            time.sleep(server.ping_delay_s)
                         if server.require_unsupported and "require" in headers:
                             write(
                                 f"RTSP/1.0 551 Option not supported\r\nCSeq: {cseq}\r\n"
@@ -309,13 +342,25 @@ class MockRtspServer:
                             first = int(transport.split("interleaved=")[1].split("-")[0])
                             kinds = server.tracks(path)
                             channels[kinds[min(int(track or 1), len(kinds)) - 1]] = first
+                            lease = (
+                                f";timeout={server.session_timeout}"
+                                if server.session_timeout
+                                else ""
+                            )
                             extra = (
                                 f"Transport: RTP/AVP/TCP;unicast;interleaved={first}-{first + 1}\r\n"
-                                "Session: 1A2B3C\r\n"
+                                f"Session: 1A2B3C{lease}\r\n"
                             )
                         elif method == "PLAY":
                             frames = [] if server.silent else server.frames
-                            session = _Session(path, frames, write, dict(channels))
+                            session = _Session(
+                                path,
+                                frames,
+                                write,
+                                dict(channels),
+                                server.session_timeout,
+                                expire,
+                            )
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()
