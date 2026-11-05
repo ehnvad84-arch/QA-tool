@@ -17,8 +17,8 @@
 - [x] T3 — Шлюз: ловушки перехвата на mock · сценарий: S7, S9, S10, S11 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/browser.py, tests/mock_web.py; новый tests/drivers/test_browser_traps.py.
   Готово, когда: по счётчику сервера не дошли 302 на чужой хост, sendBeacon и keepalive на pagehide, запрос из снятого iframe, Service Worker, SharedWorker, форма во всплывающем окне; WebRTC и WebTransport убраны со страницы; WebSocket из воркера прекращает нажатия. Ловушка, которую закрыть нельзя, — стоп, возврат в Этап 1 с замером, дальше не идём.
-- [ ] T4 — Чистые решения табу: опасные слова, окна входа и выхода, сообщения WebSocket, статика · сценарий: S4, S7, S9, S10, S11 · проверка: auto · исполнитель: main
-  Файлы: src/qa_tool/core/taboo.py, tests/core/test_taboo.py.
+- [x] T4 — Чистые решения табу: опасные слова, окна входа и выхода, сообщения WebSocket, статика · сценарий: S4, S7, S9, S10, S11 · проверка: auto · исполнитель: main
+  Файлы: src/qa_tool/core/taboo.py, tests/core/test_taboo_browser.py.
   Готово, когда: тесты без браузера зелёные: `?format=jpeg` не опасно, `/api/sdcard/prepare` опасно, `/reboot.html` остановлен, `/js/reboot.js` пропущен, пароль `network1` не срывает вход, new/old/confirm запрещены и в окне, подпись «Тревожный выход» не считается выходом из системы; `check_web_request` и старые тесты табу не изменились.
 - [ ] T5 — Расчёт Digest вынесен из rtsp.py · сценарий: S4, S12 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/rtsp.py, новый src/qa_tool/drivers/camera/digest.py, новый tests/drivers/test_digest.py.

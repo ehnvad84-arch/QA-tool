@@ -6,9 +6,10 @@
 восстановление и импорт полной конфигурации, смена способа хранения паролей, сертификатов и TLS.
 """
 
+import json
 import posixpath
 import re
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 
 class TabooViolation(PermissionError):
@@ -351,6 +352,269 @@ def check_web_request(method: str, url: str, body: str = "", page_title: str = "
             f"{method.upper()} {url} не отправлен: похоже на изменение сети, учётных записей "
             f"или сброс (признак «{word}»)"
         )
+
+
+# --- Браузер веб-обхода: опасные действия и окна (AD-7, дополнение 2026-11-05) -----------------
+# Всё ниже вызывает только drivers/camera/browser.py. `http.py` эти правила не применяет, поэтому
+# форматирование SD по галочке «разрушающие» работает как раньше.
+
+WEB_DANGER_PARTS = ("reboot", "restart", "shutdown", "poweroff")  # ловит и «sysreboot»
+WEB_DANGER_PREFIXES = (
+    "erase",
+    "purge",
+    "clear",
+    "delete",
+    "remove",
+    "перезагруз",
+    "перезапуст",
+    "выключ",
+    "форматир",
+    "удал",
+    "очист",
+    "стереть",
+    "стира",  # не «стер»: иначе ловится «Стерео»
+)
+# «wipe» только целиком: /api/ptz/wiper — дворник камеры. «формат» не берём: «Формат даты».
+WEB_DANGER_WORDS = frozenset({"wipe", "reset", "formatsd", "sdformat"})
+# Имя параметра «format» ничего не значит: `?format=jpeg`, `"format": "H264"`. Опасно только как
+# часть пути или значение.
+WEB_DANGER_VALUE_WORD = "format"
+WEB_DANGER_PATHS = frozenset({"/api/sdcard/prepare"})  # форматирование SD у «Рувер»
+# Чтение состояния с опасным словом в адресе: камера ничего не делает, а страница без него падает.
+WEB_DANGER_SAFE_READS = frozenset({"/api/service/is_reset"})
+
+WEB_ACTION_WORDS = frozenset(
+    {
+        "start",
+        "stop",
+        "enable",
+        "disable",
+        "trigger",
+        "move",
+        "run",
+        "exec",
+        "cmd",
+        "ptz",
+        "goto",
+        "toggle",
+    }
+)
+_STATIC_SUFFIXES = (
+    ".js",
+    ".css",
+    ".html",
+    ".htm",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".webp",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".map",
+)
+# Слова входа, снятые внутри окна входа и выхода. Остальные слова-признаки действуют.
+WEB_LOGIN_PREFIXES = (
+    "user",
+    "passw",
+    "pwd",
+    "pass",
+    "psw",
+    "login",
+    "logon",
+    "auth",
+    "credential",
+    "логин",
+    "парол",
+    "пользовател",
+)
+PASSWORD_CHANGE_WORDS = frozenset(
+    {
+        "new",
+        "old",
+        "confirm",
+        "repeat",
+        "change",
+        "modify",
+        "set",
+        "reset",
+        "update",
+        "activate",
+        "register",
+        "recover",
+        "forgot",
+    }
+)
+_PASSWORD_KEY = re.compile(r"passw|pwd|psw|парол", re.IGNORECASE)
+# Хеш пароля и токены случайны: регистр букв в них может сложиться в слово «Set».
+_TOKEN_VALUE = re.compile(r"^[A-Za-z0-9+/=_-]{24,}$")
+LOGOUT_LABELS = frozenset({"выйти", "выход из системы", "logout", "log out", "sign out", "signout"})
+
+
+class WebDangerViolation(TabooViolation):
+    """Опасное действие через браузер: перезагрузка, форматирование, удаление, очистка."""
+
+
+def web_danger_word(*texts: str) -> str | None:
+    """Первое слово опасного действия в подписи или адресе, иначе None.
+
+    Здесь `format` опасно всегда: подписи и адреса проверяются без имён параметров.
+    """
+    for word in words(*texts) + _WORD.findall(" ".join(t for t in texts if t).lower()):
+        if (
+            word in WEB_DANGER_WORDS
+            or word == WEB_DANGER_VALUE_WORD
+            or word.startswith(WEB_DANGER_PREFIXES)
+            or any(part in word for part in WEB_DANGER_PARTS)
+        ):
+            return word
+    return None
+
+
+def _named_parts(text: str) -> tuple[list[str], list[str]]:
+    """Имена и значения из JSON или формы; прочий текст целиком считается значением."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict | list):
+        names: list[str] = []
+        values: list[str] = []
+        todo = [data]
+        while todo:
+            item = todo.pop()
+            if isinstance(item, dict):
+                names += [str(key) for key in item]
+                todo += item.values()
+            elif isinstance(item, list):
+                todo += item
+            elif item is not None:
+                values.append(str(item))
+        return names, values
+    pairs = parse_qsl(text, keep_blank_values=True)
+    if pairs and "=" in text and not text.lstrip().startswith("<"):
+        return [key for key, _ in pairs], [value for _, value in pairs]
+    return [], [text] if text else []
+
+
+def is_static_asset(method: str, url: str) -> bool:
+    """Файл интерфейса без параметров: читается всегда, иначе `/js/reboot.js` сломал бы страницу.
+
+    Страница `.html` с опасным словом статикой не считается: на чужой камере её открытие
+    может быть действием.
+    """
+    parts = urlsplit(url)
+    path = unquote(parts.path).lower()
+    if method.upper() not in ("GET", "HEAD") or parts.query or not path.endswith(_STATIC_SUFFIXES):
+        return False
+    return not (path.endswith((".html", ".htm")) and web_danger_word(path))
+
+
+def check_web_danger(method: str, url: str, body: str = "") -> None:
+    """Не пропустить опасное действие браузера ни при каких галочках.
+
+    Raises:
+        WebDangerViolation: в пути, параметрах или теле есть признак опасного действия.
+    """
+    path, query = _target(url)
+    if method.upper() in _SAFE_WEB_METHODS and path in WEB_DANGER_SAFE_READS:
+        return
+    if path in WEB_DANGER_PATHS:
+        raise WebDangerViolation(f"{method.upper()} {url} не отправлен: опасное действие")
+    query_names, query_values = _named_parts(query)
+    body_names, body_values = _named_parts(body)
+    named = [word for word in words(*query_names, *body_names) if word != WEB_DANGER_VALUE_WORD]
+    word = web_danger_word(path, *query_values, *body_values, *named)
+    if word:
+        raise WebDangerViolation(
+            f"{method.upper()} {url} не отправлен: опасное действие (признак «{word}»)"
+        )
+
+
+def is_web_action(method: str, url: str) -> bool:
+    """Похож ли GET на действие: чужая камера может включать поворот обычным GET."""
+    if method.upper() not in ("GET", "HEAD"):
+        return False
+    path, query = _target(url)
+    return any(word in WEB_ACTION_WORDS for word in words(path, query))
+
+
+def is_write_message(text: str) -> bool:
+    """Меняет ли что-то сообщение WebSocket: есть глагол записи или действия."""
+    return any(word in WRITE_VERBS or word in WEB_ACTION_WORDS for word in words(text))
+
+
+def _window_words(url: str, body: str, secrets: tuple[str, ...]) -> list[str]:
+    """Слова запроса в окне без значений логина и пароля и без случайных токенов."""
+    path, query = _target(url)
+    found: list[str] = []
+    for text in (query, body):
+        names, values = _named_parts(text)
+        kept = [v for v in values if v not in secrets and not _TOKEN_VALUE.match(v)]
+        found += words(*names, *kept)
+    return words(path) + found
+
+
+def _check_window(method: str, url: str, body: str | None, secrets: tuple[str, ...]) -> None:
+    """Общие запреты окон входа и выхода."""
+    if not is_write_request(method, url):
+        return
+    if body is None:
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: тело нельзя прочитать")
+    for word in _window_words(url, body, secrets):
+        if word in PASSWORD_CHANGE_WORDS:
+            raise TabooViolation(
+                f"{method.upper()} {url} не отправлен: признак смены пароля «{word}»"
+            )
+        if word.startswith(WEB_LOGIN_PREFIXES):
+            continue
+        if word in WEB_EXACT_WORDS or word.startswith(WEB_PREFIX_WORDS):
+            raise TabooViolation(f"{method.upper()} {url} не отправлен: признак «{word}»")
+
+
+def check_login_window(
+    method: str, url: str, body: str | None, username: str, password: str
+) -> None:
+    """Пропустить только запрос входа внутри окна входа браузера (AD-7).
+
+    Значения логина и пароля из проверки убираются: пароль `network1` не должен срывать вход,
+    а смена пароля выдаёт себя именами полей и повтором пароля.
+
+    Args:
+        method: метод запроса.
+        url: адрес запроса.
+        body: тело; None — браузер не смог его прочитать.
+        username: логин камеры.
+        password: пароль камеры.
+
+    Raises:
+        TabooViolation: признак смены пароля, второе поле пароля или другой запрет.
+    """
+    _check_window(method, url, body, (username, password))
+    if not is_write_request(method, url) or not body:
+        return
+    names, _ = _named_parts(body)
+    if sum(bool(_PASSWORD_KEY.search(name)) for name in names) > 1 or (
+        password and body.count(password) > 1
+    ):
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: пароль в запросе дважды")
+
+
+def check_logout_window(method: str, url: str, body: str | None) -> None:
+    """Пропустить только запрос выхода внутри окна выхода браузера (AD-7).
+
+    Raises:
+        TabooViolation: признак смены пароля или другой запрет.
+    """
+    _check_window(method, url, body, ())
+
+
+def is_logout_label(label: str) -> bool:
+    """Подпись выхода из системы; «Тревожный выход» и просто «Выход» не подходят."""
+    return " ".join(label.lower().split()) in LOGOUT_LABELS
 
 
 # --- RTSP ---------------------------------------------------------------------------------------
