@@ -149,6 +149,7 @@ class _Session:
         self.server, self.hang_up = server, hang_up
         self.fault = server.faults.get(path, StreamFault())
         self.packets_made = 0
+        self.udp_target: tuple[str, int] | None = None
         self.last_seen = time.monotonic()
         self.channels = channels  # дорожка («video», «metadata») → канал interleaved
         self.stop = threading.Event()
@@ -171,6 +172,10 @@ class _Session:
             if self.fault.lose_every and self.packets_made % self.fault.lose_every == 0:
                 return
         packet = header + ext + payload
+        if self.udp_target:
+            if not self.server.udp_blackhole:
+                self.server.udp_socket.sendto(packet, self.udp_target)
+            return
         channel = self.channels[kind]
         self.write(b"$" + bytes([channel]) + struct.pack("!H", len(packet)) + packet)
 
@@ -249,6 +254,8 @@ class MockRtspServer:
         ping_delay_s: float = 0.0,
         sets_in_stream: bool = True,
         max_plays: int = 0,
+        udp: bool = False,
+        udp_blackhole: bool = False,
     ):
         self.metadata = metadata
         self.silent = silent  # поток запущен, но камера ничего не шлёт
@@ -260,6 +267,11 @@ class MockRtspServer:
         self.broken: set[str] = set()  # пути, где обрыв уже случился
         self.max_plays = max_plays  # сверх этого числа потоков — 453, 0 — без предела
         self.playing = 0
+        self.udp = udp  # камера отдаёт поток по UDP; без него SETUP отвечает 461
+        self.udp_blackhole = udp_blackhole  # SETUP принят, но до стенда ничего не доходит
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.bind(("127.0.0.1", 0))
+        self.udp_socket.settimeout(0.05)
         self.play_lock = threading.Lock()
         self.require_unsupported = require_unsupported
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
@@ -283,6 +295,7 @@ class MockRtspServer:
     def stop(self) -> None:
         self._server.shutdown()
         self._server.server_close()
+        self.udp_socket.close()
 
     def tracks(self, path: str) -> list[str]:
         """Дорожки пути по порядку: trackN в SETUP — N-я из них."""
@@ -312,6 +325,7 @@ class MockRtspServer:
             def handle(self):
                 lock = threading.Lock()
                 session: _Session | None = None
+                udp_target: tuple[str, int] | None = None
                 channels: dict[str, int] = {}
 
                 def write(data: bytes) -> None:
@@ -372,6 +386,23 @@ class MockRtspServer:
                             extra = f"Content-Type: application/sdp\r\nContent-Base: {url}/\r\n"
                         elif method == "SETUP":
                             transport = headers.get("transport", "")
+                            if "client_port=" in transport and server.udp:
+                                ports = transport.split("client_port=")[1].split(";")[0]
+                                udp_target = ("127.0.0.1", int(ports.split("-")[0]))
+                                own = server.udp_socket.getsockname()[1]
+                                lease = (
+                                    f";timeout={server.session_timeout}"
+                                    if server.session_timeout
+                                    else ""
+                                )
+                                write(
+                                    f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n"
+                                    f"Session: 1A2B3C{lease}\r\n"
+                                    f"Transport: RTP/AVP;unicast;client_port={ports};"
+                                    f"server_port={own}-{own + 1}\r\n\r\n".encode()
+                                )
+                                channels["video"] = 0
+                                continue
                             if "interleaved=" not in transport:
                                 write(
                                     f"RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n".encode()
@@ -400,6 +431,7 @@ class MockRtspServer:
                                 )
                                 continue
                             session = _Session(path, frames, write, dict(channels), server, hang_up)
+                            session.udp_target = udp_target
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()

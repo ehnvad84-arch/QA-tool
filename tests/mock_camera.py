@@ -88,6 +88,8 @@ class MockCamera:
         self.rtsp = MockRtspServer(
             metadata="M" in self.state.profiles and self.state.metadata_stream,
             require_unsupported=self.state.replay_require_unsupported,
+            udp=self.state.rtsp_udp,
+            udp_blackhole=self.state.rtsp_udp_blackhole,
         )
         self._threads: list[threading.Thread] = []
 

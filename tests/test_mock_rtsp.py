@@ -67,6 +67,7 @@ def test_replay_gives_ten_seconds_of_h264(cam):
 
 
 def test_udp_refused_and_metadata_stream_sends_onvif_xml(cam):
+    cam.rtsp.udp = False
     with socket.create_connection(("127.0.0.1", cam.rtsp_port), timeout=5) as s:
         f = s.makefile("rwb")
 

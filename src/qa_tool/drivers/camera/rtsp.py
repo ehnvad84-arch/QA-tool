@@ -7,7 +7,8 @@ Profile G.
 
 Только чтение потока: метод каждого запроса проверяет табу (`core.taboo.check_rtsp`, AD-7).
 Транспорт — RTP поверх TCP (interleaved, RFC 2326 §10.12): через NAT и VPN стенда UDP
-доходит не всегда, а TCP держит один сокет.
+доходит не всегда, а TCP держит один сокет. UDP — только по просьбе (`setup(udp=True)`): лишь он
+показывает потери в самой сети, TCP их прячет повторной отправкой.
 
 Клиент не потокобезопасен: один экземпляр — одна сессия в одном потоке.
 """
@@ -17,6 +18,7 @@ import contextlib
 import hashlib
 import os
 import re
+import select
 import socket
 import struct
 import time
@@ -35,6 +37,12 @@ MAX_BODY = 1 << 20
 RECV_SIZE = 1 << 16
 POLL_S = 0.5  # как часто `watch` проверяет «Стоп», когда камера молчит
 HEAD_END = re.compile(rb"\r?\n\r?\n")
+UDP_BUFFER = 4 << 20  # ключевой кадр приходит пачкой: буфер по умолчанию дал бы ложные потери
+UDP_BATCH = 256  # пакетов за один заход: ответы RTSP и «Стоп» не должны ждать конца всплеска
+# пустой заголовок RTP: брандмауэр компьютера стенда пропускает ответ на исходящий пакет
+UDP_OPENING = b"\x80\x00" + bytes(10)
+UDP_PORT_TRIES = 32
+UDP_LAST_PORT = 65534
 SESSION_TIMEOUT_S = 60.0  # RFC 2326 §12.37: столько живёт сессия, если камера не сказала иначе
 
 
@@ -128,6 +136,9 @@ class RtspClient:
     _ping_method: str = "GET_PARAMETER"  # часть камер его не умеет — тогда OPTIONS
     _ping_logged: bool = False
     _ping_failed: bool = False
+    _udp: socket.socket | None = field(default=None, repr=False)
+    _udp_rtcp: socket.socket | None = field(default=None, repr=False)
+    _camera_ip: str = ""
     exchanges: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -162,6 +173,10 @@ class RtspClient:
                 self.request("TEARDOWN", self.url)
         self._sock.close()
         self._sock = None
+        for udp in (self._udp, self._udp_rtcp):
+            if udp is not None:
+                udp.close()
+        self._udp = self._udp_rtcp = None
 
     def __enter__(self) -> "RtspClient":
         self.connect()
@@ -356,14 +371,50 @@ class RtspClient:
         base = response.headers.get("content-base", self.url)
         return response.body, parse_sdp(response.body, base)
 
-    def setup(self, track: Track, channel: int = 0) -> None:
-        """Подключить дорожку: её RTP пойдёт в канал `channel` соединения (RTCP — в следующий).
+    def _open_udp(self) -> tuple[int, int]:
+        """Пара портов приёма: чётный RTP и следующий RTCP (RFC 3550 §11)."""
+        local = self._sock.getsockname()[0]
+        for _ in range(UDP_PORT_TRIES):
+            rtp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            rtp.bind((local, 0))
+            port = rtp.getsockname()[1]
+            rtcp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                if port % 2 == 0 and port < UDP_LAST_PORT:
+                    rtcp.bind((local, port + 1))
+                    rtp.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFFER)
+                    rtp.setblocking(False)
+                    self._udp, self._udp_rtcp = rtp, rtcp
+                    return port, port + 1
+            except OSError:
+                pass  # следующий порт занят — пробуем другую пару
+            rtp.close()
+            rtcp.close()
+        raise OSError("не нашлось свободной пары портов UDP")
+
+    def setup(self, track: Track, channel: int = 0, udp: bool = False) -> None:
+        """Подключить дорожку.
+
+        Args:
+            track: дорожка из SDP.
+            channel: по TCP — канал соединения для RTP (RTCP — в следующем).
+            udp: принимать по UDP; пакеты приходят с каналом 0.
 
         Raises:
-            RtspError: камера отказала (часто 461 — не умеет TCP).
+            RtspError: камера отказала (часто 461 — не умеет такой транспорт).
+            OSError: нет свободных портов UDP.
         """
-        transport = f"RTP/AVP/TCP;unicast;interleaved={channel}-{channel + 1}"
+        if udp:
+            first, second = self._open_udp()
+            transport = f"RTP/AVP;unicast;client_port={first}-{second}"
+        else:
+            transport = f"RTP/AVP/TCP;unicast;interleaved={channel}-{channel + 1}"
         response = self.request("SETUP", track.control, {"Transport": transport})
+        if udp:
+            self._camera_ip = self._sock.getpeername()[0]
+            camera_port = re.search(r"server_port=(\d+)", response.headers.get("transport", ""))
+            if camera_port:
+                self._udp.sendto(UDP_OPENING, (self._camera_ip, int(camera_port[1])))
         session, _, options = response.headers.get("session", "").partition(";")
         self._session = self._session or session.strip()
         lease = re.search(r"timeout\s*=\s*(\d+)", options)
@@ -408,6 +459,36 @@ class RtspClient:
             pass  # тишина дольше тайм-аута или обрыв — вернуть то, что успело прийти
         return packets
 
+    def _accept_udp(self, data: bytes, sender: tuple) -> RtpPacket | None:
+        """Пакет UDP, если он с адреса камеры: порт приёма открыт для всей сети стенда."""
+        if sender[0] != self._camera_ip:
+            return None
+        return _rtp_packet(0, data, time.perf_counter())
+
+    def _drain_udp(self, on_packet: Callable[[RtpPacket], None]) -> bool:
+        """Отдать всё, что пришло по UDP; True — хоть что-то пришло от камеры."""
+        heard = False
+        for _ in range(UDP_BATCH):
+            try:
+                data, sender = self._udp.recvfrom(RECV_SIZE)
+            except (BlockingIOError, ConnectionResetError):
+                # ConnectionResetError — Windows так сообщает об ICMP «порт закрыт» на наш пакет
+                break
+            packet = self._accept_udp(data, sender)
+            if packet is not None:
+                heard = True
+                on_packet(packet)
+        return heard
+
+    def _fill_when_ready(self) -> None:
+        """Дождаться данных; при UDP ждём оба сокета, иначе пакеты лежали бы до конца тайм-аута."""
+        if self._udp is None:
+            self._fill()
+            return
+        ready, _, _ = select.select([self._sock, self._udp], [], [], POLL_S)
+        if self._sock in ready:
+            self._fill()
+
     def watch(
         self,
         on_packet: Callable[[RtpPacket], None],
@@ -446,9 +527,11 @@ class RtspClient:
                 if now >= next_ping:
                     next_ping = now + self._lease_s / 2
                     self._ping()
+                if self._udp is not None and self._drain_udp(on_packet):
+                    heard = time.perf_counter()
                 frame = self._take_frame()
                 if frame is None:
-                    self._fill()
+                    self._fill_when_ready()
                     continue
             except TimeoutError:
                 continue

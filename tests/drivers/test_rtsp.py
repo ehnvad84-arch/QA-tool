@@ -1,4 +1,5 @@
 import hashlib
+import socket
 import socketserver
 import struct
 import threading
@@ -7,9 +8,10 @@ import time
 import pytest
 
 from qa_tool.core.taboo import TabooViolation, check_rtsp
+from qa_tool.drivers.camera import rtsp
 from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, WatchEnd, parse_sdp
 from tests import mock_rtsp
-from tests.mock_rtsp import MockRtspServer
+from tests.mock_rtsp import MockRtspServer, StreamFault
 
 needs_video = pytest.mark.skipif(
     mock_rtsp.test_video() is None, reason="нет ffmpeg для тестового видео"
@@ -335,3 +337,136 @@ def test_keepalive_goes_through_taboo(monkeypatch):
     client._ping()
     client._sock = None
     assert seen == ["GET_PARAMETER"]
+
+
+def _udp_client(server: MockRtspServer) -> RtspClient:
+    client = RtspClient(f"rtsp://127.0.0.1:{server.port}/live", timeout=3)
+    client.connect()
+    _, tracks = client.describe()
+    client.setup(tracks[0], udp=True)
+    return client
+
+
+@needs_video
+def test_udp_delivers_numbered_packets():
+    server = MockRtspServer(metadata=False, udp=True).start()
+    packets: list[RtpPacket] = []
+    try:
+        client = _udp_client(server)
+        client.play()
+        assert client.watch(packets.append, 1.0) is WatchEnd.TIME_UP
+        client.close()
+    finally:
+        server.stop()
+    numbers = [p.sequence for p in packets]
+    assert len(numbers) > 10
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+    assert {p.channel for p in packets} == {0}
+
+
+@needs_video
+def test_udp_lost_packets_show_as_gaps():
+    server = MockRtspServer(metadata=False, udp=True)
+    server.faults["/live"] = StreamFault(lose_every=5)
+    server.start()
+    packets: list[RtpPacket] = []
+    try:
+        client = _udp_client(server)
+        client.play()
+        client.watch(packets.append, 1.0)
+        client.close()
+    finally:
+        server.stop()
+    numbers = [p.sequence for p in packets]
+    assert numbers != list(range(numbers[0], numbers[0] + len(numbers)))
+
+
+@needs_video
+def test_udp_blocked_on_the_way_is_silence():
+    server = MockRtspServer(metadata=False, udp=True, udp_blackhole=True).start()
+    try:
+        client = _udp_client(server)
+        client.play()
+        assert client.watch(lambda p: None, 30, silence_s=0.6) is WatchEnd.SILENT
+        client.close()
+    finally:
+        server.stop()
+
+
+@needs_video
+def test_udp_keepalive_still_works():
+    server = MockRtspServer(metadata=False, udp=True, session_timeout=1).start()
+    try:
+        client = _udp_client(server)
+        client.play()
+        assert client.watch(lambda p: None, 2.5) is WatchEnd.TIME_UP
+        client.close()
+    finally:
+        server.stop()
+    assert server.requests.count("GET_PARAMETER /live") >= 3
+
+
+@needs_video
+def test_camera_without_udp_answers_461():
+    server = MockRtspServer(metadata=False).start()
+    try:
+        client = RtspClient(f"rtsp://127.0.0.1:{server.port}/live", timeout=3)
+        with client:
+            _, tracks = client.describe()
+            with pytest.raises(RtspError) as refused:
+                client.setup(tracks[0], udp=True)
+        assert refused.value.status == 461
+    finally:
+        server.stop()
+
+
+@needs_video
+def test_opening_packet_goes_to_the_camera_before_play():
+    server = MockRtspServer(metadata=False, udp=True).start()
+    try:
+        client = _udp_client(server)
+        data, _ = server.udp_socket.recvfrom(100)
+        assert data == rtsp.UDP_OPENING
+        client.close()
+    finally:
+        server.stop()
+
+
+def test_udp_ports_are_an_even_pair_and_closed_with_session():
+    listener = socket.create_server(("127.0.0.1", 0))
+    client = RtspClient(f"rtsp://127.0.0.1:{listener.getsockname()[1]}/x")
+    client.connect()
+    first, second = client._open_udp()
+    assert first % 2 == 0 and second == first + 1
+    udp = client._udp
+    client._session = ""
+    client.close()
+    listener.close()
+    assert udp.fileno() == -1
+
+
+def test_receive_buffer_is_asked_for(monkeypatch):
+    asked = []
+    real = socket.socket
+
+    class Recording(real):
+        def setsockopt(self, level, option, value):
+            asked.append((option, value))
+            super().setsockopt(level, option, value)
+
+    monkeypatch.setattr(rtsp.socket, "socket", Recording)
+    listener = socket.create_server(("127.0.0.1", 0))
+    client = RtspClient(f"rtsp://127.0.0.1:{listener.getsockname()[1]}/x")
+    client.connect()
+    client._open_udp()
+    client.close()
+    listener.close()
+    assert (socket.SO_RCVBUF, rtsp.UDP_BUFFER) in asked
+
+
+def test_packet_from_a_stranger_is_dropped():
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._camera_ip = "10.0.0.5"
+    data = struct.pack("!BBHII", 0x80, 0x60, 1, 0, 1) + b"x"
+    assert client._accept_udp(data, ("10.0.0.6", 5000)) is None
+    assert client._accept_udp(data, ("10.0.0.5", 5000)).sequence == 1

@@ -130,6 +130,8 @@ class OnvifState:
     media2_empty: bool = False  # в Media2 настроек нет: остаётся Media1
     media2_absent: bool = False  # Media2 не объявлена
     uri_fault_for: str = ""  # GetStreamUri этого профиля отказывает
+    rtsp_udp: bool = True  # камера отдаёт поток и по UDP
+    rtsp_udp_blackhole: bool = False  # SETUP принят, но до стенда UDP не доходит
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
 
