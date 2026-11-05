@@ -341,7 +341,10 @@ class RtspClient:
             if len(headers) >= MAX_HEADERS:
                 raise RtspError(f"в ответе RTSP больше {MAX_HEADERS} заголовков")
             key, _, value = raw.partition(":")
-            headers[key.strip().lower()] = value.strip()
+            name = key.strip().lower()
+            # камера может предложить оба способа входа: Basic не должен заменить Digest
+            if name != "www-authenticate" or not _offers_digest(headers.get(name, "")):
+                headers[name] = value.strip()
         raw_length = headers.get("content-length", "0") or "0"
         if not raw_length.isdigit() or int(raw_length) > MAX_BODY:
             raise RtspError(f"недопустимый Content-Length в ответе RTSP: {raw_length[:20]!r}")
@@ -389,7 +392,10 @@ class RtspClient:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
             response = self._send(method, uri, headers or {})
         self.exchanges.append(f"{method} {uri} → {response.status} {response.reason}".strip())
-        self.rejected = self.rejected or response.status in PASSWORD_REFUSED_CODES
+        refused = response.status == RTSP_UNAUTHORIZED or (
+            response.status in PASSWORD_REFUSED_CODES and method == "DESCRIBE"
+        )
+        self.rejected = self.rejected or refused
         if not 200 <= response.status < 300:
             raise RtspError(
                 f"{method} → {response.status} {response.reason}".strip(), response.status, method
@@ -590,6 +596,10 @@ class RtspClient:
                 next_ping = now
             if self.rejected:
                 return WatchEnd.REFUSED
+
+
+def _offers_digest(header: str) -> bool:
+    return header.lower().startswith("digest")
 
 
 def _parse_challenge(header: str) -> dict[str, str]:

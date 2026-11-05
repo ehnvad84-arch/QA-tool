@@ -278,3 +278,13 @@ def test_single_timestamp_back_does_not_hide_lost_frames():
             meter.add(packet(sent, (n - 1) * STEP + 100, n * 0.04 + 0.001))
             sent += 1
     assert meter.stats()["dropped"] > 40
+
+
+def test_rare_b_frames_are_not_lost_frames():
+    meter = StreamMeter("H264")
+    sent = 0
+    for n in range(0, 780, 26):  # в группе из 26 кадров один кадр B
+        for shown in [*range(0, 24), 25, 24]:
+            meter.add(packet(sent, (n + shown) * STEP, sent * 0.04))
+            sent += 1
+    assert meter.stats()["drop_pct"] < 0.1

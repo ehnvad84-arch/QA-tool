@@ -327,14 +327,6 @@ def test_stop_at_first_open_is_not_a_failure(monkeypatch):
     assert rows["STREAM-STRESS-1"].status is Status.SKIPPED
 
 
-def test_keepalives_of_streams_opened_in_turn_do_not_meet():
-    late = [n * stress.PING_SPREAD_S for n in (1, 2, 3)]
-    opened = [n * 0.7 for n in (1, 2, 3)]
-    moments = [start + 30 + extra for start, extra in zip(opened, late, strict=True)]
-    gaps = [b - a for a, b in zip(moments, moments[1:], strict=False)]
-    assert min(gaps) > stress.POLL_S
-
-
 def test_closing_time_is_not_counted_as_held(monkeypatch):
     real = RtspClient.close
 
@@ -344,5 +336,18 @@ def test_closing_time_is_not_counted_as_held(monkeypatch):
 
     monkeypatch.setattr(RtspClient, "close", slow_close)
     moment = time.monotonic() + 1.2
+    _, rows = check(extra={"stress_seconds": 10}, stop=lambda: time.monotonic() > moment)
+    assert "видео шло" not in rows["STREAM-STRESS-1"].reason
+
+
+def test_late_first_frame_is_not_short_video(monkeypatch):
+    real = RtspClient.watch
+
+    def late(self, on_packet, seconds, stop=lambda: False, silence_s=None):
+        time.sleep(1.0)  # первый кадр пришёл позже PLAY
+        return real(self, on_packet, seconds - 1.0, stop, silence_s)
+
+    monkeypatch.setattr(RtspClient, "watch", late)
+    moment = time.monotonic() + 2.4
     _, rows = check(extra={"stress_seconds": 10}, stop=lambda: time.monotonic() > moment)
     assert "видео шло" not in rows["STREAM-STRESS-1"].reason

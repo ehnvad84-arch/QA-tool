@@ -439,10 +439,10 @@ def stream_params(ctx: CheckContext) -> CheckResult:
             run = ProfileRun(ctx, profile, number, Path(folder))
             try:
                 rows += run.run(seconds)
-                basic_at = basic_at or (number if run.basic_used else 0)
             except Exception as e:  # данные одной камеры не должны стоить строк остальных профилей
                 result = CheckResult.stand_error(f"сбой проверки профиля: {type(e).__name__}")
                 rows.append(_plain_row(profile, number, result))
+            basic_at = basic_at or (number if run.basic_used else 0)
     if basic_at:
         rows.append(_basic_row(basic_at))
     add_onvif_evidence(rows, evidence)

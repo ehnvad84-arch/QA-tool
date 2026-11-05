@@ -98,7 +98,7 @@ class StreamWatch(threading.Thread):
         self._last_packet: float | None = None
         self._lost_at: float | None = None
         self._started_at: float | None = None
-        self.held_s = 0.0  # от первого PLAY до конца последнего чтения; закрытие сюда не входит
+        self.held_s = 0.0  # от первого пакета до конца последнего чтения; закрытие не входит
 
     def run(self) -> None:
         """Держать поток; сбой нити становится строкой «ошибка стенда»."""
@@ -117,6 +117,7 @@ class StreamWatch(threading.Thread):
     def _heard(self) -> None:
         now = time.monotonic()
         self._last_packet = now
+        self._started_at = self._started_at or now
         self._close_outage()
 
     def _close_outage(self) -> None:
@@ -155,7 +156,6 @@ class StreamWatch(threading.Thread):
                 return WatchEnd.STOPPED
             if self.meter is None:
                 self.meter = StreamMeter(track.encoding, track.clock_rate, self.slice_s)
-                self._started_at = time.monotonic()
             else:
                 self.meter.reconnected()
             self.playing = True
@@ -168,7 +168,7 @@ class StreamWatch(threading.Thread):
                     self.meter.add(packet)
 
             end = client.watch(on_packet, self._left(), self._stop_reading, self.silence_s)
-            self.held_s = time.monotonic() - self._started_at
+            self.held_s = time.monotonic() - (self._started_at or time.monotonic())
             if end is WatchEnd.REFUSED:
                 remember_refusal(self.ctx, end.value)
             return end

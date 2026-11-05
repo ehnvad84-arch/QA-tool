@@ -313,5 +313,18 @@ def test_basic_login_is_a_security_remark_and_nothing_more():
     assert rows["STREAM-PARAMS-1"].result.status is Status.PASSED
 
 
-def test_digest_or_open_camera_has_no_remark():
+def test_camera_without_login_has_no_remark():
     assert "STREAM-AUTH-1" not in check_with_server(OnvifState(streams=(GOOD,)))
+
+
+def test_digest_is_taken_when_camera_offers_both():
+    assert "STREAM-AUTH-1" not in check_with_server(OnvifState(streams=(GOOD,)), both_auth=True)
+
+
+def test_basic_remark_survives_a_crash_in_the_profile(monkeypatch):
+    def falls_after_login(self, seconds):
+        self.basic_used = True
+        raise IndexError("данные камеры")
+
+    monkeypatch.setattr(params.ProfileRun, "run", falls_after_login)
+    assert "STREAM-AUTH-1" in check_with_server(OnvifState(streams=(GOOD,)))

@@ -513,6 +513,44 @@ def test_keepalive_forbidden_twice_counts_as_refusal():
     assert client.rejected
 
 
+@pytest.mark.parametrize(
+    "offers",
+    [
+        ('Digest realm="r", nonce="n"', 'Basic realm="r"'),
+        ('Basic realm="r"', 'Digest realm="r", nonce="n"'),
+    ],
+)
+def test_digest_wins_whatever_the_header_order(offers):
+    client = RtspClient("rtsp://127.0.0.1/live", "admin", "x")
+    lines = "".join(f"WWW-Authenticate: {offer}\r\n" for offer in offers)
+    client._buf += f"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n{lines}\r\n".encode()
+    response = client._take_response()
+    assert response.headers["www-authenticate"].startswith("Digest")
+
+
+def test_forbidden_setup_is_not_a_password_refusal(monkeypatch):
+    client = RtspClient("rtsp://127.0.0.1/live", "admin", "x")
+    monkeypatch.setattr(client, "_send", lambda *args: rtsp.Response(403, "Forbidden", {}))
+    with pytest.raises(RtspError):
+        client.request("SETUP", client.url)
+    assert not client.rejected
+    with pytest.raises(RtspError):
+        client.request("DESCRIBE", client.url)
+    assert client.rejected
+
+
+@needs_video
+@pytest.mark.parametrize(("late_s", "pinged"), [(0.0, True), (1.0, False)])
+def test_first_keepalive_moves_later_by_the_spread(late_s, pinged):
+    server = MockRtspServer(metadata=False, session_timeout=4).start()
+    client = _playing(server)
+    client.ping_late_s = late_s
+    client.watch(lambda packet: None, 2.5)
+    client.close()
+    server.stop()
+    assert ("GET_PARAMETER /live" in server.requests) is pinged
+
+
 def test_static_jpeg_needs_no_rtpmap():
     (track,) = parse_sdp("m=video 0 RTP/AVP 26\r\na=control:track1\r\n", "rtsp://c/")
     assert track.encoding == "JPEG"

@@ -13,7 +13,7 @@ from qa_tool.drivers.camera.depacket import (
     jpeg_size,
     parameter_sets,
 )
-from qa_tool.drivers.camera.rtsp import RtspClient, parse_sdp
+from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, parse_sdp
 from qa_tool.tools import tool_path
 from tests import mock_rtsp
 from tests.mock_rtsp import MockRtspServer
@@ -131,8 +131,16 @@ def capture(server: MockRtspServer, seconds: float = 2.5) -> bytes:
         client.play()
         d = Depacketizer(track.encoding, parameter_sets(track.fmtp))
         out = bytearray(d.start())
-        client.watch(lambda p: out.extend(d.push(p.payload)), seconds)
-    return bytes(out)
+        whole = [len(out)]
+
+        def keep(packet: RtpPacket) -> None:
+            out.extend(d.push(packet.payload))
+            if packet.marker:
+                whole[0] = len(out)
+
+        client.watch(keep, seconds)
+    # срок обрывает чтение посреди кадра: хвост декодер счёл бы ошибкой
+    return bytes(out[: whole[0]])
 
 
 def decode(tmp_path, data: bytes) -> tuple[str, dict]:

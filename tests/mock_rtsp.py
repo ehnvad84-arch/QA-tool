@@ -187,11 +187,14 @@ class _Session:
 
     def run(self) -> None:
         if "metadata" in self.channels:
-            threading.Thread(target=self._metadata, daemon=True).start()
+            threading.Thread(target=self._quietly, args=(self._metadata,), daemon=True).start()
         if "video" in self.channels:
-            # клиент закрыл соединение посреди кадра: сокет или уже закрытый файл обработчика
-            with contextlib.suppress(OSError, ValueError):
-                self._video()
+            self._quietly(self._video)
+
+    def _quietly(self, send) -> None:
+        # клиент закрыл соединение посреди кадра: сокет или уже закрытый файл обработчика
+        with contextlib.suppress(OSError, ValueError):
+            send()
 
     def _video(self) -> None:
         if not self.frames:
@@ -277,6 +280,7 @@ class MockRtspServer:
         assigned_channel: int | None = None,
         ping_refused: bool = False,
         basic_auth: bool = False,
+        both_auth: bool = False,
     ):
         self.metadata = metadata
         self.reject_password = reject_password  # 401 на любой пароль
@@ -284,6 +288,7 @@ class MockRtspServer:
         self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
         self.ping_refused = ping_refused  # посреди сессии пароль перестал подходить
         self.basic_auth = basic_auth  # камера просит вход Basic
+        self.both_auth = both_auth  # камера предлагает Digest, а следом Basic
         self.assigned_channel = assigned_channel  # канал, который камера назначает сама
         self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
@@ -413,6 +418,13 @@ class MockRtspServer:
                         if server.basic_auth and "authorization" not in headers:
                             write(
                                 f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Basic realm="r"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if server.both_auth and "authorization" not in headers:
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n'
                                 'WWW-Authenticate: Basic realm="r"\r\n\r\n'.encode()
                             )
                             continue
