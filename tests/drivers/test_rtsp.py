@@ -1,11 +1,13 @@
 import hashlib
 import socketserver
+import struct
 import threading
+import time
 
 import pytest
 
 from qa_tool.core.taboo import TabooViolation, check_rtsp
-from qa_tool.drivers.camera.rtsp import RtspClient, RtspError, parse_sdp
+from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, WatchEnd, parse_sdp
 from tests import mock_rtsp
 from tests.mock_rtsp import MockRtspServer
 
@@ -145,3 +147,118 @@ def test_hostile_or_broken_replies_raise_rtsp_error(reply):
             client.request("OPTIONS", "*")
     finally:
         server.server_close()
+
+
+def _playing(server: MockRtspServer, path: str = "/live") -> RtspClient:
+    """Клиент с запущенным видео; закрывать — вызывающему."""
+    client = RtspClient(f"rtsp://127.0.0.1:{server.port}{path}", timeout=3)
+    client.connect()
+    _, tracks = client.describe()
+    client.setup(next(t for t in tracks if t.media == "video"))
+    client.play()
+    return client
+
+
+@needs_video
+def test_watch_hands_over_numbered_packets_and_keeps_nothing():
+    server = MockRtspServer(metadata=False).start()
+    packets: list[RtpPacket] = []
+    try:
+        client = _playing(server)
+        assert client.watch(packets.append, 1.0) is WatchEnd.TIME_UP
+        assert len(client._buf) < 1 << 20
+        client.close()
+    finally:
+        server.stop()
+    numbers = [p.sequence for p in packets]
+    assert len(numbers) > 10
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+    moments = [p.arrived for p in packets]
+    assert moments == sorted(moments) and moments[-1] > moments[0]
+
+
+@needs_video
+def test_watch_stops_on_request_while_stream_flows():
+    server = MockRtspServer(metadata=False).start()
+    try:
+        client = _playing(server)
+        started = time.monotonic()
+        end = client.watch(lambda p: None, 60, stop=lambda: time.monotonic() - started > 0.3)
+        assert end is WatchEnd.STOPPED
+        assert time.monotonic() - started < 5
+        client.close()
+    finally:
+        server.stop()
+
+
+@needs_video
+def test_watch_stops_on_request_on_silent_camera():
+    server = MockRtspServer(metadata=False, silent=True).start()
+    try:
+        client = _playing(server)
+        started = time.monotonic()
+        end = client.watch(lambda p: None, 60, stop=lambda: time.monotonic() - started > 0.3)
+        assert end is WatchEnd.STOPPED
+        assert time.monotonic() - started < 5
+        client.close()
+    finally:
+        server.stop()
+
+
+@needs_video
+def test_watch_reports_silence_and_session_stays_usable():
+    server = MockRtspServer(metadata=False, silent=True).start()
+    try:
+        client = _playing(server)
+        assert client.watch(lambda p: None, 60, silence_s=0.6) is WatchEnd.SILENT
+        assert client.request("OPTIONS", client.url).status == 200  # тайм-аут не портит соединение
+        client.close()
+    finally:
+        server.stop()
+
+
+def test_watch_reports_broken_connection():
+    server = _serve(b"$\x00\x10")
+    try:
+        client = RtspClient(f"rtsp://127.0.0.1:{server.server_address[1]}/x", timeout=3)
+        with client:
+            client._sock.sendall(b"PING\r\n")
+            assert client.watch(lambda p: None, 5) is WatchEnd.BROKEN
+    finally:
+        server.server_close()
+
+
+def test_frame_split_across_reads_is_assembled():
+    packet = struct.pack("!BBHII", 0x80, 0xE0, 7, 9000, 1) + b"abc"
+    frame = b"$\x00" + struct.pack("!H", len(packet)) + packet
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._buf += frame[:6]
+    assert client._take_frame() is None
+    client._buf += frame[6:]
+    taken = client._take_frame()
+    assert (taken.sequence, taken.timestamp, taken.marker, taken.payload) == (7, 9000, True, b"abc")
+    assert not client._buf
+
+
+def test_answer_split_across_reads_is_assembled():
+    answer = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 3\r\n\r\nabc"
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._buf += answer[:-2]
+    assert client._take_frame() is None
+    client._buf += answer[-2:]
+    taken = client._take_frame()
+    assert (taken.status, taken.body) == (200, "abc")
+
+
+def test_garbage_instead_of_answer_raises():
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._buf += b"HTTP-ish garbage\r\n"
+    with pytest.raises(RtspError, match="не ответ RTSP"):
+        client._take_frame()
+
+
+def test_endless_header_raises():
+    client = RtspClient("rtsp://127.0.0.1:1/x")
+    client._buf += b"RTSP/1.0 200 OK\r\nX: " + b"a" * 2_000_000
+    with pytest.raises(RtspError):
+        client._take_frame()

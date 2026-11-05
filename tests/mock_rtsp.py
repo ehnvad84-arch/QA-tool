@@ -159,6 +159,9 @@ class _Session:
             self._video()
 
     def _video(self) -> None:
+        if not self.frames:
+            self.stop.wait()
+            return
         replay = self.path.startswith("/replay")
         index = 0
         started = time.monotonic()
@@ -202,8 +205,11 @@ class _Session:
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
-    def __init__(self, metadata: bool = True, require_unsupported: bool = False):
+    def __init__(
+        self, metadata: bool = True, require_unsupported: bool = False, silent: bool = False
+    ):
         self.metadata = metadata
+        self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.require_unsupported = require_unsupported
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
@@ -308,7 +314,8 @@ class MockRtspServer:
                                 "Session: 1A2B3C\r\n"
                             )
                         elif method == "PLAY":
-                            session = _Session(path, server.frames, write, dict(channels))
+                            frames = [] if server.silent else server.frames
+                            session = _Session(path, frames, write, dict(channels))
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()

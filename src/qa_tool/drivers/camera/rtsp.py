@@ -15,7 +15,6 @@ Profile G.
 import base64
 import contextlib
 import hashlib
-import io
 import os
 import re
 import socket
@@ -23,6 +22,7 @@ import struct
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from qa_tool.core.taboo import check_rtsp
@@ -32,6 +32,9 @@ from qa_tool.core.taboo import check_rtsp
 MAX_LINE = 8192
 MAX_HEADERS = 100
 MAX_BODY = 1 << 20
+RECV_SIZE = 1 << 16
+POLL_S = 0.5  # как часто `watch` проверяет «Стоп», когда камера молчит
+HEAD_END = re.compile(rb"\r?\n\r?\n")
 
 
 class RtspError(ConnectionError):
@@ -69,7 +72,8 @@ class RtpPacket:
 
     `payload` — без заголовка; `timestamp` — метка времени RTP; `extension` — расширение
     заголовка целиком (профиль, длина, данные) или пусто: в архиве ONVIF в нём время кадра
-    и признак ключевого кадра.
+    и признак ключевого кадра. `sequence` — номер RTP; `arrived` — `time.perf_counter()` приёма:
+    шаг `monotonic` на Windows около 15 мс, а джиттер меряется десятками миллисекунд.
     """
 
     channel: int
@@ -77,6 +81,17 @@ class RtpPacket:
     payload: bytes
     timestamp: int = 0
     extension: bytes = b""
+    sequence: int = 0
+    arrived: float = 0.0
+
+
+class WatchEnd(Enum):
+    """Чем закончилось чтение потока (`RtspClient.watch`)."""
+
+    TIME_UP = "срок вышел"
+    STOPPED = "остановлено"
+    SILENT = "камера молчит"
+    BROKEN = "соединение оборвалось"
 
 
 @dataclass
@@ -99,7 +114,8 @@ class RtspClient:
     timeout: float = 10.0
     extra_headers: dict[str, str] = field(default_factory=dict)
     _sock: socket.socket | None = field(default=None, repr=False)
-    _file: io.BufferedRWPair | None = field(default=None, repr=False)
+    _buf: bytearray = field(default_factory=bytearray, repr=False)
+    _arrived: float = 0.0
     _cseq: int = 0
     _session: str = ""
     _challenge: dict[str, str] = field(default_factory=dict, repr=False)
@@ -126,18 +142,18 @@ class RtspClient:
         self._sock = socket.create_connection(
             (parts.hostname, parts.port or 554), timeout=self.timeout
         )
-        self._file = self._sock.makefile("rwb")
+        self._buf.clear()
 
     def close(self) -> None:
         """Завершить сессию (TEARDOWN, если она открыта) и закрыть соединение."""
         if self._sock is None:
             return
         if self._session:
-            # камера уже закрыла сессию или сокет испорчен тайм-аутом — освобождать нечего
+            # камера уже закрыла сессию — освобождать нечего
             with contextlib.suppress(OSError, RtspError, ValueError):
                 self.request("TEARDOWN", self.url)
         self._sock.close()
-        self._sock = self._file = None
+        self._sock = None
 
     def __enter__(self) -> "RtspClient":
         self.connect()
@@ -180,37 +196,66 @@ class RtspClient:
         auth = self._authorization(method, uri)
         if auth:
             lines.append(f"Authorization: {auth}")
-        self._file.write(("\r\n".join(lines) + "\r\n\r\n").encode())
-        self._file.flush()
+        self._sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
         return self._read_response()
 
-    def _read_frame(self) -> "RtpPacket | Response":
-        """Следующее из соединения: пакет RTP (кадр `$`, RFC 2326 §10.12) или ответ RTSP.
+    def _fill(self) -> None:
+        """Дочитать из соединения в буфер; тайм-аут ничего не портит: начатый кадр остаётся в нём.
 
         Raises:
-            RtspError: соединение закрыто или пришёл не RTSP.
+            RtspError: камера закрыла соединение.
+            TimeoutError: за тайм-аут сокета ничего не пришло.
         """
-        while True:
-            first = self._file.read(1)
-            if not first:
-                raise RtspError("камера закрыла соединение RTSP")
-            if first == b"$":
-                head = self._file.read(3)
-                if len(head) < 3:
-                    raise RtspError("соединение RTSP оборвалось посреди пакета")
-                size = struct.unpack("!H", head[1:3])[0]
-                data = self._file.read(size)
-                if len(data) < size:
-                    raise RtspError("соединение RTSP оборвалось посреди пакета")
-                return _rtp_packet(head[0], data)
-            if first not in b"\r\n":
-                break
-        line = (first + self._file.readline(MAX_LINE)).decode("latin-1").strip()
+        data = self._sock.recv(RECV_SIZE)
+        if not data:
+            middle = "посреди пакета" if self._buf else ""
+            raise RtspError(f"камера закрыла соединение RTSP {middle}".strip())
+        self._arrived = time.perf_counter()
+        self._buf += data
+
+    def _take_frame(self) -> "RtpPacket | Response | None":
+        """Снять из буфера кадр целиком: пакет RTP (`$`, RFC 2326 §10.12) или ответ RTSP.
+
+        Returns:
+            Кадр или None, если он ещё не пришёл целиком.
+
+        Raises:
+            RtspError: пришёл не RTSP или ответ за пределами допустимого.
+        """
+        buf = self._buf
+        skip = 0
+        while skip < len(buf) and buf[skip] in b"\r\n":
+            skip += 1
+        del buf[:skip]
+        if not buf:
+            return None
+        if buf[0] != 0x24:
+            return self._take_response()
+        if len(buf) < 4:
+            return None
+        end = 4 + struct.unpack_from("!H", buf, 2)[0]
+        if len(buf) < end:
+            return None
+        packet = _rtp_packet(buf[1], bytes(buf[4:end]), self._arrived)
+        del buf[:end]
+        return packet
+
+    def _take_response(self) -> "Response | None":
+        buf = self._buf
+        line_end = buf.find(b"\n")
+        if line_end < 0 and len(buf) <= MAX_LINE:
+            return None
+        line = bytes(buf[: line_end if line_end >= 0 else MAX_LINE]).decode("latin-1").strip()
         status_line = line.split(" ", 2)
         if len(status_line) < 2 or not status_line[1].isdigit():
             raise RtspError(f"не ответ RTSP: {line[:60]!r}")
+        head_end = HEAD_END.search(buf)
+        if head_end is None:
+            if len(buf) > MAX_LINE * MAX_HEADERS:
+                raise RtspError("заголовки ответа RTSP не заканчиваются")
+            return None
         headers = {}
-        while raw := self._file.readline(MAX_LINE).decode("latin-1").strip():
+        for raw in bytes(buf[: head_end.start()]).decode("latin-1").splitlines()[1:]:
             if len(headers) >= MAX_HEADERS:
                 raise RtspError(f"в ответе RTSP больше {MAX_HEADERS} заголовков")
             key, _, value = raw.partition(":")
@@ -218,10 +263,24 @@ class RtspClient:
         raw_length = headers.get("content-length", "0") or "0"
         if not raw_length.isdigit() or int(raw_length) > MAX_BODY:
             raise RtspError(f"недопустимый Content-Length в ответе RTSP: {raw_length[:20]!r}")
-        length = int(raw_length)
-        body = self._file.read(length).decode("utf-8", "replace") if length else ""
+        total = head_end.end() + int(raw_length)
+        if len(buf) < total:
+            return None
+        body = bytes(buf[head_end.end() : total]).decode("utf-8", "replace")
+        del buf[:total]
         reason = status_line[2] if len(status_line) > 2 else ""
         return Response(int(status_line[1]), reason, headers, body)
+
+    def _read_frame(self) -> "RtpPacket | Response":
+        """Следующий кадр из соединения.
+
+        Raises:
+            RtspError: соединение закрыто или пришёл не RTSP.
+            TimeoutError: кадр не пришёл за тайм-аут сокета.
+        """
+        while (frame := self._take_frame()) is None:
+            self._fill()
+        return frame
 
     def _read_response(self) -> Response:
         # после PLAY камера шлёт RTP сразу, и пакеты могут прийти раньше ответа — пропускаем
@@ -292,7 +351,7 @@ class RtspClient:
             until: вызывается на каждый пакет; True — пакет последний, чтение закончено.
 
         Остановка по тишине: если камера ничего не шлёт дольше тайм-аута соединения,
-        чтение заканчивается раньше срока — после этого сессию можно только закрыть.
+        чтение заканчивается раньше срока.
         """
         deadline = time.monotonic() + seconds
         packets: list[RtpPacket] = []
@@ -308,25 +367,68 @@ class RtspClient:
             pass  # тишина дольше тайм-аута или обрыв — вернуть то, что успело прийти
         return packets
 
+    def watch(
+        self,
+        on_packet: Callable[[RtpPacket], None],
+        seconds: float,
+        stop: Callable[[], bool] = lambda: False,
+        silence_s: float | None = None,
+    ) -> WatchEnd:
+        """Читать поток, отдавая пакеты `on_packet`; ничего не копит, поэтому годится на часы.
+
+        Args:
+            on_packet: вызывается на каждый пакет RTP.
+            seconds: наибольшее время чтения, с.
+            stop: опрашивается постоянно и на молчащей камере; True — закончить.
+            silence_s: столько секунд без пакетов считается тишиной; по умолчанию — тайм-аут.
+
+        Returns:
+            Причина окончания. После `SILENT` соединение исправно, после `BROKEN` — нет.
+        """
+        silence_s = self.timeout if silence_s is None else silence_s
+        deadline = time.perf_counter() + seconds
+        heard = time.perf_counter()
+        self._sock.settimeout(POLL_S)
+        while True:
+            now = time.perf_counter()
+            if stop():
+                return WatchEnd.STOPPED
+            if now >= deadline:
+                return WatchEnd.TIME_UP
+            if now - heard >= silence_s:
+                return WatchEnd.SILENT
+            try:
+                frame = self._take_frame()
+                if frame is None:
+                    self._fill()
+                    continue
+            except TimeoutError:
+                continue
+            except (RtspError, OSError):
+                return WatchEnd.BROKEN
+            if isinstance(frame, RtpPacket):
+                heard = time.perf_counter()
+                on_packet(frame)
+
 
 def _parse_challenge(header: str) -> dict[str, str]:
     scheme = "basic" if header.lower().startswith("basic") else "digest"
     return {"scheme": scheme, **dict(re.findall(r'(\w+)="?([^",]*)"?', header))}
 
 
-def _rtp_packet(channel: int, packet: bytes) -> RtpPacket:
+def _rtp_packet(channel: int, packet: bytes, arrived: float = 0.0) -> RtpPacket:
     """Разбор пакета RTP (RFC 3550 §5.1): маркер, метка времени, расширение, полезная нагрузка."""
     if len(packet) < 12:
-        return RtpPacket(channel, False, b"")
+        return RtpPacket(channel, False, b"", arrived=arrived)
     marker = bool(packet[1] & 0x80)
-    timestamp = struct.unpack("!I", packet[4:8])[0]
+    sequence, timestamp = struct.unpack("!HI", packet[2:8])
     offset = 12 + 4 * (packet[0] & 0x0F)
     extension = b""
     # расширение заголовка: в архиве ONVIF (Profile G) в нём время кадра и признак ключевого
     if packet[0] & 0x10 and len(packet) >= offset + 4:
         end = offset + 4 + 4 * struct.unpack("!H", packet[offset + 2 : offset + 4])[0]
         extension, offset = packet[offset:end], end
-    return RtpPacket(channel, marker, packet[offset:], timestamp, extension)
+    return RtpPacket(channel, marker, packet[offset:], timestamp, extension, sequence, arrived)
 
 
 def parse_sdp(sdp: str, base: str) -> list[Track]:
