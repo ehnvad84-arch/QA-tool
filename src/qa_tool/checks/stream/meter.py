@@ -71,11 +71,13 @@ class StreamMeter:
     Args:
         encoding: кодек из SDP, нужен для поиска ключевых кадров.
         clock_rate: частота меток RTP, Гц.
+        slice_s: длина среза таблицы, с.
     """
 
-    def __init__(self, encoding: str, clock_rate: int = 90_000):
+    def __init__(self, encoding: str, clock_rate: int = 90_000, slice_s: float = SLICE_S):
         self.encoding = encoding
         self.clock_rate = clock_rate
+        self.slice_s = slice_s
         self.total = Tally()
         self.slices: list[Tally] = []
         self.jitter_s = 0.0
@@ -91,7 +93,7 @@ class StreamMeter:
         self._previous_transit: float | None = None
 
     def _tallies(self, packet: RtpPacket) -> tuple[Tally, Tally]:
-        index = int((packet.arrived - self._first_arrival) // SLICE_S)
+        index = int((packet.arrived - self._first_arrival) // self.slice_s)
         while len(self.slices) <= index:
             self.slices.append(Tally())
         return self.total, self.slices[index]
