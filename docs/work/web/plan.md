@@ -23,7 +23,7 @@
 - [x] T5 — Расчёт Digest вынесен из rtsp.py · сценарий: S4, S12 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/rtsp.py, новый src/qa_tool/drivers/camera/digest.py, новый tests/drivers/test_digest.py.
   Готово, когда: старые тесты Digest в RTSP зелёные без правок.
-- [ ] T6 — Девять правил решения по запросу, окно записи, запись через route.fetch без перенаправлений · сценарий: S7, S9, S10, S11, S12 · проверка: auto · исполнитель: main
+- [x] T6 — Девять правил решения по запросу, окно записи, запись через route.fetch без перенаправлений · сценарий: S7, S9, S10, S11, S12 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/drivers/camera/browser.py, tests/drivers/test_browser.py, tests/drivers/test_browser_traps.py.
   Готово, когда: каждое правило закреплено тестом с mock; при открытом окне записи 307 POST на `/api/users/set_password` не дошёл; цепочка проверяется на каждом шаге; `StoppedRequest` содержит элемент, метод, адрес, вердикт.
 - [ ] T7 — Фасад BrowserSession: элементы, поля, диалоги, снимки с маской, остановка, падение, storage_state в памяти, песочница Chromium, временные файлы · сценарий: S20, S21, S22 · проверка: auto · исполнитель: main

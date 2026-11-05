@@ -123,4 +123,4 @@ def test_worker_socket_is_noticed():
     with MockWebCamera(pages) as camera, BrowserSession(camera.url) as session:
         session.open(camera.url + "/")
         session.wait(800)
-        assert session.sockets_unwatched
+        assert session.presses_stopped
