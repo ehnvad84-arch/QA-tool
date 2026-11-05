@@ -15,6 +15,7 @@ MODULES = [
     "qa_tool.checks.api.ruver",
     "qa_tool.checks.stream.params",
     "qa_tool.checks.stream.network",
+    "qa_tool.checks.stream.stress",
 ]
 
 

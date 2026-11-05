@@ -91,6 +91,15 @@ class StreamMeter:
         self._last_arrival = 0.0
         self._elapsed_ticks = 0
         self._previous_transit: float | None = None
+        self._transit_shift = 0.0
+        self._rebase = False
+
+    def reconnected(self) -> None:
+        """Новая сессия потока: номера и метки у неё свои, это не потери и не рост задержки."""
+        self._next_sequence = None
+        self._frame_timestamp = None
+        self._frames_since_key = None
+        self._rebase = True
 
     def _tallies(self, packet: RtpPacket) -> tuple[Tally, Tally]:
         index = int((packet.arrived - self._first_arrival) // self.slice_s)
@@ -171,7 +180,12 @@ class StreamMeter:
         Пакеты одного кадра имеют одну метку и уходят пачкой: посчитанные по RFC 3550 каждый,
         они дали бы «джиттер» от размера кадра, а не от сети.
         """
-        transit = packet.arrived - self._elapsed_ticks / self.clock_rate
+        transit = packet.arrived - self._elapsed_ticks / self.clock_rate - self._transit_shift
+        if self._rebase:  # время простоя в метки не попало: задержка продолжается с прежней
+            self._rebase = False
+            if self._previous_transit is not None:
+                self._transit_shift += transit - self._previous_transit
+                transit = self._previous_transit
         if self._previous_transit is not None:
             change = abs(transit - self._previous_transit)
             self.jitter_s += (change - self.jitter_s) / JITTER_GAIN

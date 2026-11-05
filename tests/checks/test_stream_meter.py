@@ -154,3 +154,15 @@ def test_empty_meter():
     assert stats["packets"] == 0
     assert stats["fps"] == 0.0
     assert stats["gop"] == 0
+
+
+def test_new_session_is_neither_loss_nor_delay_growth():
+    meter = StreamMeter("H264", slice_s=1)
+    feed(meter, 50)
+    meter.reconnected()
+    for n in range(50):  # новая сессия: другие номера и метки, простой 30 с
+        meter.add(packet(40_000 + n, 7_000_000 + n * STEP, 32 + n * 0.04))
+    stats = meter.stats()
+    assert stats["lost"] == 0
+    assert stats["packets"] == 100
+    assert stats["delay_growth_s"] == 0.0
