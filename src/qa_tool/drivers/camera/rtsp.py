@@ -73,8 +73,9 @@ class RtpPacket:
 
     `payload` — без заголовка; `timestamp` — метка времени RTP; `extension` — расширение
     заголовка целиком (профиль, длина, данные) или пусто: в архиве ONVIF в нём время кадра
-    и признак ключевого кадра. `sequence` — номер RTP; `arrived` — `time.perf_counter()` приёма:
-    шаг `monotonic` на Windows около 15 мс, а джиттер меряется десятками миллисекунд.
+    и признак ключевого кадра. `sequence` — номер RTP, −1 у битого пакета; `arrived` — момент
+    приёма по `time.perf_counter()`: шаг `monotonic` на Windows около 15 мс, а джиттер меряется
+    десятками миллисекунд.
     """
 
     channel: int
@@ -466,7 +467,7 @@ def _parse_challenge(header: str) -> dict[str, str]:
 def _rtp_packet(channel: int, packet: bytes, arrived: float = 0.0) -> RtpPacket:
     """Разбор пакета RTP (RFC 3550 §5.1): маркер, метка времени, расширение, полезная нагрузка."""
     if len(packet) < 12:
-        return RtpPacket(channel, False, b"", arrived=arrived)
+        return RtpPacket(channel, False, b"", sequence=-1, arrived=arrived)
     marker = bool(packet[1] & 0x80)
     sequence, timestamp = struct.unpack("!HI", packet[2:8])
     offset = 12 + 4 * (packet[0] & 0x0F)
