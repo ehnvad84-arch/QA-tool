@@ -168,6 +168,24 @@ def test_unreadable_body_is_stopped_inside_window():
         check_login_window("POST", CAM + "/login", None, "admin", "x")
 
 
+@pytest.mark.parametrize("path", ["/api/config/read", "/api/image/brightness", "/RPC2"])
+def test_page_requests_do_not_pass_login_window(path):
+    with pytest.raises(TabooViolation):
+        login(path, json.dumps({"value": 1}))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/RPC2_Login",
+        "/cgi-bin/logon.cgi",
+        "/api/auth/challenge",
+    ],
+)
+def test_login_paths_of_other_vendors_pass_window(path):
+    login(path, json.dumps({"username": "admin"}))
+
+
 def test_read_passes_login_window():
     check_login_window("GET", CAM + "/api/auth/create_session", "", "admin", "x")
 
@@ -179,6 +197,8 @@ def test_logout_window():
         check_logout_window("POST", CAM + "/api/users/set_password", "")
     with pytest.raises(TabooViolation):
         check_logout_window("POST", CAM + "/logout", json.dumps({"ip": "1"}))
+    with pytest.raises(TabooViolation):
+        check_logout_window("POST", CAM + "/api/image/brightness", "")
 
 
 @pytest.mark.parametrize(

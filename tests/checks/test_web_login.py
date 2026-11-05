@@ -116,25 +116,31 @@ def test_write_with_digest_is_answered():
     assert session.answers[-1] == 200
 
 
+def test_page_write_right_after_login_does_not_reach_camera():
+    page = "<script>fetch('/api/config/read', {method: 'POST', body: '{}'})</script>"
+    with MockWebCamera({"/": page}, auth="form") as camera, BrowserSession(camera.url) as session:
+        login(context(), session, camera.url + "/")
+        session.wait(300)
+    assert camera.writes() == [("POST", "/api/auth/login")]
+
+
 def test_logout_frees_session():
     with MockWebCamera({"/": HOME}, auth="form") as camera, BrowserSession(camera.url) as session:
         login(context(), session, camera.url + "/")
         assert camera.sessions == 1
-        assert logout(session) == ""
+        assert logout(session, camera.url + "/") == ""
     assert camera.sessions == 0
 
 
 def test_logout_without_button_is_noted():
     with MockWebCamera({"/": "<h1>x</h1>"}) as camera, BrowserSession(camera.url) as session:
-        session.open(camera.url + "/")
-        assert logout(session)
+        assert logout(session, camera.url + "/")
 
 
 def test_alarm_output_is_not_logout():
     page = "<button>Тревожный выход</button>"
     with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
-        session.open(camera.url + "/")
-        assert logout(session)
+        assert logout(session, camera.url + "/")
     assert camera.writes() == []
 
 

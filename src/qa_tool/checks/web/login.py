@@ -177,12 +177,20 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     return _refused(ctx, "форма входа осталась на экране")
 
 
-def logout(session: BrowserSession) -> str:
+def logout(session: BrowserSession, address: str) -> str:
     """Выйти одним нажатием, чтобы освободить подключение камеры.
+
+    Кнопка выхода обычно есть только в шапке главной страницы, поэтому сначала открывается она.
+
+    Args:
+        session: открытая сессия браузера.
+        address: адрес веб-интерфейса.
 
     Returns:
         Пометка для сводки; пусто — выход выполнен.
     """
+    session.open(address)
+    session.wait(POLL_MS * 3)
     for item in session.elements():
         if is_logout_label(item.label) and not item.disabled:
             with session.logout_window():

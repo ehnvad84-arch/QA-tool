@@ -448,6 +448,10 @@ PASSWORD_CHANGE_WORDS = frozenset(
         "forgot",
     }
 )
+# Окно открыто несколько сотен миллисекунд и после успешного входа: страница успевает послать свои
+# запросы. Поэтому через окно идёт только то, что по адресу само является входом или выходом.
+WEB_LOGIN_PATH_PREFIXES = ("login", "logon", "signin", "auth", "session", "challenge")
+WEB_LOGOUT_PATH_PREFIXES = ("logout", "logoff", "signout", "auth", "session")
 _PASSWORD_KEY = re.compile(r"passw|pwd|psw|парол", re.IGNORECASE)
 # Хеш пароля и токены случайны: регистр букв в них может сложиться в слово «Set».
 _TOKEN_VALUE = re.compile(r"^[A-Za-z0-9+/=_-]{24,}$")
@@ -569,10 +573,18 @@ def _window_words(url: str, body: str, secrets: tuple[str, ...]) -> list[str]:
     return words(path) + found
 
 
-def _check_window(method: str, url: str, body: str | None, secrets: tuple[str, ...]) -> None:
+def _check_window(
+    method: str,
+    url: str,
+    body: str | None,
+    secrets: tuple[str, ...],
+    path_prefixes: tuple[str, ...],
+) -> None:
     """Общие запреты окон входа и выхода."""
     if not is_write_request(method, url):
         return
+    if not any(word.startswith(path_prefixes) for word in words(_target(url)[0])):
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: это не запрос входа или выхода")
     if body is None:
         raise TabooViolation(f"{method.upper()} {url} не отправлен: тело нельзя прочитать")
     for word in _window_words(url, body, secrets):
@@ -604,7 +616,7 @@ def check_login_window(
     Raises:
         TabooViolation: признак смены пароля, второе поле пароля или другой запрет.
     """
-    _check_window(method, url, body, (username, password))
+    _check_window(method, url, body, (username, password), WEB_LOGIN_PATH_PREFIXES)
     if not is_write_request(method, url) or not body:
         return
     names, _ = _named_parts(body)
@@ -620,7 +632,7 @@ def check_logout_window(method: str, url: str, body: str | None) -> None:
     Raises:
         TabooViolation: признак смены пароля или другой запрет.
     """
-    _check_window(method, url, body, ())
+    _check_window(method, url, body, (), WEB_LOGOUT_PATH_PREFIXES)
 
 
 def is_logout_label(label: str) -> bool:
