@@ -108,3 +108,8 @@ def test_profile_token_from_camera_is_escaped_in_request():
     soap = Soap()
     assert metadata.stream_uri(soap, "m2", "a&b<c>") == "rtsp://x/"
     assert "a&amp;b&lt;c&gt;" in soap.body and "a&b<c>" not in soap.body
+
+
+def test_stand_port_applies_when_camera_names_no_port():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1/live", "10.0.0.1", 8554)
+    assert uri == "rtsp://10.0.0.1:8554/live"

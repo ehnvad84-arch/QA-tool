@@ -1,11 +1,15 @@
 """STREAM-PARAMS-1: сверка параметров, потери, декодер."""
 
+import subprocess
+
 import pytest
 
 from qa_tool.checks import load_all
 from qa_tool.checks.stream import common, params
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
+from qa_tool.drivers.camera.depacket import START_CODE
+from qa_tool.drivers.camera.onvif_generic import EncoderSettings
 from qa_tool.drivers.camera.rtsp import RtpPacket, RtspError, Track
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
@@ -201,3 +205,87 @@ def test_sampler_without_keyframe_has_nothing(tmp_path):
     sampler.add(other(1, 100))
     sampler.add(other(2, 200))
     assert not sampler.close()
+
+
+def test_sample_stops_whole_once_full(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "SAMPLE_LIMIT", 250)
+    sampler = common.Sampler(tmp_path / "sample", Track("video", "H264", "x"))
+    sampler.add(key(1, 0))
+    sampler.add(other(2, 3600))
+    sampler.add(RtpPacket(0, True, b"\x65" + b"\x00" * 500, 7200, b"", 3, 0.0))  # не влезает
+    sampler.add(other(4, 10_800))  # влез бы, но без пропущенного кадра декодеру нечего ссылаться
+    sampler.add(other(5, 14_400))
+    sampler.close()
+    written = (tmp_path / "sample").read_bytes()
+    assert b"\x65" + b"\x00" * 500 not in written
+    assert written.count(START_CODE) == 2
+
+
+def test_endless_frame_does_not_grow_without_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "SAMPLE_LIMIT", 250)
+    sampler = common.Sampler(tmp_path / "sample", Track("video", "H264", "x"))
+    for n in range(100):
+        sampler.add(RtpPacket(0, False, b"\x65" + b"\x00" * 99, 0, b"", n, 0.0))
+    assert len(sampler._frame) < 1000
+    sampler.close()
+
+
+def test_decoder_out_of_time_is_the_stands_fault(monkeypatch):
+    def too_long(path, encoding):
+        raise subprocess.TimeoutExpired("ffmpeg", 20)
+
+    monkeypatch.setattr(params, "decode", too_long)
+    _, rows = check(OnvifState(streams=(GOOD,)))
+    assert rows["STREAM-DECODE-1"].status is Status.STAND_ERROR
+
+
+def test_decoder_crash_is_the_stands_fault(monkeypatch):
+    monkeypatch.setattr(
+        common,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 137, "", ""),
+    )
+    _, rows = check(OnvifState(streams=(GOOD,)))
+    assert rows["STREAM-DECODE-1"].status is Status.STAND_ERROR
+    assert "137" in rows["STREAM-DECODE-1"].reason
+
+
+def test_crash_in_one_profile_keeps_the_other_rows(monkeypatch):
+    real = params.ProfileRun.run
+
+    def falls_once(self, seconds):
+        if self.number == 1:
+            raise IndexError("данные камеры")
+        return real(self, seconds)
+
+    monkeypatch.setattr(params.ProfileRun, "run", falls_once)
+    state = OnvifState(streams=(MockStream("main"), MockStream("sub", path="/live-sub")))
+    _, rows = check(state)
+    assert rows["STREAM-PARAMS-1"].status is Status.STAND_ERROR
+    assert rows["STREAM-PARAMS-2"].status is Status.PASSED
+
+
+def encoder(**values):
+    return EncoderSettings(**{"encoding": "H264", **values})
+
+
+STATS = {"fps": 25.0, "arrival_fps": 0.0, "kbps": 1000.0, "gop": 25}
+CONTEXT = CheckContext(Camera(1, "10.0.0.1", username="admin"), "", Place.COLOR_BOX)
+
+
+def test_timestamps_disagreeing_with_arrival_fail():
+    problems = params.param_problems(
+        CONTEXT, encoder(fps=25), {**STATS, "arrival_fps": 22.0}, "H264", None
+    )
+    assert "кадры приходят" in problems[0]
+
+
+def test_arrival_rate_within_limit_is_fine():
+    stats = {**STATS, "arrival_fps": 24.2}
+    assert params.param_problems(CONTEXT, encoder(fps=25), stats, "H264", None) == []
+
+
+def test_jpeg_size_rounds_up_to_blocks_of_eight():
+    settings = encoder(encoding="JPEG", width=960, height=540)
+    assert params.param_problems(CONTEXT, settings, STATS, "JPEG", (960, 544)) == []
+    assert params.param_problems(CONTEXT, settings, STATS, "JPEG", (640, 480))

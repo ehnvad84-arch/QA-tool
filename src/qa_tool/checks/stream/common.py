@@ -7,7 +7,7 @@ from pathlib import Path
 
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.replay import is_keyframe, soap_evidence
-from qa_tool.core.checks import CheckContext, Evidence
+from qa_tool.core.checks import CheckContext, ChildResult, Evidence
 from qa_tool.core.models import Threshold
 from qa_tool.drivers.camera.depacket import Depacketizer, parameter_sets
 from qa_tool.drivers.camera.onvif_generic import MediaProfile, media_profiles, service_urls
@@ -25,19 +25,30 @@ DEFAULTS = {
     "stream.udp_loss_pct": Threshold(0.1, "%", START),
     "stream.jitter_ms": Threshold(30.0, "мс", START),
     "stream.delay_growth_s": Threshold(1.0, "с", START),
+    # часы камеры уходят постоянно и за сутки дали бы секунды роста без всякой очереди: у ухода
+    # 50 ppm это 0,18 с/ч, у меток 30 кадр/с на настоящих 29,97 — 3,6 с/ч; очередь растёт быстрее
+    "stream.delay_rate_s_h": Threshold(5.0, "с/ч", START),
 }
 MAX_PROFILES = 8  # у камер бывает 2–4; предел держит проверку в её сроке
 SAMPLE_CEILING_S = 60.0  # больше порог не поднимет: срок проверки считается от этого значения
-OPEN_RESERVE_S = 25.0  # на профиль: открыть поток, разобрать, декодировать, закрыть
+# на профиль: открыть поток, закрыть, декодировать; два запуска декодера по DECODE_TIMEOUT_S
+# в него не помещаются, но и бывают только при сбое: запас покрывает RESERVE_S
+OPEN_RESERVE_S = 25.0
 RESERVE_S = 60.0  # на чтение профилей и закрытие: срок планировщика не должен наступить раньше
 DECODE_TIMEOUT_S = 20.0
 SAMPLE_LIMIT = 64 << 20  # 30 с потока 16 Мбит/с; больше декодеру не нужно
 CODEC_FORMATS = {"H264": "h264", "H265": "hevc", "HEVC": "hevc"}
-NO_ERRORS_LIMIT = 20  # строк ошибок декодера в доказательствах
+DECODER_LINES_LIMIT = 20  # строк ошибок декодера в доказательствах
+RTSP_UNAUTHORIZED = 401
+PASSWORD_REFUSED = "stream_password_refused"  # ключ в ctx.extra: общий на проверки и нити
 
 
 class ToolMissing(RuntimeError):
     """Нет ffmpeg или ffprobe: вина стенда, а не камеры."""
+
+
+class DecoderFailed(RuntimeError):
+    """ffmpeg упал, не сказав об ошибках в потоке: вина стенда, а не камеры."""
 
 
 def limit(ctx: CheckContext, key: str) -> Threshold:
@@ -72,10 +83,33 @@ def read_profiles(ctx: CheckContext) -> tuple[list[MediaProfile], list[Evidence]
     return profiles, soap_evidence(soap)
 
 
-def client_for(ctx: CheckContext, profile: MediaProfile) -> RtspClient:
+def client_for(ctx: CheckContext, profile: MediaProfile, timeout: float = 10.0) -> RtspClient:
     """Клиент RTSP на адрес камеры со стенда: хост из ответа камеры недоверенный (NAT)."""
     url = to_stand_address(profile.uri, ctx.camera.address, ctx.camera.rtsp_port)
-    return RtspClient(url, ctx.camera.username, ctx.password, timeout=10)
+    return RtspClient(url, ctx.camera.username, ctx.password, timeout=timeout)
+
+
+def remember_refusal(ctx: CheckContext, error: Exception) -> str:
+    """Запомнить отказ в пароле на весь прогон камеры и вернуть причину для строки.
+
+    Неверный пароль на камере уменьшает счётчик попыток (блокировка), поэтому после отказа ни
+    одна проверка потока и ни одна нить с этим паролем больше не идёт. ONVIF при этом может
+    пройти: у камеры бывают разные учётные записи для ONVIF и RTSP.
+    """
+    reason = f"камера не приняла логин и пароль для видео: {error}"
+    ctx.extra[PASSWORD_REFUSED] = reason
+    return reason
+
+
+def refused_password(ctx: CheckContext) -> str:
+    """Причина, если камера уже отвергла пароль на этом прогоне; пусто — не отвергала."""
+    return ctx.extra.get(PASSWORD_REFUSED, "")
+
+
+def add_onvif_evidence(rows: list[ChildResult], evidence: list[Evidence]) -> None:
+    """Положить обмен ONVIF в первую строку: родитель с дочерними строками в базу не пишется."""
+    if rows:
+        rows[0].result.evidence = [*rows[0].result.evidence, *evidence]
 
 
 def start_video(client: RtspClient) -> tuple[str, Track]:
@@ -118,18 +152,23 @@ class Sampler:
         self._frame_key = False
         self._started = False
         self._written = 0
+        self._full = False
 
     def add(self, packet: RtpPacket) -> None:
         """Учесть пакет видео."""
+        if self._full:
+            return
         if packet.timestamp != self._timestamp:
             self._flush()
             self._timestamp = packet.timestamp
         self._frame += self._depacketizer.push(packet.payload)
         self._frame_key = self._frame_key or is_keyframe(self.encoding, packet.payload)
+        # выборка кончается целиком: кадры после пропущенного декодер счёл бы ошибками камеры
+        self._full = self._written + len(self._frame) > SAMPLE_LIMIT
 
     def _flush(self) -> None:
         self._started = self._started or self._frame_key
-        if self._started and self._written + len(self._frame) <= SAMPLE_LIMIT:
+        if self._started:
             self._file.write(self._frame)
             self._written += len(self._frame)
         self._frame.clear()
@@ -157,11 +196,16 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
 def decode(path: Path, encoding: str) -> tuple[list[str], dict]:
     """Декодировать выборку из файла; адреса камеры и пароля в аргументах нет.
 
+    Args:
+        path: файл выборки.
+        encoding: кодек из SDP, один из `CODEC_FORMATS`.
+
     Returns:
         Строки ошибок декодера и данные потока от ffprobe (`width`, `height`, `codec_name`).
 
     Raises:
         ToolMissing: нет ffmpeg или ffprobe.
+        DecoderFailed: ffmpeg упал и не назвал ошибок потока.
         subprocess.TimeoutExpired: декодер не уложился в срок.
     """
     ffmpeg, ffprobe = tool_path("ffmpeg"), tool_path("ffprobe")
@@ -169,7 +213,9 @@ def decode(path: Path, encoding: str) -> tuple[list[str], dict]:
         raise ToolMissing("нет ffmpeg или ffprobe")
     source = ["-f", CODEC_FORMATS[encoding.upper()], "-i", str(path)]
     done = _run([ffmpeg, "-hide_banner", "-v", "error", *source, "-f", "null", "-"])
-    errors = [line for line in done.stderr.splitlines() if line.strip()][:NO_ERRORS_LIMIT]
+    errors = [line for line in done.stderr.splitlines() if line.strip()][:DECODER_LINES_LIMIT]
+    if done.returncode and not errors:
+        raise DecoderFailed(f"ffmpeg завершился с кодом {done.returncode}")
     probe = _run(
         [ffprobe, "-v", "error", "-select_streams", "v:0"]
         + ["-show_entries", "stream=width,height,codec_name", "-of", "json"]

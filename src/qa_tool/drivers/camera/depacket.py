@@ -44,7 +44,14 @@ def parameter_sets(fmtp: str) -> list[bytes]:
 
 
 def jpeg_size(payload: bytes) -> tuple[int, int] | None:
-    """Ширина и высота из заголовка RTP JPEG (RFC 2435 §3.1); None — заголовка нет."""
+    """Ширина и высота из заголовка RTP JPEG (RFC 2435 §3.1), кратные 8.
+
+    Размер там хранится блоками по 8 пикселей: 540 строк придут как 544. Больше 2040 пикселей
+    в байт не помещается, такие кадры идут с нулём.
+
+    Returns:
+        Ширина и высота или None, если заголовка нет или размер в него не поместился.
+    """
     if len(payload) < 8 or not payload[6] or not payload[7]:
         return None
     return payload[6] * 8, payload[7] * 8

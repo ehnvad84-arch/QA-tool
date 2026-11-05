@@ -15,13 +15,18 @@ from qa_tool.checks.stream.common import (
     CODEC_FORMATS,
     MAX_PROFILES,
     OPEN_RESERVE_S,
+    RTSP_UNAUTHORIZED,
+    DecoderFailed,
     Sampler,
     ToolMissing,
+    add_onvif_evidence,
     check_timeout_s,
     client_for,
     decode,
     limit,
     read_profiles,
+    refused_password,
+    remember_refusal,
     sample_seconds,
     start_video,
 )
@@ -42,7 +47,6 @@ from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, Track,
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
 
 CHECK_ID = "STREAM-PARAMS-1"
-RTSP_UNAUTHORIZED = 401
 ENOUGH_OF_SAMPLE = 0.8  # меньше — поток прервался, а не «немного короче»
 JPEG_NAMES = {"JPEG", "MJPEG"}
 
@@ -71,6 +75,13 @@ def bitrate_problem(encoder: EncoderSettings, kbps: float, pct: float) -> str:
     return ""
 
 
+def _size_expected(encoder: EncoderSettings, encoding: str) -> tuple[int, int]:
+    """Размер, который должен прийти: RTP JPEG хранит его блоками по 8 пикселей (RFC 2435)."""
+    if encoding.upper() in JPEG_NAMES:
+        return -(-encoder.width // 8) * 8, -(-(encoder.height or 0) // 8) * 8
+    return encoder.width, encoder.height
+
+
 def param_problems(
     ctx: CheckContext,
     encoder: EncoderSettings,
@@ -78,16 +89,33 @@ def param_problems(
     encoding: str,
     size: tuple[int, int] | None,
 ) -> list[str]:
-    """Расхождения заявленного и измеренного."""
+    """Расхождения заявленного и измеренного.
+
+    Args:
+        ctx: контекст проверки, из него пороги.
+        encoder: что заявляет камера.
+        stats: итог `StreamMeter.stats`.
+        encoding: кодек из SDP.
+        size: измеренное разрешение; None — измерить не удалось.
+
+    Returns:
+        Тексты расхождений для протокола; пусто — всё в допуске.
+    """
     problems = []
     declared = encoder.encoding.replace("MJPEG", "JPEG")
     if encoding.upper().replace("HEVC", "H265") != declared:
         problems.append(f"кодек {encoding}, заявлен {encoder.encoding}")
-    if size and encoder.width and size != (encoder.width, encoder.height):
+    if size and encoder.width and size != _size_expected(encoder, encoding):
         problems.append(f"разрешение {size[0]}×{size[1]}, заявлено {_size_of(encoder)}")
     fps_pct = limit(ctx, "stream.fps_pct").value
     if encoder.fps and abs(stats["fps"] - encoder.fps) > encoder.fps * fps_pct / 100:
         problems.append(f"частота {stats['fps']:g} кадр/с, заявлено {encoder.fps:g}")
+    arrival = stats["arrival_fps"]
+    if arrival and abs(arrival - stats["fps"]) > stats["fps"] * fps_pct / 100:
+        problems.append(
+            f"кадры приходят с частотой {arrival:g} кадр/с, а метки времени "
+            f"показывают {stats['fps']:g}: частота и битрейт по меткам неверны"
+        )
     bitrate = bitrate_problem(encoder, stats["kbps"], limit(ctx, "stream.bitrate_pct").value)
     if bitrate:
         problems.append(bitrate)
@@ -120,7 +148,14 @@ def declared_text(encoder: EncoderSettings) -> str:
 
 
 class ProfileRun:
-    """Проверка одного профиля: выборка и её строки протокола."""
+    """Проверка одного профиля: выборка и её строки протокола.
+
+    Args:
+        ctx: контекст проверки.
+        profile: медиапрофиль.
+        number: номер профиля с 1, входит в ID строк и имена файлов.
+        folder: временная папка выборки.
+    """
 
     def __init__(self, ctx: CheckContext, profile: MediaProfile, number: int, folder: Path):
         self.ctx = ctx
@@ -132,6 +167,8 @@ class ProfileRun:
         self.sampler: Sampler | None = None
         self.jpeg: tuple[int, int] | None = None
         self.sdp = ""
+        self.channel = 0
+        self.decoder_problem = ""
         self.exchanges: list[str] = []
 
     def row(self, kind: str, title: str, result: CheckResult, severity: Severity) -> ChildResult:
@@ -145,7 +182,7 @@ class ProfileRun:
         )
 
     def _on_packet(self, packet: RtpPacket) -> None:
-        if packet.channel != 0:
+        if packet.channel != self.channel:
             return
         self.meter.add(packet)
         if self.sampler:
@@ -156,6 +193,7 @@ class ProfileRun:
     def _read(self, client: RtspClient, seconds: float) -> WatchEnd:
         with client:
             self.sdp, self.track = start_video(client)
+            self.channel = client.rtp_channel
             self.meter = StreamMeter(self.track.encoding, self.track.clock_rate)
             if self.track.encoding.upper() in CODEC_FORMATS:
                 self.sampler = Sampler(self.folder / f"sample-{self.number}", self.track)
@@ -174,7 +212,7 @@ class ProfileRun:
         except RtspError as e:
             self.exchanges = client.exchanges
             if e.status == RTSP_UNAUTHORIZED:
-                result = CheckResult.stand_error(f"камера не приняла логин и пароль: {e}")
+                result = CheckResult.stand_error(remember_refusal(self.ctx, e))
                 return [self.row("PARAMS", "параметры", result, Severity.MAJOR)]
             return [self._failed_open(f"поток не открывается: {e}")]
         except (OSError, ValueError) as e:
@@ -225,8 +263,11 @@ class ProfileRun:
             return decode(self.folder / f"sample-{self.number}", self.track.encoding)
         except ToolMissing:
             return None, {}
+        except DecoderFailed as e:
+            self.decoder_problem = str(e)
         except subprocess.TimeoutExpired:
-            return ["декодер не уложился в срок"], {}
+            self.decoder_problem = "декодер не уложился в срок: компьютер стенда перегружен"
+        return [], {}
 
     def _size(self, info: dict) -> tuple[int, int] | None:
         if info.get("width") and info.get("height"):
@@ -255,16 +296,28 @@ class ProfileRun:
             )
         else:
             problems = param_problems(self.ctx, encoder, stats, self.track.encoding, size)
+            unmeasured = [
+                name
+                for name, missed in (
+                    ("разрешение", encoder.width and not size),
+                    ("GOP", encoder.gop and not stats["gop"]),
+                )
+                if missed
+            ]
+            note = f"; не измерено: {', '.join(unmeasured)}" if unmeasured else ""
             result = CheckResult(
                 Status.FAILED if problems else Status.PASSED,
                 reason="; ".join(problems),
                 expected=declared_text(encoder),
-                actual=actual,
+                actual=actual + note,
                 evidence=evidence,
             )
         return self.row("PARAMS", title, result, Severity.MAJOR)
 
     def _loss_row(self, stats: dict) -> ChildResult:
+        if not stats["packets"]:
+            result = CheckResult.skipped("пакетов не было: см. строку параметров")
+            return self.row("LOSS", "потери и пропуски кадров", result, Severity.MAJOR)
         drop = limit(self.ctx, "stream.drop_pct")
         problems = []
         if stats["lost"]:
@@ -293,6 +346,8 @@ class ProfileRun:
             result = CheckResult.skipped(f"кодек {self.track.encoding}: декодер не применяется")
         elif errors is None:
             result = CheckResult.stand_error("нет ffmpeg или ffprobe: декодировать нечем")
+        elif self.decoder_problem:
+            result = CheckResult.stand_error(self.decoder_problem)
         elif not has_sample:
             result = CheckResult(
                 Status.FAILED, reason="в выборке нет ключевого кадра", expected=expected
@@ -313,11 +368,11 @@ class ProfileRun:
         return self.row("DECODE", "декодирование", result, Severity.BLOCKER)
 
 
-def _skipped_row(profile: MediaProfile, number: int, reason: str) -> ChildResult:
+def _plain_row(profile: MediaProfile, number: int, result: CheckResult) -> ChildResult:
     return ChildResult(
         f"STREAM-PARAMS-{number}",
         f"Поток «{_name(profile)}»: параметры",
-        CheckResult.skipped(reason),
+        result,
     )
 
 
@@ -350,12 +405,19 @@ def stream_params(ctx: CheckContext) -> CheckResult:
                 reason = f"профилей больше {MAX_PROFILES}: на этот не хватает срока проверки"
             elif ctx.stop_requested():
                 reason = "прогон остановлен"
+            elif refused_password(ctx):
+                reason = refused_password(ctx)
             elif time.monotonic() + seconds + OPEN_RESERVE_S > deadline:
                 reason = "не хватило срока проверки"
             if reason:
-                rows.append(_skipped_row(profile, number, reason))
+                rows.append(_plain_row(profile, number, CheckResult.skipped(reason)))
                 continue
-            rows += ProfileRun(ctx, profile, number, Path(folder)).run(seconds)
+            try:
+                rows += ProfileRun(ctx, profile, number, Path(folder)).run(seconds)
+            except Exception as e:  # данные одной камеры не должны стоить строк остальных профилей
+                result = CheckResult.stand_error(f"сбой проверки профиля: {type(e).__name__}")
+                rows.append(_plain_row(profile, number, result))
+    add_onvif_evidence(rows, evidence)
     return CheckResult(
         Status.PASSED,
         actual=f"потоков: {len(profiles)}",

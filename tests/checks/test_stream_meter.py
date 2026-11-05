@@ -99,7 +99,7 @@ def test_declared_step_finds_a_stream_that_is_steadily_slow():
 
 
 def test_jitter_grows_with_uneven_arrival():
-    meter = StreamMeter("H264")
+    meter = StreamMeter("H264", warmup_s=0)
     for n in range(100):
         meter.add(packet(n, n * STEP, n * 0.04 + (0.02 if n % 2 else 0)))
     assert 15 < meter.stats()["jitter_ms"] <= 20
@@ -166,3 +166,66 @@ def test_new_session_is_neither_loss_nor_delay_growth():
     assert stats["lost"] == 0
     assert stats["packets"] == 100
     assert stats["delay_growth_s"] == 0.0
+
+
+def feed_with_b_frames(meter, groups):
+    """I P B B в порядке передачи, 25 кадров/с показа: метки B позади уже пришедшего P."""
+    order = [0, 3, 1, 2]
+    for group in range(groups):
+        for place, shown in enumerate(order):
+            n = group * 4 + place
+            payload = IDR if place == 0 and group % 6 == 0 else SLICE
+            meter.add(packet(n, (group * 4 + shown) * STEP, n * 0.04, payload))
+
+
+def test_b_frames_count_as_frames():
+    meter = StreamMeter("H264")
+    feed_with_b_frames(meter, 25)
+    stats = meter.stats()
+    assert stats["frames"] == 100
+    assert 24.5 < stats["fps"] < 25.5
+    assert stats["gop"] == 24
+    assert stats["dropped"] == 0
+
+
+def test_frames_lost_among_b_frames_are_noticed():
+    meter = StreamMeter("H264")
+    feed_with_b_frames(meter, 25)
+    start = 100 * STEP
+    for n, shown in enumerate((12, 13, 14)):  # камера пропустила двенадцать кадров подряд
+        meter.add(packet(100 + n, start + shown * STEP, (100 + n) * 0.04))
+    assert meter.stats()["dropped"] > 0
+
+
+def test_arrival_rate_shows_what_template_timestamps_hide():
+    meter = StreamMeter("H264")
+    for n in range(300):  # настоящие 22 кадра/с, метки по шаблону на 25
+        meter.add(packet(n, n * STEP, n / 22))
+    stats = meter.stats()
+    assert stats["fps"] == 25.0
+    assert 21.9 < stats["arrival_fps"] < 22.1
+
+
+def test_short_stream_has_no_arrival_rate():
+    meter = StreamMeter("H264")
+    feed(meter, 25)
+    assert meter.stats()["arrival_fps"] == 0.0
+
+
+def test_burst_after_play_is_not_jitter():
+    meter = StreamMeter("H264")
+    for n in range(50):  # кэш группы кадров: 2 секунды видео за 50 мс
+        meter.add(packet(n, n * STEP, n * 0.001))
+    for n in range(50, 500):
+        meter.add(packet(n, n * STEP, 0.05 + (n - 50) * 0.04))
+    stats = meter.stats()
+    assert stats["jitter_ms"] < 5
+    assert stats["jitter_mean_ms"] <= stats["jitter_ms"]
+
+
+def test_jitter_after_warmup_is_still_seen():
+    meter = StreamMeter("H264")
+    for n in range(300):
+        late = 0.03 if n % 2 and n > 100 else 0.0
+        meter.add(packet(n, n * STEP, n * 0.04 + late))
+    assert meter.stats()["jitter_ms"] > 15

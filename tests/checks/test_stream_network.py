@@ -6,7 +6,7 @@ from qa_tool.checks import load_all
 from qa_tool.checks.stream import network
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place, Threshold
-from qa_tool.drivers.camera.rtsp import WatchEnd
+from qa_tool.drivers.camera.rtsp import RtspClient, RtspError, WatchEnd
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import MockStream, OnvifState
@@ -64,10 +64,30 @@ def test_loss_above_threshold_fails():
 
 def test_jitter_above_threshold_fails():
     context = CheckContext(Camera(1, "10.0.0.1", username="admin"), "x", Place.COLOR_BOX)
-    stats = {"seconds": 30, "lost": 0, "loss_pct": 0.0, "jitter_ms": 45.0}
+    stats = {"seconds": 30, "lost": 0, "loss_pct": 0.0, "jitter_ms": 45.0, "jitter_mean_ms": 12.0}
     result = network._verdict(context, stats, WatchEnd.TIME_UP, [])
     assert result.status is Status.FAILED
-    assert "джиттер 45 мс" in result.reason
+    assert "джиттер 45 мс, в среднем 12 мс" in result.reason
+
+
+def test_small_receive_buffer_is_shown():
+    context = CheckContext(Camera(1, "10.0.0.1", username="admin"), "x", Place.COLOR_BOX)
+    stats = {"seconds": 30, "lost": 0, "loss_pct": 0.0, "jitter_ms": 1.0, "jitter_mean_ms": 1.0}
+    result = network._verdict(context, stats, WatchEnd.TIME_UP, [], buffer=200 << 10)
+    assert "буфер приёма стенда мал: 200 КБ" in result.actual
+
+
+def test_cut_before_first_packet_is_not_blamed_on_the_firewall(monkeypatch):
+    monkeypatch.setattr(RtspClient, "watch", lambda *args, **kwargs: WatchEnd.BROKEN)
+    row = check(state())["STREAM-NET-1"]
+    assert row.status is Status.FAILED
+    assert "прервался" in row.reason
+
+
+def test_other_refusal_is_named_by_its_code():
+    error = RtspError("DESCRIBE → 404 Not Found", 404)
+    assert "не открылся" in network._refused_reason(error)
+    assert "не отдаёт" in network._refused_reason(RtspError("SETUP → 461", 461))
 
 
 def test_blocked_udp_is_not_the_cameras_fault(monkeypatch):

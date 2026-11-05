@@ -20,6 +20,7 @@
 import datetime
 import json
 import time
+from collections.abc import Iterator
 from xml.sax.saxutils import escape
 
 from qa_tool.checks.onvif.metadata import to_stand_address
@@ -172,11 +173,21 @@ def replay_uri(soap: SoapClient, replay_url: str, recording: str) -> str:
     return (_texts(answer, "Uri") or [""])[0]
 
 
+def _aggregated(payload: bytes, offset: int) -> Iterator[int]:
+    """Первый байт каждого NAL агрегации: перед NAL размер в 2 байта; длины недоверенные."""
+    while offset + 2 < len(payload):
+        size = int.from_bytes(payload[offset : offset + 2], "big")
+        if not size:
+            return
+        yield payload[offset + 2]
+        offset += 2 + size
+
+
 def is_keyframe(encoding: str, payload: bytes) -> bool:
     """Пакет несёт начало ключевого кадра (H.264 IDR, H.265 IRAP, любой кадр JPEG).
 
-    Разбирается только первый байт упаковки: одиночный NAL, начало FU (RFC 6184 §5.8,
-    RFC 7798 §4.4.3) и первый NAL агрегации (STAP-A, AP) — так кадры камер и пакуются.
+    Разбирается одиночный NAL, начало FU (RFC 6184 §5.8, RFC 7798 §4.4.3) и все NAL агрегации
+    (STAP-A, AP): камеры кладут в неё SPS и PPS вместе с маленьким ключевым кадром.
     """
     codec = encoding.upper()
     if codec == "JPEG":
@@ -185,15 +196,15 @@ def is_keyframe(encoding: str, payload: bytes) -> bool:
         kind = payload[0] & 0x1F
         if kind == 28 and len(payload) > 1:  # FU-A: важен только первый фрагмент
             return bool(payload[1] & 0x80) and payload[1] & 0x1F == 5
-        if kind == 24 and len(payload) > 3:  # STAP-A: размер (2 байта), потом NAL
-            kind = payload[3] & 0x1F
+        if kind == 24:  # STAP-A
+            return any(nal & 0x1F == 5 for nal in _aggregated(payload, 1))
         return kind == 5
     if codec in ("H265", "HEVC") and len(payload) > 1:
         kind = (payload[0] >> 1) & 0x3F
         if kind == 49 and len(payload) > 2:  # FU
             return bool(payload[2] & 0x80) and 16 <= payload[2] & 0x3F <= 21
-        if kind == 48 and len(payload) > 4:  # AP
-            kind = (payload[4] >> 1) & 0x3F
+        if kind == 48:  # AP
+            return any(16 <= (nal >> 1) & 0x3F <= 21 for nal in _aggregated(payload, 2))
         return 16 <= kind <= 21
     return False
 

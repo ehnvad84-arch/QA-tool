@@ -141,3 +141,7 @@ def test_password_in_command_line_form_is_redacted():
 
 def test_session_header_is_cut():
     assert "abc-123" not in redact("POST /api/x\nX-Session-ID: abc-123\n")
+
+
+def test_password_with_at_sign_in_address_is_redacted_whole():
+    assert redact("rtsp://admin:p@ss@w0rd@10.0.0.1/live") == "rtsp://admin:***@10.0.0.1/live"

@@ -34,6 +34,7 @@ from qa_tool.drivers.camera.onvif_generic import service_urls
 from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
+RTSP_DEFAULT_PORT = 554  # адрес без порта идёт сюда; стенд с другим портом — за NAT или туннелем
 CHECK_METADATA = "RUV-M-METADATA-1"
 CHECK_STREAM = "RUV-M-STREAM-1"
 CHECK_ANALYTICS = "RUV-M-ANALYTICS-1"
@@ -106,7 +107,7 @@ def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     нельзя — подставляем адрес камеры из стенда, порт — из ответа или из стенда.
     """
     parts = urlsplit(uri)
-    if parts.hostname == address:
+    if parts.hostname == address and (parts.port or rtsp_port == RTSP_DEFAULT_PORT):
         return uri
     return urlunsplit(parts._replace(netloc=f"{address}:{parts.port or rtsp_port}"))
 

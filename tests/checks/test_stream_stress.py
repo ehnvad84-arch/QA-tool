@@ -1,5 +1,6 @@
 """STREAM-STRESS-1: долгая нагрузка на коротком сроке через ctx.extra."""
 
+import json
 import threading
 import time
 
@@ -31,6 +32,11 @@ SUB = MockStream("sub", path="/live-sub")
 
 
 def check(streams=(MAIN,), faults=None, extra=None, stop=lambda: False, thresholds=None, **server):
+    result, rows, _ = run_with_camera(streams, faults, extra, stop, thresholds, **server)
+    return result, rows
+
+
+def run_with_camera(streams, faults, extra=None, stop=lambda: False, thresholds=None, **server):
     cam = MockCamera(Passport("X", "M", "1", "S1"), state=OnvifState(streams=streams)).start()
     cam.rtsp.faults.update(faults or {})
     for key, value in server.items():
@@ -50,7 +56,7 @@ def check(streams=(MAIN,), faults=None, extra=None, stop=lambda: False, threshol
         result = run_check(SPEC, context)
     finally:
         cam.stop()
-    return result, {row.check_id: row.result for row in result.children}
+    return result, {row.check_id: row.result for row in result.children}, cam
 
 
 def test_all_streams_hold_for_the_whole_term():
@@ -174,3 +180,99 @@ def test_eight_cameras_at_once():
     assert len(results) == 8
     for rows in results.values():
         assert all(r.status is Status.PASSED for r in rows.values())
+
+
+def summary(row):
+    return json.loads(next(e.content for e in row.evidence if e.name == "stress-1.json"))
+
+
+def test_answering_describe_is_not_coming_back():
+    faults = {"/live": StreamFault(break_after_s=0.5, setup_refused_after_break=True)}
+    _, rows, cam = run_with_camera((MAIN,), faults, {"stress_seconds": 4})
+    row = rows["STREAM-STRESS-1"]
+    assert row.status is Status.FAILED
+    assert "не вернулся" in row.reason
+    assert "обрывов 1" in row.reason
+    assert summary(row)["down_s"] >= 1.0
+    assert cam.rtsp.requests.count("SETUP /live") < 15  # пауза между попытками, а не тысячи
+
+
+def test_rtsp_alive_without_frames_is_downtime():
+    faults = {"/live": StreamFault(break_after_s=0.5, no_frames_after_break=True)}
+    _, rows = check(faults=faults, extra={"stress_seconds": 4})
+    row = rows["STREAM-STRESS-1"]
+    assert "не вернулся" in row.reason
+    assert "обрывов 1" in row.reason
+    assert summary(row)["down_s"] >= 1.0
+
+
+def test_downtime_runs_from_last_packet_to_first_packet():
+    _, rows = check(faults={"/live": StreamFault(break_after_s=0.5)})
+    row = rows["STREAM-STRESS-1"]
+    assert "обрывов 1" in row.reason
+    assert 0.05 <= summary(row)["down_s"] < 1.0
+
+
+def test_password_refused_after_break_is_not_repeated():
+    faults = {"/live": StreamFault(break_after_s=0.5, rejects_after_break=True)}
+    _, rows, cam = run_with_camera((MAIN, SUB), faults)
+    assert rows["STREAM-STRESS-1"].status is Status.STAND_ERROR
+    assert "логин и пароль" in rows["STREAM-STRESS-1"].reason
+    assert cam.rtsp.password_tries == 1
+
+
+def test_stop_before_first_frame_is_not_a_pass():
+    moment = time.monotonic() + 0.3
+    _, rows = check(stop=lambda: time.monotonic() > moment, silent=True)
+    assert rows["STREAM-STRESS-1"].status is Status.SKIPPED
+
+
+def test_stop_while_reconnecting_keeps_the_note():
+    moment = time.monotonic() + 1.5
+    faults = {"/live": StreamFault(break_after_s=0.5, setup_refused_after_break=True)}
+    _, rows = check(
+        faults=faults,
+        extra={"stress_seconds": 10, "stream_come_back_s": 60},
+        stop=lambda: time.monotonic() > moment,
+    )
+    assert "прервано оператором" in rows["STREAM-STRESS-1"].actual
+
+
+def test_camera_may_assign_its_own_channel():
+    _, rows = check(assigned_channel=2)
+    row = rows["STREAM-STRESS-1"]
+    assert row.status is Status.PASSED, row.reason
+    assert summary(row)["frames"] > 0
+
+
+def test_silent_stream_never_passes():
+    _, rows = check(extra={"stress_seconds": 1, "stream_silence_s": 5}, silent=True)
+    row = rows["STREAM-STRESS-1"]
+    assert row.status is Status.FAILED
+    assert "видео не шло" in row.reason
+
+
+def test_line_carries_delay_and_downtime():
+    _, rows = check()
+    assert "рост задержки" in rows["STREAM-STRESS-1"].actual
+    assert "без потока" in rows["STREAM-STRESS-1"].actual
+
+
+def test_onvif_exchange_reaches_the_first_row():
+    _, rows = check()
+    assert any(e.name.startswith("onvif-") for e in rows["STREAM-STRESS-1"].evidence)
+
+
+@pytest.mark.parametrize(
+    ("growth", "seconds", "failed"),
+    [
+        (3.5, 3600, False),  # часы: 29,97 кадра/с с метками на 30
+        (4.3, 86_400, False),  # уход 50 ppm за сутки
+        (2.0, 600, True),  # очередь: 12 с/ч
+        (0.3, 60, False),  # быстро, но незаметно
+    ],
+)
+def test_clock_drift_is_not_a_queue(growth, seconds, failed):
+    context = CheckContext(Camera(1, "10.0.0.1", username="admin"), "", Place.COLOR_BOX)
+    stats = {"delay_growth_s": growth, "seconds": seconds}
+    assert bool(stress.delay_problem(context, stats)) is failed

@@ -470,3 +470,102 @@ def test_packet_from_a_stranger_is_dropped():
     data = struct.pack("!BBHII", 0x80, 0x60, 1, 0, 1) + b"x"
     assert client._accept_udp(data, ("10.0.0.6", 5000)) is None
     assert client._accept_udp(data, ("10.0.0.5", 5000)).sequence == 1
+
+
+def test_close_does_not_wait_forever_for_teardown_answer():
+    server = MockRtspServer(metadata=False, silent_teardown=True).start()
+    client = _playing(server)
+    client.watch(lambda packet: None, 0.2)
+    started = time.monotonic()
+    client.close()
+    server.stop()
+    assert time.monotonic() - started < rtsp.TEARDOWN_S + 1
+
+
+def test_camera_assigned_channel_is_remembered():
+    server = MockRtspServer(metadata=False, assigned_channel=2).start()
+    client = _playing(server)
+    channels = set()
+    client.watch(lambda packet: channels.add(packet.channel), 0.3)
+    client.close()
+    server.stop()
+    assert client.rtp_channel == 2
+    assert channels == {2}
+
+
+def test_keepalive_stops_after_second_refusal():
+    client = RtspClient("rtsp://127.0.0.1/live", "admin", "x")
+    refused = rtsp.Response(
+        401, "Unauthorized", {"www-authenticate": 'Digest realm="r", nonce="n"'}
+    )
+    assert client._ping_answered(refused) is True  # устаревший nonce: повторить сразу
+    assert not client._ping_off
+    assert client._ping_answered(refused) is False
+    assert client._ping_off
+
+
+def test_static_jpeg_needs_no_rtpmap():
+    (track,) = parse_sdp("m=video 0 RTP/AVP 26\r\na=control:track1\r\n", "rtsp://c/")
+    assert track.encoding == "JPEG"
+    assert track.clock_rate == 90_000
+
+
+def test_first_format_of_the_media_line_wins():
+    sdp = (
+        "m=video 0 RTP/AVP 96 97\r\n"
+        "a=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1\r\n"
+        "a=rtpmap:97 H265/90000\r\na=fmtp:97 sprop-vps=AA\r\n"
+    )
+    (track,) = parse_sdp(sdp, "rtsp://c/")
+    assert track.encoding == "H264"
+    assert track.fmtp == "packetization-mode=1"
+
+
+def test_mismatched_format_numbers_are_still_read():
+    (track,) = parse_sdp("m=video 0 RTP/AVP 96\r\na=rtpmap:97 H264/90000\r\n", "rtsp://c/")
+    assert track.encoding == "H264"
+
+
+def test_empty_media_line_is_not_a_crash():
+    assert parse_sdp("m=\r\na=rtpmap:96 H264/90000\r\n", "rtsp://c/")[0].media == ""
+
+
+def test_rtp_padding_is_cut_off():
+    header = bytes([0xA0, 0x60, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+    packet = rtsp._rtp_packet(0, header + b"\x65data" + b"\x00\x00\x03")
+    assert packet.payload == b"\x65data"
+
+
+def test_lease_is_read_in_any_case(monkeypatch):
+    client = RtspClient("rtsp://127.0.0.1/live")
+    reply = rtsp.Response(200, "OK", {"session": "1A;Timeout=30", "transport": ""})
+    monkeypatch.setattr(client, "request", lambda *args, **kwargs: reply)
+    client.setup(rtsp.Track("video", "H264", "rtsp://127.0.0.1/live"))
+    assert client._lease_s == 30.0
+
+
+def test_port_out_of_range_from_camera_is_ignored():
+    server = MockRtspServer(metadata=False, udp=True).start()
+    client = RtspClient(f"rtsp://127.0.0.1:{server.port}/live", timeout=3)
+    client.connect()
+    _, tracks = client.describe()
+    real = client.request
+
+    def wrong_port(*args, **kwargs):
+        response = real(*args, **kwargs)
+        response.headers["transport"] = "server_port=70000-70001"
+        return response
+
+    client.request = wrong_port
+    client.setup(tracks[0], udp=True)
+    client.request = real
+    client.close()
+    server.stop()
+
+
+def test_actual_receive_buffer_is_known():
+    server = MockRtspServer(metadata=False, udp=True).start()
+    client = _udp_client(server)
+    assert client.udp_buffer > 0
+    client.close()
+    server.stop()

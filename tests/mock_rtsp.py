@@ -141,6 +141,9 @@ class StreamFault:
     break_after_s: float = 0.0  # через столько секунд обрыв соединения, один раз на путь
     stays_down: bool = False  # после обрыва камера больше не отдаёт поток
     lag: float = 0.0  # доля, на которую метки отстают от настоящего времени
+    setup_refused_after_break: bool = False  # после обрыва DESCRIBE отвечает, SETUP — 453
+    no_frames_after_break: bool = False  # после обрыва RTSP жив, а кадров нет: умер кодировщик
+    rejects_after_break: bool = False  # после обрыва камера отвергает пароль
 
 
 class _Session:
@@ -256,8 +259,15 @@ class MockRtspServer:
         max_plays: int = 0,
         udp: bool = False,
         udp_blackhole: bool = False,
+        reject_password: bool = False,
+        silent_teardown: bool = False,
+        assigned_channel: int | None = None,
     ):
         self.metadata = metadata
+        self.reject_password = reject_password  # 401 на любой пароль
+        self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
+        self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
+        self.assigned_channel = assigned_channel  # канал, который камера назначает сама
         self.silent = silent  # поток запущен, но камера ничего не шлёт
         self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
         self.ping = ping  # GET_PARAMETER: answer, silent (молчит, но считает), refused (405)
@@ -375,6 +385,21 @@ class MockRtspServer:
                             )
                             continue
                         fault = server.faults.get(path, StreamFault())
+                        after_break = path in server.broken
+                        if server.reject_password or (fault.rejects_after_break and after_break):
+                            server.password_tries += "authorization" in headers
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if method == "SETUP" and fault.setup_refused_after_break and after_break:
+                            write(
+                                f"RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: {cseq}\r\n\r\n".encode()
+                            )
+                            continue
+                        if method == "TEARDOWN" and server.silent_teardown:
+                            continue
                         if method == "DESCRIBE" and fault.stays_down and path in server.broken:
                             write(f"RTSP/1.0 503 Unavailable\r\nCSeq: {cseq}\r\n\r\n".encode())
                             continue
@@ -409,6 +434,8 @@ class MockRtspServer:
                                 )
                                 continue
                             first = int(transport.split("interleaved=")[1].split("-")[0])
+                            if server.assigned_channel is not None:
+                                first = server.assigned_channel
                             kinds = server.tracks(path)
                             channels[kinds[min(int(track or 1), len(kinds)) - 1]] = first
                             lease = (
@@ -421,7 +448,8 @@ class MockRtspServer:
                                 f"Session: 1A2B3C{lease}\r\n"
                             )
                         elif method == "PLAY":
-                            frames = [] if server.silent else server.frames
+                            dead = fault.no_frames_after_break and after_break
+                            frames = [] if server.silent or dead else server.frames
                             with server.play_lock:
                                 full = server.max_plays and server.playing >= server.max_plays
                                 server.playing += 0 if full else 1

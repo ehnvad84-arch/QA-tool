@@ -1,5 +1,5 @@
-"""Минимальный RTSP-клиент для чтения потоков камеры: метаданные ONVIF (Profile M) и архив
-Profile G.
+"""Минимальный RTSP-клиент для чтения потоков камеры: видео (модуль «Поток»), метаданные ONVIF
+(Profile M) и архив Profile G.
 
 Зачем свой клиент, а не ffmpeg: ffmpeg не разбирает дорожку `vnd.onvif.metadata`, не умеет
 заголовок `Require: onvif-replay` и берёт логин и пароль только в адресе — тогда они видны в
@@ -43,7 +43,10 @@ UDP_BATCH = 256  # пакетов за один заход: ответы RTSP и
 UDP_OPENING = b"\x80\x00" + bytes(10)
 UDP_PORT_TRIES = 32
 UDP_LAST_PORT = 65534
+UDP_MAX_PORT = 65535
 SESSION_TIMEOUT_S = 60.0  # RFC 2326 §12.37: столько живёт сессия, если камера не сказала иначе
+TEARDOWN_S = 2.0  # сессия всё равно умрёт по сроку, а «Стоп» обещан за секунды
+JPEG_PAYLOAD_TYPE = "26"  # RFC 3551: статический тип, `a=rtpmap` для него необязателен
 
 
 class RtspError(ConnectionError):
@@ -68,18 +71,20 @@ class Response:
 class Track:
     """Дорожка из SDP: тип (video, audio, application), кодек, адрес для SETUP и частота
     меток времени RTP, Гц (из rtpmap; для видео по RFC 3551 почти всегда 90 000); `fmtp` —
-    параметры формата из SDP без его номера: в них наборы параметров кодека."""
+    параметры формата из SDP без его номера: в них наборы параметров кодека; `payload_type` —
+    первый формат строки `m=`, его камера и шлёт."""
 
     media: str
     encoding: str
     control: str
     clock_rate: int = 90_000
     fmtp: str = ""
+    payload_type: str = ""
 
 
 @dataclass(frozen=True)
 class RtpPacket:
-    """Пакет RTP из канала interleaved.
+    """Пакет RTP из канала interleaved или из UDP (тогда канал 0).
 
     `payload` — без заголовка; `timestamp` — метка времени RTP; `extension` — расширение
     заголовка целиком (профиль, длина, данные) или пусто: в архиве ONVIF в нём время кадра
@@ -108,7 +113,8 @@ class WatchEnd(Enum):
 
 @dataclass
 class RtspClient:
-    """Сессия RTSP с одной камерой: connect → describe → setup → play → read_packets → close.
+    """Сессия RTSP с одной камерой: connect → describe → setup → play → watch или read_packets
+    → close.
 
     Args:
         url: rtsp://адрес[:порт]/путь; логин и пароль из адреса переносятся в заголовок.
@@ -117,7 +123,8 @@ class RtspClient:
         extra_headers: добавляются к каждому запросу (например, `Require: onvif-replay`).
 
     `exchanges` — строки «метод адрес → код» для доказательств протокола; учётных данных в них
-    нет: адрес очищен от логина, заголовок Authorization не записывается.
+    нет: адрес очищен от логина, заголовок Authorization не записывается. `rtp_channel` — канал
+    видео, который назначила камера; `udp_buffer` — фактический буфер приёма UDP, байт.
     """
 
     url: str
@@ -136,10 +143,14 @@ class RtspClient:
     _ping_method: str = "GET_PARAMETER"  # часть камер его не умеет — тогда OPTIONS
     _ping_logged: bool = False
     _ping_failed: bool = False
+    _ping_off: bool = False
+    _answer_s: float = 0.0  # 0 — ответ ждём `timeout`
     _udp: socket.socket | None = field(default=None, repr=False)
     _udp_rtcp: socket.socket | None = field(default=None, repr=False)
     _camera_ip: str = ""
     exchanges: list[str] = field(default_factory=list)
+    rtp_channel: int = 0
+    udp_buffer: int = 0
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.url)
@@ -170,6 +181,8 @@ class RtspClient:
         if self._session:
             # камера уже закрыла сессию — освобождать нечего
             with contextlib.suppress(OSError, RtspError, ValueError):
+                self._answer_s = TEARDOWN_S
+                self._sock.settimeout(TEARDOWN_S)
                 self.request("TEARDOWN", self.url)
         self._sock.close()
         self._sock = None
@@ -242,6 +255,9 @@ class RtspClient:
         ok = 200 <= response.status < 300
         if response.status == 401:
             self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
+            # первый отказ — обычно устаревший nonce; второй подряд значит, что камера больше не
+            # принимает пароль, а каждый новый запрос с ним может приблизить блокировку
+            self._ping_off = self._ping_failed
         elif not ok:
             self._ping_method = "OPTIONS"
         if not ok or not self._ping_logged:
@@ -335,9 +351,13 @@ class RtspClient:
         return frame
 
     def _read_response(self) -> Response:
-        # после PLAY камера шлёт RTP сразу, и пакеты могут прийти раньше ответа — пропускаем
+        # после PLAY камера шлёт RTP сразу, и пакеты могут прийти раньше ответа — пропускаем.
+        # Пакеты сбрасывают тайм-аут сокета, поэтому без общего срока камера, которая шлёт видео
+        # и не отвечает на запрос, держала бы нас вечно
+        deadline = time.monotonic() + (self._answer_s or self.timeout)
         while not isinstance(frame := self._read_frame(), Response):
-            pass
+            if time.monotonic() >= deadline:
+                raise TimeoutError("камера шлёт видео, но не отвечает на запрос")
         return frame
 
     def request(self, method: str, uri: str, headers: dict[str, str] | None = None) -> Response:
@@ -383,6 +403,8 @@ class RtspClient:
                 if port % 2 == 0 and port < UDP_LAST_PORT:
                     rtcp.bind((local, port + 1))
                     rtp.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFFER)
+                    # система молча режет запрос по своему пределу (на Linux — rmem_max)
+                    self.udp_buffer = rtp.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
                     rtp.setblocking(False)
                     self._udp, self._udp_rtcp = rtp, rtcp
                     return port, port + 1
@@ -413,11 +435,14 @@ class RtspClient:
         if udp:
             self._camera_ip = self._sock.getpeername()[0]
             camera_port = re.search(r"server_port=(\d+)", response.headers.get("transport", ""))
-            if camera_port:
+            if camera_port and 0 < int(camera_port[1]) <= UDP_MAX_PORT:
                 self._udp.sendto(UDP_OPENING, (self._camera_ip, int(camera_port[1])))
+        else:
+            assigned = re.search(r"interleaved=(\d+)", response.headers.get("transport", ""))
+            self.rtp_channel = int(assigned[1]) if assigned else channel
         session, _, options = response.headers.get("session", "").partition(";")
         self._session = self._session or session.strip()
-        lease = re.search(r"timeout\s*=\s*(\d+)", options)
+        lease = re.search(r"timeout\s*=\s*(\d+)", options, re.IGNORECASE)
         if lease and int(lease[1]):
             self._lease_s = float(lease[1])
 
@@ -524,7 +549,7 @@ class RtspClient:
             if now - heard >= silence_s:
                 return WatchEnd.SILENT
             try:
-                if now >= next_ping:
+                if now >= next_ping and not self._ping_off:
                     next_ping = now + self._lease_s / 2
                     self._ping()
                 if self._udp is not None and self._drain_udp(on_packet):
@@ -554,6 +579,8 @@ def _rtp_packet(channel: int, packet: bytes, arrived: float = 0.0) -> RtpPacket:
     if len(packet) < 12:
         return RtpPacket(channel, False, b"", sequence=-1, arrived=arrived)
     marker = bool(packet[1] & 0x80)
+    # RFC 3550 §5.1: иначе байты выравнивания попали бы в кадр и в битрейт
+    padding = packet[-1] if packet[0] & 0x20 else 0
     sequence, timestamp = struct.unpack("!HI", packet[2:8])
     offset = 12 + 4 * (packet[0] & 0x0F)
     extension = b""
@@ -561,7 +588,22 @@ def _rtp_packet(channel: int, packet: bytes, arrived: float = 0.0) -> RtpPacket:
     if packet[0] & 0x10 and len(packet) >= offset + 4:
         end = offset + 4 + 4 * struct.unpack("!H", packet[offset + 2 : offset + 4])[0]
         extension, offset = packet[offset:end], end
-    return RtpPacket(channel, marker, packet[offset:], timestamp, extension, sequence, arrived)
+    payload = packet[offset : len(packet) - padding]
+    return RtpPacket(channel, marker, payload, timestamp, extension, sequence, arrived)
+
+
+def _format_of(line: str) -> str:
+    """Номер формата из строки `a=rtpmap:96 ...` или `a=fmtp:96 ...`."""
+    return line.partition(":")[2].split(" ")[0]
+
+
+def _takes_format(track: Track, line: str) -> bool:
+    """Строка `a=rtpmap` или `a=fmtp` относится к формату дорожки.
+
+    Форматов в `m=` бывает несколько, а камера шлёт первый. Камера, у которой номера в `m=` и
+    `a=` не сходятся, всё равно читается: такой формат берётся, пока подходящего не нашлось.
+    """
+    return _format_of(line) == track.payload_type or not track.encoding
 
 
 def parse_sdp(sdp: str, base: str) -> list[Track]:
@@ -570,15 +612,22 @@ def parse_sdp(sdp: str, base: str) -> list[Track]:
     for raw in sdp.splitlines():
         line = raw.strip()
         if line.startswith("m="):
-            tracks.append(Track(line[2:].split()[0], "", base))
-        elif tracks and line.startswith("a=rtpmap:"):
+            fields = line[2:].split()
+            if not fields:
+                tracks.append(Track("", "", base))
+                continue
+            number = fields[3] if len(fields) > 3 else ""
+            encoding = "JPEG" if number == JPEG_PAYLOAD_TYPE else ""
+            tracks.append(Track(fields[0], encoding, base, payload_type=number))
+        elif tracks and line.startswith("a=rtpmap:") and _takes_format(tracks[-1], line):
             encoding, _, rest = line.split(" ", 1)[-1].partition("/")
             tracks[-1].encoding = encoding
             rate = rest.split("/")[0]
             if rate.isdigit() and int(rate):
                 tracks[-1].clock_rate = int(rate)
         elif tracks and line.startswith("a=fmtp:"):
-            tracks[-1].fmtp = line.partition(" ")[2].strip()
+            if _format_of(line) == tracks[-1].payload_type or not tracks[-1].fmtp:
+                tracks[-1].fmtp = line.partition(" ")[2].strip()
         elif tracks and line.startswith("a=control:"):
             control = line[len("a=control:") :]
             if "://" in control:

@@ -2,7 +2,8 @@
 
 Сети здесь нет: на вход идут пакеты RTP одной видеодорожки. Время меряется двумя часами сразу.
 Длительность, частота и битрейт — по меткам RTP, то есть по часам камеры: они не зависят от
-того, как компьютер стенда разбирает очередь. Джиттер и задержка — по времени прихода.
+того, как компьютер стенда разбирает очередь. Джиттер и задержка — по времени прихода. По нему же
+считается вторая частота: метки прошивка может ставить по шаблону, тогда они покажут заявленное.
 """
 
 from collections import Counter
@@ -16,6 +17,8 @@ TIMESTAMP_SPACE = 1 << 32
 JITTER_GAIN = 16  # RFC 3550 §6.4.1
 DROP_FACTOR = 2  # промежуток вдвое длиннее обычного — кадр пропущен
 SLICE_S = 60
+# Камера с кэшем группы кадров отдаёт его пачкой сразу после PLAY: это не джиттер сети и не темп
+WARMUP_S = 3.0
 
 
 @dataclass
@@ -29,6 +32,8 @@ class Tally:
     frames: int = 0
     keyframes: int = 0
     ticks: int = 0  # сумма промежутков между кадрами в единицах метки RTP
+    intervals: int = 0  # сколько промежутков: кадры B в ticks не входят, а в частоту входят
+    b_run: int = 0  # самая длинная серия кадров B: на столько кадров законно шагают метки
     steps: Counter = field(default_factory=Counter)  # промежуток, мс → сколько раз
     min_delay_s: float | None = None
 
@@ -41,9 +46,13 @@ class Tally:
         """
         seconds = self.ticks / clock_rate
         usual = step_ms or (self.steps.most_common(1)[0][0] if self.steps else 0)
-        limit = usual * DROP_FACTOR
+        legal = 1
+        if self.b_run and self.intervals and not step_ms:
+            # с кадрами B метка вперёд шагает через серию: обычный шаг берётся средний за кадр
+            usual, legal = seconds * 1000 / self.intervals, self.b_run + 1
+        limit = usual * legal * DROP_FACTOR
         dropped = (
-            sum(n * (round(gap / usual) - 1) for gap, n in self.steps.items() if gap >= limit)
+            sum(n * (round(gap / usual) - legal) for gap, n in self.steps.items() if gap >= limit)
             if usual
             else 0
         )
@@ -57,7 +66,7 @@ class Tally:
             "reordered": self.reordered,
             "frames": self.frames,
             "keyframes": self.keyframes,
-            "fps": round(sum(self.steps.values()) / seconds, 2) if seconds else 0.0,
+            "fps": round(self.intervals / seconds, 2) if seconds else 0.0,
             "kbps": round(self.payload_bytes * 8 / seconds / 1000, 1) if seconds else 0.0,
             "dropped": dropped,
             "drop_pct": round(100 * dropped / shown, 3) if shown else 0.0,
@@ -72,23 +81,37 @@ class StreamMeter:
         encoding: кодек из SDP, нужен для поиска ключевых кадров.
         clock_rate: частота меток RTP, Гц.
         slice_s: длина среза таблицы, с.
+        warmup_s: столько секунд от первого пакета не идёт в джиттер и частоту по приходу.
     """
 
-    def __init__(self, encoding: str, clock_rate: int = 90_000, slice_s: float = SLICE_S):
+    def __init__(
+        self,
+        encoding: str,
+        clock_rate: int = 90_000,
+        slice_s: float = SLICE_S,
+        warmup_s: float = WARMUP_S,
+    ):
         self.encoding = encoding
         self.clock_rate = clock_rate
         self.slice_s = slice_s
+        self.warmup_s = warmup_s
         self.total = Tally()
         self.slices: list[Tally] = []
         self.jitter_s = 0.0
         self.max_jitter_s = 0.0
+        self._jitter_sum = 0.0
+        self._jitter_count = 0
         self.gops: Counter = Counter()
         self._next_sequence: int | None = None
         self._frame_timestamp: int | None = None
+        self._timeline: int | None = None  # самая поздняя метка: кадры B идут позади неё
+        self._b_run = 0
         self._frame_key = False
         self._frames_since_key: int | None = None
         self._first_arrival: float | None = None
-        self._last_arrival = 0.0
+        self._steady_from: float | None = None
+        self._steady_to = 0.0
+        self._steady_frames = 0
         self._elapsed_ticks = 0
         self._previous_transit: float | None = None
         self._transit_shift = 0.0
@@ -98,7 +121,11 @@ class StreamMeter:
         """Новая сессия потока: номера и метки у неё свои, это не потери и не рост задержки."""
         self._next_sequence = None
         self._frame_timestamp = None
+        self._timeline = None
+        self._b_run = 0
         self._frames_since_key = None
+        self._steady_from = None
+        self._steady_frames = 0
         self._rebase = True
 
     def _tallies(self, packet: RtpPacket) -> tuple[Tally, Tally]:
@@ -144,25 +171,52 @@ class StreamMeter:
             if key:
                 self._mark_key(tallies)
             return
-        step = None
-        if self._frame_timestamp is not None:
-            step = (packet.timestamp - self._frame_timestamp) % TIMESTAMP_SPACE
-            if step >= TIMESTAMP_SPACE // 2:
-                return  # метка из прошлого: кадр B или опоздавший пакет
         self._frame_timestamp = packet.timestamp
         self._frame_key = False
         if self._frames_since_key is not None:
             self._frames_since_key += 1
+        step = None
+        if self._timeline is not None:
+            step = (packet.timestamp - self._timeline) % TIMESTAMP_SPACE
         for tally in tallies:
             tally.frames += 1
+            tally.intervals += step is not None
+        if step is not None and step >= TIMESTAMP_SPACE // 2:
+            self._count_b_frame(tallies)  # кадр показывается раньше уже пришедшего
+        else:
+            self._move_timeline(packet, step, tallies)
+        self._count_arrival(packet)
+        if key:
+            self._mark_key(tallies)
+
+    def _count_b_frame(self, tallies: tuple[Tally, Tally]) -> None:
+        self._b_run += 1
+        for tally in tallies:
+            tally.b_run = max(tally.b_run, self._b_run)
+
+    def _move_timeline(
+        self, packet: RtpPacket, step: int | None, tallies: tuple[Tally, Tally]
+    ) -> None:
+        self._timeline = packet.timestamp
+        self._b_run = 0
         if step is not None:
             self._elapsed_ticks += step
             for tally in tallies:
                 tally.ticks += step
                 tally.steps[round(step * 1000 / self.clock_rate)] += 1
         self._count_timing(packet, tallies)
-        if key:
-            self._mark_key(tallies)
+
+    def _warmed_up(self, packet: RtpPacket) -> bool:
+        return packet.arrived - self._first_arrival >= self.warmup_s
+
+    def _count_arrival(self, packet: RtpPacket) -> None:
+        if not self._warmed_up(packet):
+            return
+        if self._steady_from is None:
+            self._steady_from = packet.arrived
+        else:
+            self._steady_frames += 1
+        self._steady_to = packet.arrived
 
     def _mark_key(self, tallies: tuple[Tally, Tally]) -> None:
         if self._frame_key:
@@ -189,7 +243,10 @@ class StreamMeter:
         if self._previous_transit is not None:
             change = abs(transit - self._previous_transit)
             self.jitter_s += (change - self.jitter_s) / JITTER_GAIN
-            self.max_jitter_s = max(self.max_jitter_s, self.jitter_s)
+            if self._warmed_up(packet):
+                self.max_jitter_s = max(self.max_jitter_s, self.jitter_s)
+                self._jitter_sum += self.jitter_s
+                self._jitter_count += 1
         self._previous_transit = transit
         for tally in tallies:
             if tally.min_delay_s is None or transit < tally.min_delay_s:
@@ -204,18 +261,28 @@ class StreamMeter:
     def delay_growth_s(self) -> float:
         """На сколько выросла задержка от первой минуты к последней.
 
-        Берётся наименьшая задержка за минуту: она не зависит от всплесков, и рост значит, что
-        очередь в камере или в сети копится.
+        Берётся наименьшая задержка за минуту: она не зависит от всплесков. Рост значит, что
+        копится очередь или что часы камеры расходятся с часами стенда; какое из двух, решает
+        порог скорости роста в проверке.
         """
         delays = [s.min_delay_s for s in self.slices if s.min_delay_s is not None]
         return round(delays[-1] - delays[0], 3) if len(delays) > 1 else 0.0
 
+    @property
+    def arrival_fps(self) -> float:
+        """Частота по времени прихода, без разгона; 0 — поток короче разгона."""
+        seconds = self._steady_to - (self._steady_from or 0.0)
+        return round(self._steady_frames / seconds, 2) if self._steady_frames and seconds else 0.0
+
     def stats(self, step_ms: int | None = None) -> dict:
         """Итог по всему потоку; `step_ms` — заявленный промежуток между кадрами, мс."""
+        mean = self._jitter_sum / self._jitter_count if self._jitter_count else 0.0
         return {
             **self.total.stats(self.clock_rate, step_ms),
+            "arrival_fps": self.arrival_fps,
             "gop": self.gop,
             "jitter_ms": round(self.max_jitter_s * 1000, 1),
+            "jitter_mean_ms": round(mean * 1000, 1),
             "delay_growth_s": self.delay_growth_s,
         }
 
