@@ -99,6 +99,12 @@ def test_foreign_host_replaced_by_stand_address():
     assert fix("rtsp://10.0.0.5/live", "10.0.0.5", 554) == "rtsp://10.0.0.5/live"
 
 
+def test_forwarded_stand_port_wins_over_port_from_camera():
+    fix = metadata.to_stand_address
+    assert fix("rtsp://192.168.1.14:554/a?b=1", "127.0.0.1", 9614) == "rtsp://127.0.0.1:9614/a?b=1"
+    assert fix("rtsp://127.0.0.1:554/a", "127.0.0.1", 9608) == "rtsp://127.0.0.1:9608/a"
+
+
 def test_profile_token_from_camera_is_escaped_in_request():
     class Soap:
         def call(self, _url, body):

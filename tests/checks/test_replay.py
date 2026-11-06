@@ -19,6 +19,9 @@ needs_video = pytest.mark.skipif(
 )
 
 
+EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+
+
 def start(**state):
     return MockCamera(Passport("X", "M", "1", "S1"), state=OnvifState(**state)).start()
 
@@ -109,6 +112,40 @@ def test_camera_without_require_support_gets_retry_without_header():
 
 
 @needs_video
+@pytest.mark.parametrize("moment", [None, EPOCH], ids=["сейчас", "1970"])
+def test_empty_recording_of_camera_without_card_is_not_an_archive(moment):
+    now = moment or datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+    cam = start(recordings=[{"token": "rec-1", "start": now, "end": now}])
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.SKIPPED, result.reason
+    finally:
+        cam.stop()
+
+
+@needs_video
+def test_archive_playing_only_from_start_names_broken_seek():
+    cam = start(recordings=one_recording(), replay_range_silent=True)
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.FAILED
+        assert result.reason.startswith("переход по времени не работает")
+        assert "кадров 0" not in result.actual  # в протоколе — то, что проиграно с начала
+        plays = [h for m, _, h in cam.rtsp.headers if m == "PLAY"]
+        assert "range" in plays[0] and "range" not in plays[1]
+    finally:
+        cam.stop()
+
+
+def test_camera_closing_finished_search_itself_keeps_the_found_records():
+    cam = start(recordings=one_recording(), end_search_fault=True)  # так делает Dahua
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.PASSED, result.reason
+    finally:
+        cam.stop()
+
+
 def test_foreign_replay_host_is_replaced_by_stand_address():
     cam = start(recordings=one_recording(), replay_host="192.0.2.77")  # адрес из TEST-NET
     try:
@@ -135,6 +172,17 @@ def test_foreign_replay_host_is_replaced_by_stand_address():
 )
 def test_keyframe_detection(encoding, payload, key):
     assert replay.is_keyframe(encoding, payload) is key
+
+
+def test_key_frame_split_into_packets_is_counted_once():
+    track = Track("video", "H264", "c", 90000)
+    key = bytes([0x7C, 0x85])  # признак ключевого на каждом пакете кадра: так шлёт Dahua
+    packets = [
+        RtpPacket(0, False, key, 1000),
+        RtpPacket(0, True, key, 1000),
+        RtpPacket(0, True, key, 4600),
+    ]
+    assert replay.summarize(packets, track, 0)["keyframes"] == 2
 
 
 def test_summary_counts_by_rtp_clock_and_onvif_extension():

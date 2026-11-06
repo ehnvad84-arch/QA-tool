@@ -98,11 +98,13 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    end_search_fault: bool = False  # камера сама закрывает завершённый поиск: токен уже неверен
     job_stuck_active: bool = False  # SetRecordingJobMode «OK», но из Active задание не выходит
     job_refuses_active: str = ""  # задание с этим токеном камера не включает
     imaging_without_settings: bool = False  # GetImagingSettings без ImagingSettings
     profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
+    replay_range_silent: bool = False  # архив идёт только с начала: на Range кадров нет
     replay_host: str = ""  # GetReplayUri отдаёт этот, внутренний адрес камеры (NAT)
     recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
     clock_offset_s: float = 0.0  # часы камеры отличаются от часов стенда
@@ -295,7 +297,9 @@ class OnvifServices:
             "</tse:ResultList></tse:GetRecordingSearchResultsResponse>"
         )
 
-    def op_EndSearch(self, request) -> str:  # noqa: N802
+    def op_EndSearch(self, request) -> str | None:  # noqa: N802
+        if self.state.end_search_fault:
+            return None
         self.state.searches.pop(_text(request, "SearchToken"), None)
         return (
             "<tse:EndSearchResponse><tse:Endpoint>1970-01-01T00:00:00Z</tse:Endpoint>"

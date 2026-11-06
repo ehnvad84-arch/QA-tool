@@ -17,6 +17,7 @@
 по признаку ключевого кадра в расширении заголовка RTP архива ONVIF.
 """
 
+import contextlib
 import datetime
 import json
 import time
@@ -91,11 +92,24 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
             if "Completed" in _texts(answer, "SearchState"):
                 break
     finally:
-        soap.call(
-            search_url,
-            f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
-        )
-    return [r for r in found if r["token"]]
+        # Завершение поиска — только уборка: Dahua закрывает его сама после Completed и отвечает
+        # ter:InvalidToken. Отказ здесь не должен отменять уже найденные записи.
+        with contextlib.suppress(CameraUnreachable, OnvifFault):
+            soap.call(
+                search_url,
+                f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
+            )
+    return [r for r in found if r["token"] and has_data(r)]
+
+
+def has_data(recording: dict) -> bool:
+    """Есть ли в записи данные. Без неизвестных границ судить нельзя — считаем, что есть.
+
+    Камеры без карты отдают пустую запись-заглушку: начало и конец равны (Hikvision, Beward —
+    текущее время, Tiandy и второстепенные потоки Dahua — 1970 год).
+    """
+    begin, end = parse_time(recording["start"]), parse_time(recording["end"])
+    return not (begin and end and end <= begin)
 
 
 def _job_modes(soap: SoapClient, recording_url: str) -> list[tuple[str, str]]:
@@ -217,18 +231,18 @@ def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
             if step < 2**31:  # метки идут вперёд; «назад» — переупорядоченный пакет
                 elapsed += step
         previous = packet.timestamp
-    keyframes = 0
+    keyframes = set()  # по меткам RTP: кадр делится на пакеты, а признак может стоять на каждом
     moments = []
     for packet in video:
         info = onvif_frame_info(packet.extension)
         if info:
             moments.append(info[0])
         if (info and info[1]) or is_keyframe(track.encoding, packet.payload):
-            keyframes += 1
+            keyframes.add(packet.timestamp)
     stats = {
         "seconds": round(elapsed / track.clock_rate, 2),
         "frames": sum(p.marker for p in video),
-        "keyframes": keyframes,
+        "keyframes": len(keyframes),
         "codec": track.encoding.lower(),
     }
     if moments:
@@ -280,8 +294,12 @@ def play(client: RtspClient, seconds: float, start: datetime.datetime | None) ->
     if track is None:
         raise ValueError("в описании архива (SDP) нет видеодорожки")
     client.setup(track, channel=0)
-    # время в Range — абсолютное (clock), как требует ONVIF для архива; без него — с начала
-    client.play({"Range": f"clock={start:%Y%m%dT%H%M%SZ}-"} if start else None)
+    # время в Range — абсолютное (clock), как требует ONVIF для архива
+    if start:
+        client.play({"Range": f"clock={start:%Y%m%dT%H%M%SZ}-"})
+    else:
+        # именно без Range: Dahua на любой Range, даже npt=0-, отвечает 200 и не шлёт кадров
+        client.request("PLAY", client.url)
     goal = (seconds + 0.5) * track.clock_rate
     clock = {"elapsed": 0, "last": None}
 
@@ -390,13 +408,18 @@ def replay(ctx: CheckContext) -> CheckResult:
             evidence=evidence,
             threshold=minimum,
         )
-    client = RtspClient(
-        to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
-        ctx.camera.username,
-        ctx.password,
-        timeout=10,
-        extra_headers=dict(REPLAY_HEADERS),
-    )
+
+    def new_client() -> RtspClient:
+        return RtspClient(
+            to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
+            ctx.camera.username,
+            ctx.password,
+            timeout=10,
+            extra_headers=dict(REPLAY_HEADERS),
+        )
+
+    client = new_client()
+    exchanges = client.exchanges
     try:
         with client:
             sdp, stats = play(client, minimum.value, start_point(latest, minimum.value))
@@ -406,11 +429,20 @@ def replay(ctx: CheckContext) -> CheckResult:
             Status.FAILED,
             reason=f"архив не открывается: {e}",
             expected=expected,
-            evidence=[*evidence, Evidence("rtsp.txt", "\n".join(client.exchanges))],
+            evidence=[*evidence, Evidence("rtsp.txt", "\n".join(exchanges))],
             threshold=minimum,
         )
+    seek_broken = False
+    if not stats["frames"]:
+        # Отделяем «нет архива» от «нет перехода по времени»: это разные задачи программистам.
+        retry = new_client()
+        with contextlib.suppress(OSError, RtspError, ValueError), retry:
+            _, from_start = play(retry, minimum.value, None)
+            if from_start["frames"]:
+                stats, seek_broken = from_start, True
+        exchanges = [*exchanges, *retry.exchanges]
     evidence += [
-        Evidence("rtsp.txt", "\n".join(client.exchanges)),
+        Evidence("rtsp.txt", "\n".join(exchanges)),
         Evidence("replay.json", json.dumps(stats, ensure_ascii=False)),
     ]
     actual = (
@@ -420,8 +452,10 @@ def replay(ctx: CheckContext) -> CheckResult:
     if "archive" in stats:
         actual += f"; время кадров архива {stats['archive']}"
     mismatch = outside_recording(stats, latest)
-    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or mismatch:
-        if not stats["keyframes"]:
+    if seek_broken or stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or mismatch:
+        if seek_broken:
+            reason = "переход по времени не работает: на PLAY с Range кадров нет, с начала идут"
+        elif not stats["keyframes"]:
             reason = "в архиве нет ключевых кадров — изображение не собрать"
         elif stats["seconds"] + 0.5 < minimum.value:
             reason = f"архив отдан, но проиграно {stats['seconds']:g} с"
