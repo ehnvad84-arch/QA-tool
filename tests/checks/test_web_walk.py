@@ -7,7 +7,7 @@ from pathlib import Path
 
 from qa_tool.checks import registry
 from qa_tool.checks.web import walk as walk_module
-from qa_tool.checks.web.walk import CHECK_ID, TIMEOUT_MARGIN_S, walk_seconds
+from qa_tool.checks.web.walk import CHECK_ID, SUMMARY_ID, TIMEOUT_MARGIN_S, walk_seconds
 from qa_tool.core.checks import CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place, Scenario, Stand, Threshold
 from qa_tool.core.store import RunStore
@@ -105,24 +105,28 @@ def walk_with(pages, thresholds=None, stop_requested=None, **options):
     return camera, result
 
 
+def summary_of(result):
+    return next(row.result for row in result.children if row.check_id == SUMMARY_ID)
+
+
 def test_page_limit_names_pages_left_unchecked():
     pages = {"/": HOME, "/image": IMAGE, "/net": NET}
     _, result = walk_with(pages, {"web.pages_limit": threshold(1)}, auth="form")
-    assert result.status is Status.PASSED, result.reason
-    assert "не проверены страницы: Изображение" in result.actual
+    assert summary_of(result).status is Status.PASSED, summary_of(result).reason
+    assert "не проверены страницы: Изображение" in summary_of(result).actual
 
 
 def test_element_limit_names_elements_left_unchecked():
     pages = {"/": HOME, "/image": IMAGE, "/net": NET}
     _, result = walk_with(pages, {"web.elements_limit": threshold(2)}, auth="form")
-    assert "Перезагрузка" in result.actual
+    assert "Перезагрузка" in summary_of(result).actual
 
 
 def test_time_limit_ends_walk_and_names_the_rest():
     pages = {"/": HOME, "/image": IMAGE, "/net": NET}
     camera, result = walk_with(pages, {"web.walk_limit_min": threshold(0)}, auth="form")
-    assert result.status is Status.STAND_ERROR  # ни одной страницы: «прошла» нечем доказать
-    assert "web.walk_limit_min" in result.actual
+    assert summary_of(result).status is Status.STAND_ERROR  # нечем доказать «прошла»
+    assert "web.walk_limit_min" in summary_of(result).actual
     assert camera.sessions == 0  # вход завершён и при истёкшем пределе
 
 
@@ -142,10 +146,11 @@ def test_camera_silent_during_walk_is_a_failure(monkeypatch):
 
     monkeypatch.setattr(walk_module, "open_page", silent)
     _, result = walk_with({"/": HOME, "/image": IMAGE, "/net": NET}, auth="form")
-    assert result.status is Status.FAILED
-    assert "камера перестала отвечать" in result.reason
-    assert result.children  # пройденное остаётся в протоколе
-    assert "Изображение" in result.actual
+    row = summary_of(result)
+    assert row.status is Status.FAILED
+    assert "камера перестала отвечать" in row.reason
+    assert len(result.children) > 1  # пройденное остаётся в протоколе
+    assert "Изображение" in row.actual
 
 
 def test_camera_silent_while_looking_for_pages_is_a_failure(monkeypatch):
@@ -154,7 +159,7 @@ def test_camera_silent_while_looking_for_pages_is_a_failure(monkeypatch):
 
     monkeypatch.setattr(walk_module, "discover", silent)
     _, result = walk_with({"/": HOME}, auth="form")
-    assert result.status is Status.FAILED
+    assert summary_of(result).status is Status.FAILED
 
 
 def test_stop_is_not_passed_and_ends_the_login():
@@ -165,7 +170,7 @@ def test_stop_is_not_passed_and_ends_the_login():
         return len(asked) > 60
 
     camera, result = walk_with({"/": HOME, "/image": IMAGE, "/net": NET}, None, stop, auth="form")
-    assert result.status is not Status.PASSED
+    assert summary_of(result).status is Status.SKIPPED
     assert camera.sessions == 0
 
 
@@ -221,6 +226,25 @@ def test_no_password_or_cookie_in_run_folder(tmp_path):
     assert not found
 
 
+def test_silent_camera_and_summary_reach_the_protocol(tmp_path, monkeypatch):
+    real = walk_module.open_page
+
+    def silent(ctx, session, page):
+        if page.label == "Изображение":
+            raise CameraSilent("страница не загрузилась за 15 с")
+        return real(ctx, session, page)
+
+    monkeypatch.setattr(walk_module, "open_page", silent)
+    with MockWebCamera({"/": HOME, "/image": IMAGE}, auth="form") as camera:
+        port = int(camera.url.rsplit(":", 1)[1].strip("/"))
+        result = run_check(SPEC, context(port))
+    store = stored_run(tmp_path, result, port)
+    rows = {r["check_id"]: r for r in store.results(slot=1)}
+    assert rows[SUMMARY_ID]["status"] == Status.FAILED.value
+    assert "камера перестала отвечать" in rows[SUMMARY_ID]["reason"]
+    assert "страниц найдено" in rows[SUMMARY_ID]["actual"]
+
+
 def test_login_form_is_never_photographed():
     _, result = walk({"/": HOME, "/image": IMAGE, "/net": NET}, auth="form")
     pictures = [e for row in result.children for e in row.result.evidence if e.kind == "image"]
@@ -230,5 +254,6 @@ def test_login_form_is_never_photographed():
 
 def test_summary_counts_pages_presses_refusals_and_writes():
     _, result = walk({"/": HOME, "/image": IMAGE, "/net": NET}, auth="form")
-    assert "не нажато: по запрету 2, опасных 1" in result.actual  # «Обновить сеть», «Выйти»
-    assert "записей сделано 0, возвращено 0" in result.actual
+    actual = summary_of(result).actual
+    assert "не нажато: по запрету 2, опасных 1" in actual  # «Обновить сеть», «Выйти»
+    assert "записей сделано 0, возвращено 0" in actual

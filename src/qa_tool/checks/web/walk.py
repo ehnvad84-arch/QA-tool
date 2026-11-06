@@ -31,6 +31,7 @@ from qa_tool.drivers.camera.browser import (
 )
 
 CHECK_ID = "WEB-WALK-1"
+SUMMARY_ID = "WEB-SUMMARY-1"
 SECONDS_IN_MINUTE = 60
 TIMEOUT_MARGIN_S = 120.0  # вход, выход и закрытие браузера сверх предела обхода
 MAX_LISTED = 20  # столько названий помещается в строку сводки
@@ -166,13 +167,12 @@ def _run(ctx: CheckContext, session: BrowserSession, address: str, deadline: flo
             status, reason = Status.STAND_ERROR, "обход не открыл ни одной страницы"
     left_pages = [page.label for page in found.pages[walk.pages_opened :]] + found.left
     actual = walk.summary(found, left_pages, note)
-    result = CheckResult(
-        status,
-        reason=reason,
-        actual=actual,
-        evidence=[Evidence("web-walk.txt", actual)],
-        children=walk.rows,
-    )
+    evidence = [Evidence("web-walk.txt", actual)]
+    summary = CheckResult(status, reason=reason, actual=actual, evidence=evidence)
+    # Итог обхода — строка, а не родитель: родитель с дочерними строками в протокол не попадает,
+    # а при «не прошла» рабочий процесс заменяет результат и теряет строки (worker.py).
+    rows = [*walk.rows, ChildResult(SUMMARY_ID, "Сводка обхода", summary)]
+    result = CheckResult(Status.PASSED, actual=actual, evidence=evidence, children=rows)
     scrub(result, sorted(session.cookies_seen))
     return result
 
@@ -197,8 +197,9 @@ def web_walk(ctx: CheckContext) -> CheckResult:
         ctx: контекст проверки.
 
     Returns:
-        «Прошла» со строками страниц и элементов; камера замолчала — «не прошла»; порты закрыты
-        или нажат «Стоп» — «пропущена»; вход или браузер не удались — «ошибка стенда».
+        «Прошла» со строками страниц, элементов и сводки; итог обхода — в строке сводки: камера
+        замолчала — «не прошла», нажат «Стоп» — «пропущена». Порты закрыты — «пропущена»; вход
+        или браузер не удались — «ошибка стенда».
     """
     deadline = time.monotonic() + walk_seconds(ctx)
     address = web_address(ctx)
