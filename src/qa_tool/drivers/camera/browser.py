@@ -301,6 +301,7 @@ class BrowserSession:
         self._window = Window.NONE
         self._window_writes = 0
         self._login_used = False
+        self._restore_login_used = False
         self._credentials = ("", "")
         self._pressing = False
         self._quiet_reads: set[str] = set()
@@ -702,6 +703,17 @@ class BrowserSession:
         self._login_used = True
         self._credentials = (username, password)
         return self._opened(Window.LOGIN, LOGIN_WINDOW_WRITES)
+
+    def allow_restore_login(self) -> None:
+        """Разрешить одно окно входа ради возврата значения (решение директора 05.11).
+
+        Raises:
+            RuntimeError: такое окно уже было.
+        """
+        if self._restore_login_used:
+            raise RuntimeError("окно входа для возврата открывается один раз")
+        self._restore_login_used = True
+        self._login_used = False
 
     def logout_window(self):
         """Окно выхода: одно нажатие в конце обхода (AD-7)."""

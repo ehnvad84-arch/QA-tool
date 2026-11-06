@@ -180,6 +180,17 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     return _refused(ctx, "форма входа осталась на экране")
 
 
+def login_for_restore(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResult:
+    """Войти второй раз только ради возврата значения; вызывать, если первый вход был принят.
+
+    Raises:
+        CameraSilent, Stopped, BrowserCrashed: как у `login`.
+        RuntimeError: окно для возврата уже использовано.
+    """
+    session.allow_restore_login()
+    return login(ctx, session, address)
+
+
 def logout(session: BrowserSession, address: str, limit_s: float = PAGE_LIMIT_S) -> str:
     """Выйти одним нажатием, чтобы освободить подключение камеры.
 

@@ -1,11 +1,14 @@
 """Запись через веб-интерфейс с галочкой «изменяющие»: изменение, сверка, возврат, предохранители."""
 
 from qa_tool.checks import registry
+from qa_tool.checks.web import walk as walk_module
 from qa_tool.checks.web import write as write_module
 from qa_tool.checks.web.walk import CHECK_ID, SUMMARY_ID
+from qa_tool.checks.web.write import Writer
 from qa_tool.core.checks import CheckContext, Severity, Status, run_check
 from qa_tool.core.models import Camera, Place, Threshold
-from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, load
+from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, PendingWrite, load, save
+from qa_tool.drivers.camera.browser import BrowserSession, CameraSilent
 from tests.mock_web import MockWebCamera
 
 SPEC = registry().get(CHECK_ID)
@@ -20,7 +23,8 @@ FORM = """<h1>Изображение</h1>
  brightness: document.getElementById('b').value, mode: document.getElementById('m').value,
  flip: String(document.getElementById('f').checked)})})">Сохранить</button>
 <button onclick="fetch('/api/do-something', {method: 'POST'})">Действие</button>"""
-HOME = '<h1>Камера</h1><a href="/image">Изображение</a>'
+HOME = """<h1>Камера</h1><a href="/image">Изображение</a>
+<button onclick="fetch('/api/auth/logout', {method: 'POST'})">Выйти</button>"""
 SETTINGS = {"brightness": "50", "mode": "auto", "flip": "false", "name": "cam"}
 PASSPORT = {"manufacturer": "Hikvision"}
 
@@ -172,3 +176,107 @@ def test_adapter_reads_written_address_when_it_is_known(tmp_path, monkeypatch):
     assert any("/api/settings" in url for url in asked)
     assert writes_of(result)[0].result.status is Status.FAILED
     assert camera.settings == SETTINGS  # и при расхождении значение возвращено
+
+
+def open_journal(camera, tmp_path, **fields):
+    port = int(camera.url.rsplit(":", 1)[1].strip("/"))
+    base = dict(
+        run_id="QA-0",
+        slot=1,
+        address="127.0.0.1",
+        port=port,
+        vendor="generic",
+        page=f"{camera.url.rstrip('/')}/image",
+        label="Яркость",
+        kind="range",
+        old="50",
+        new="51",
+        stage="sent",
+        fingerprint="input|range||b|Яркость",
+    )
+    save(tmp_path / "journal", PendingWrite(**(base | fields)))
+
+
+def test_camera_restarted_during_write_one_login_and_value_returned(tmp_path, monkeypatch):
+    real = walk_module._Walk._reopen
+
+    def silent_once(self, page):
+        if camera.session_lost and not asked:
+            asked.append(1)
+            raise CameraSilent("страница не загрузилась")
+        return real(self, page)
+
+    asked = []
+    monkeypatch.setattr(walk_module._Walk, "_reopen", silent_once)
+    with mock() as camera:
+        camera.restart_after_save = 1
+        run(camera, tmp_path)
+    assert camera.settings == SETTINGS
+    assert camera.login_attempts == 2
+    assert journal(camera, tmp_path) is None
+
+
+def test_without_accepted_first_login_there_is_no_second(tmp_path):
+    with MockWebCamera({"/": HOME, "/image": FORM}, settings=dict(SETTINGS)) as camera:
+        camera.auth = ""
+        ctx = context(camera, tmp_path)
+        session_args = (camera.url, frozenset({ctx.camera.port}))
+        open_journal(camera, tmp_path, stage="sent")
+        camera.auth = "form"
+        camera.session_lost = True
+        with BrowserSession(*session_args) as session:
+            writer = Writer(ctx, session, lambda page: session_elements(session, page))
+            entry = load(tmp_path / "journal", "127.0.0.1", ctx.camera.port)
+            row = writer.rescue(entry, camera.url, login_accepted=False)
+    assert row.severity is Severity.BLOCKER
+    assert camera.login_attempts == 0
+
+
+def session_elements(session, page):
+    session.open(page.url)
+    session.wait(300)
+    return session.elements()
+
+
+def test_stop_during_write_returns_value_first(tmp_path):
+    with mock() as camera:
+        ctx = context(camera, tmp_path)
+        ctx.stop_requested = lambda: camera.saves >= 1
+        result = run_check(SPEC, ctx)
+    assert camera.settings == SETTINGS
+    assert journal(camera, tmp_path) is None
+    assert summary(result).status is Status.SKIPPED
+    assert camera.sessions == 0
+
+
+def test_next_walk_without_tick_reports_blocker_and_writes_nothing(tmp_path):
+    with mock() as camera:
+        camera.settings["brightness"] = "51"
+        open_journal(camera, tmp_path)
+        result = run(camera, tmp_path, allow_writes=False)
+    row = writes_of(result)[0]
+    assert row.result.status is Status.FAILED and row.severity is Severity.BLOCKER
+    assert camera.saves == 0
+    assert journal(camera, tmp_path) is not None
+
+
+def test_next_walk_with_tick_returns_value_first(tmp_path):
+    with mock() as camera:
+        camera.settings["brightness"] = "51"
+        open_journal(camera, tmp_path)
+        run(camera, tmp_path)
+    assert camera.settings["brightness"] == "50"
+    assert journal(camera, tmp_path) is None
+
+
+def test_field_showing_foreign_value_is_not_touched(tmp_path):
+    with mock() as camera:
+        camera.settings["brightness"] = "77"  # за этим адресом уже другая камера
+        open_journal(camera, tmp_path)
+        result = run(camera, tmp_path)
+    assert camera.settings["brightness"] == "77"
+    row = writes_of(result)[0]
+    assert row.severity is Severity.BLOCKER
+    assert "чужое значение" in row.result.actual
+    assert journal(camera, tmp_path) is not None
+    assert camera.saves == 0  # и запись на этой камере прекращена

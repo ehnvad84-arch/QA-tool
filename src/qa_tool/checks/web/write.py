@@ -12,12 +12,14 @@
 своя. Производитель берётся из паспорта ONVIF, а не из поля стенда, поэтому паспорт обязателен.
 """
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.checks.web.discover import Item, Mark, Page
 from qa_tool.checks.web.limits import limit
+from qa_tool.checks.web.login import Entry, login_for_restore
 from qa_tool.checks.web.probe import Row
 from qa_tool.core.checks import CheckContext, CheckResult, Severity, Status
 from qa_tool.core.web_journal import (
@@ -28,7 +30,16 @@ from qa_tool.core.web_journal import (
     load,
     save,
 )
-from qa_tool.drivers.camera.browser import BrowserSession, ElementInfo, Reaction, Verdict
+from qa_tool.drivers.camera.browser import (
+    BrowserCrashed,
+    BrowserSession,
+    CameraSilent,
+    ElementInfo,
+    Reaction,
+    Stopped,
+    Verdict,
+)
+from qa_tool.drivers.camera.probe import tcp_open
 
 CHANGEABLE_KINDS = frozenset({"checkbox", "range", "number"})
 SAVE_WORDS = ("сохран", "примен", "save", "apply")
@@ -43,6 +54,7 @@ REBOOT_PHRASES = (
 )
 RUVER_NAMES = ("ruware", "ruver", "рувер")
 SETTLE_MS = 500
+RETURN_POLL_S = 2.0  # как часто спрашивать, вернулась ли камера
 # Адаптер производителя читает записанный адрес через своё API: производитель → читатель.
 # Рувера здесь нет: вход адаптера не сверен с прошивкой, и неверные попытки ушли бы на камеру (T8).
 API_READERS: dict[str, Callable[[CheckContext, str], str | None]] = {}
@@ -202,16 +214,7 @@ class Writer:
             clear(self.folder, entry.address, entry.port)
             self.restored += 1
             return None
-        self.halted = f"запись прекращена: настройка «{subject}» не вернулась"
-        entry.reported = True  # строка «блокер» пишется здесь, планировщику повторять не нужно
-        save(self.folder, entry)
-        result = CheckResult(
-            Status.FAILED,
-            reason=f"настройка «{subject}» не вернулась",
-            expected=f"значение возвращено: {entry.old}",
-            actual=f"было {entry.old}, осталось {back}",
-        )
-        return Row(subject, result, Severity.BLOCKER)
+        return self._not_returned(entry, back)
 
     def write(self, page: Page, item: Item, elements: list[ElementInfo]) -> Row:
         """Изменить поле, сверить и вернуть.
@@ -269,6 +272,76 @@ class Writer:
             return Row(subject, self._not_saved(f"заявлено {new}, по API {api}"), Severity.MAJOR)
         actual = f"записано {new}, прочитано {seen}, возвращено {old}"
         return Row(subject, CheckResult(Status.PASSED, actual=actual))
+
+    def _not_returned(self, entry: PendingWrite, left: str) -> Row:
+        """Блокер S14: журнал остаётся, запись на этой камере прекращена."""
+        self.halted = f"запись прекращена: настройка «{entry.label}» не вернулась"
+        entry.reported = True
+        save(self.folder, entry)
+        result = CheckResult(
+            Status.FAILED,
+            reason=f"настройка «{entry.label}» не вернулась",
+            expected=f"значение возвращено: {entry.old}",
+            actual=f"было {entry.old}, записывалось {entry.new}, осталось {left}",
+        )
+        return Row(entry.label, result, Severity.BLOCKER)
+
+    def _wait_for_camera(self) -> bool:
+        """Дождаться камеру, но не дольше `web.camera_return_s`."""
+        camera = self.ctx.camera
+        deadline = time.monotonic() + limit(self.ctx, "web.camera_return_s")
+        while time.monotonic() < deadline:
+            if tcp_open(camera.address, camera.port):
+                return True
+            time.sleep(RETURN_POLL_S)
+        return tcp_open(camera.address, camera.port)
+
+    def _field_after_login(
+        self, page: Page, entry: PendingWrite, address: str, login_accepted: bool
+    ) -> tuple[ElementInfo | None, list[ElementInfo], str]:
+        """Найти поле; пропала сессия и первый вход был принят — один вход для возврата."""
+        field, elements = self._find(page, entry.fingerprint)
+        if field is not None or not self.session.password_fields():
+            return field, elements, "поле не найдено"
+        if not login_accepted:
+            return None, elements, "сессия потеряна, а первого принятого входа не было"
+        entered = login_for_restore(self.ctx, self.session, address)
+        if entered.entry is not Entry.OK:
+            return None, elements, f"вход для возврата не удался: {entered.entry.value}"
+        field, elements = self._find(page, entry.fingerprint)
+        return field, elements, "поле не найдено"
+
+    def rescue(self, entry: PendingWrite, address: str, login_accepted: bool) -> Row | None:
+        """Одна попытка вернуть значение из журнала (S15, S20, следующий обход).
+
+        Значение возвращается, только если поле найдено по отпечатку и показывает записанное:
+        за тем же адресом могла оказаться другая камера.
+
+        Args:
+            entry: открытый журнал.
+            address: адрес веб-интерфейса.
+            login_accepted: первый вход принят; без него второго входа нет.
+
+        Returns:
+            Строка блокера; None — значение на месте, журнал закрыт.
+        """
+        page = Page(entry.page, entry.label, tab=entry.path[0] if entry.path else "")
+        try:
+            if not self._wait_for_camera():
+                return self._not_returned(entry, f"неизвестно: камера не вернулась, {entry.new}?")
+            field, elements, problem = self._field_after_login(page, entry, address, login_accepted)
+            if field is None:
+                return self._not_returned(entry, f"неизвестно: {problem}")
+            seen = self.session.read_field(field)
+            if seen == entry.old:
+                clear(self.folder, entry.address, entry.port)
+                self.restored += 1
+                return None
+            if seen != entry.new:
+                return self._not_returned(entry, f"{seen}: поле показывает чужое значение")
+            return self._restore(page, entry, field, elements, entry.label)
+        except (BrowserCrashed, CameraSilent, Stopped) as e:
+            return self._not_returned(entry, f"неизвестно: {e}")
 
     @staticmethod
     def _reboot_result() -> CheckResult:

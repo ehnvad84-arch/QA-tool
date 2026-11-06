@@ -76,6 +76,8 @@ class MockWebCamera:
         self.saves_ignored = 0  # столько сохранений камера отвечает «ок» и не применяет
         self.ignore_all_saves_after = 0  # после стольких сохранений перестаёт применять их
         self.saves = 0
+        self.session_lost = False  # камера перезапустилась: куки больше не принимаются
+        self.restart_after_save = 0  # на этом сохранении камера перезапускается
         self.http_login_seen = False
         self._server: ThreadingHTTPServer | None = None
 
@@ -152,7 +154,7 @@ class MockWebCamera:
                 return camera.digest_valid(given, self.command)
 
             def _logged_in(self) -> bool:
-                return "sid=ok" in self.headers.get("Cookie", "")
+                return "sid=ok" in self.headers.get("Cookie", "") and not camera.session_lost
 
             def _session_answered(self, path: str, body: str) -> bool:
                 """Вход, выход и страница входа; True — ответ уже отправлен."""
@@ -162,6 +164,7 @@ class MockWebCamera:
                         self._send(409, '{"maxConnectionsAllowed": 3}')
                     elif json.loads(body or "{}").get("password") == camera.password:
                         camera.sessions += 1
+                        camera.session_lost = False
                         self._send(200, "{}", {"Set-Cookie": "sid=ok; Path=/"})
                     else:
                         self._send(401, "{}")
@@ -173,7 +176,7 @@ class MockWebCamera:
                 if camera.must_change_password and path == "/":
                     self._send(200, CHANGE_PAGE)
                     return True
-                if not self._logged_in() and path == "/":
+                if not self._logged_in() and (path == "/" or camera.session_lost):
                     self._send(200, LOGIN_PAGE)
                     return True
                 return False
@@ -210,6 +213,9 @@ class MockWebCamera:
     def save(self, values: dict[str, str]) -> None:
         """Применить настройки, если камера сейчас их принимает."""
         self.saves += 1
+        if self.saves == self.restart_after_save:
+            self.session_lost = True
+            self.sessions = 0
         if self.saves_ignored > 0:
             self.saves_ignored -= 1
         elif not self.ignore_all_saves_after or self.saves <= self.ignore_all_saves_after:

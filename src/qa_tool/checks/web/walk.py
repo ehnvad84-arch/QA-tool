@@ -7,10 +7,11 @@
 
 import time
 from collections import Counter
+from pathlib import Path
 
 from qa_tool.checks.web.discover import Discovery, Item, Mark, Page, discover, plan_elements
 from qa_tool.checks.web.limits import DEFAULTS, limit
-from qa_tool.checks.web.login import login, logout, web_address
+from qa_tool.checks.web.login import Entry, login, logout, web_address
 from qa_tool.checks.web.probe import Row, open_page, press
 from qa_tool.checks.web.write import Writer, is_field
 from qa_tool.core.checks import (
@@ -20,8 +21,16 @@ from qa_tool.core.checks import (
     ChildResult,
     Evidence,
     Phase,
+    Severity,
     Status,
     scrub,
+)
+from qa_tool.core.web_journal import (
+    FOLDER_KEY,
+    RUN_ID_KEY,
+    PendingWrite,
+    load,
+    lost_write_result,
 )
 from qa_tool.drivers.camera.browser import (
     BrowserCrashed,
@@ -86,6 +95,32 @@ class _Walk:
         else:
             self._add("WRITE", self.writer.write(page, item, elements))
         return True
+
+    def _journal(self) -> PendingWrite | None:
+        folder = self.ctx.extra.get(FOLDER_KEY)
+        camera = self.ctx.camera
+        return load(Path(folder), camera.address, camera.port) if folder else None
+
+    def rescue_write(self, address: str, login_accepted: bool) -> None:
+        """Сбой посреди записи: одна попытка вернуть значение."""
+        entry = self._journal()
+        if entry is None or self.writer is None or entry.reported:
+            return
+        row = self.writer.rescue(entry, address, login_accepted)
+        if row is not None:
+            self._add("WRITE", row)
+
+    def settle_old_write(self, address: str, login_accepted: bool) -> None:
+        """Запись прошлого прогона не закрыта: сначала вернуть её или сказать о ней (AD-3)."""
+        entry = self._journal()
+        if entry is None or entry.run_id == self.ctx.extra.get(RUN_ID_KEY):
+            return
+        if self.writer is None:
+            self._add("WRITE", Row(entry.label, lost_write_result(entry), Severity.BLOCKER))
+            return
+        row = self.writer.rescue(entry, address, login_accepted)
+        if row is not None:
+            self._add("WRITE", row)
 
     def _add(self, prefix: str, row: Row) -> None:
         self.rows.append(_child(prefix, len(self.rows) + 1, row))
@@ -166,7 +201,9 @@ def _run(ctx: CheckContext, session: BrowserSession, address: str, deadline: flo
     found = Discovery()
     walk = _Walk(ctx, session, deadline)
     note, status, reason = "", Status.PASSED, ""
+    accepted = entry.entry is Entry.OK
     try:
+        walk.settle_old_write(address, accepted)
         found = discover(ctx, session, address, deadline)
         for page in found.pages:
             if walk.out_of_time():
@@ -174,8 +211,11 @@ def _run(ctx: CheckContext, session: BrowserSession, address: str, deadline: flo
             walk.page(page)
     except CameraSilent as e:
         status, reason = Status.FAILED, f"камера перестала отвечать: {e}"
+        walk.rescue_write(address, accepted)
     except Stopped:
         status, reason = Status.SKIPPED, "обход остановлен: нажат «Стоп»"
+        session.finishing()  # сначала возврат значения (S20), потом выход
+        walk.rescue_write(address, accepted)
         note = _finish_after_stop(session, address)
     else:
         if walk.out_of_time():
