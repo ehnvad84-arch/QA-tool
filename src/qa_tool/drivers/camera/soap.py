@@ -160,20 +160,24 @@ class SoapClient:
         return f"<s:Envelope {_ENVELOPE_XMLNS}>{header}<s:Body>{body}</s:Body></s:Envelope>"
 
     def _camera_clock_differs(self, url: str) -> bool:
-        """Сверить часы с камерой один раз; True — поправка новая, вход стоит повторить.
+        """Сверить часы с камерой; True — поправка изменилась, вход стоит повторить.
 
         wsse:FailedAuthentication приходит и на верный пароль, если часы камеры ушли: она
         считает отметку времени просроченной. GetSystemDateAndTime пароля не требует (ONVIF
-        Core), поэтому сверка не тратит попытку входа.
+        Core), поэтому сверка не тратит попытку входа. Сверяем при каждом отказе: часы камеры
+        могут сдвинуться и после первой поправки — перезагрузка сбрасывает их (TMID-018 — на
+        1970 год), снимок настроек возвращает время. Повтор входа — только при таком сдвиге,
+        поэтому неверный пароль стоит одной лишней попытки на сдвиг, а не на каждый вызов.
         """
         host = urlsplit(url).netloc
-        if host in _clock_offsets:
-            return False
         difference = self.camera_clock_difference_s(url)
         if difference is None:
             return False
+        applied = _clock_offsets.get(host, datetime.timedelta()).total_seconds()
+        if abs(difference - applied) <= CLOCK_TOLERANCE_S:
+            return False
         _clock_offsets[host] = datetime.timedelta(seconds=difference)
-        return abs(difference) > CLOCK_TOLERANCE_S
+        return True
 
     def camera_clock_difference_s(self, url: str) -> float | None:
         """На сколько секунд часы камеры впереди часов стенда; None — камера не сказала.
