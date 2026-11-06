@@ -6,6 +6,7 @@ import queue
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
@@ -14,6 +15,15 @@ from qa_tool.core.models import Scenario, Stand, Threshold
 from qa_tool.core.secrets import get_password, redact
 from qa_tool.core.store import RunStore
 from qa_tool.core.tempfiles import remove_stale_browser_files
+from qa_tool.core.web_journal import (
+    FOLDER_KEY,
+    FOLDER_NAME,
+    LOST_WRITE_SPEC,
+    RUN_ID_KEY,
+    load,
+    lost_write_result,
+    save,
+)
 from qa_tool.core.worker import STOPPED, WorkerArgs, resolve_registry, worker_main
 
 DEFAULT_REGISTRY = "qa_tool.checks:registry"
@@ -124,7 +134,11 @@ class Runner:
                 registry_ref=self.registry_ref,
                 sync_checks=self.sync_ids,
                 thresholds=self.thresholds,
-                extra=self.extra,
+                extra={
+                    **self.extra,
+                    FOLDER_KEY: str(self._journal_folder()),
+                    RUN_ID_KEY: self.store.run_id,
+                },
                 allow_writes=self.scenario.allow_writes,
                 allow_destructive=self.scenario.allow_destructive,
                 stress_minutes=self.scenario.stress_minutes,
@@ -143,6 +157,7 @@ class Runner:
             self._shutdown()
         for c in self.cams.values():
             self._fill_missing(c, CheckResult.skipped(STOPPED))
+            self._report_lost_write(c)
         self.store.finish("остановлен" if self._stop.is_set() else "завершён")
         self.on_event(Event("finished", detail=self.store.run_id))
         return self.store
@@ -346,6 +361,7 @@ class Runner:
             c.process.terminate()
         c.alive = False
         self._fill_missing(c, CheckResult.stand_error(reason.removeprefix("ошибка стенда: ")))
+        self._report_lost_write(c)
         self.on_event(Event("lost", c.slot, detail=reason))
         self._release_resources(c.slot)
         for check_id in list(self.sync_holders):
@@ -357,6 +373,34 @@ class Runner:
         for check_id in list(self.barriers):
             self.barriers[check_id].discard(c.slot)
             self._try_barrier(check_id)
+
+    def _journal_folder(self) -> Path:
+        return self.stand.runs_dir / FOLDER_NAME
+
+    def _report_lost_write(self, c: _Camera) -> None:
+        """Строка «блокер» из журнала: снятый процесс сам сказать об этом уже не может (S14)."""
+        camera = next(cam for cam in self.stand.cameras if cam.slot == c.slot)
+        entry = load(self._journal_folder(), camera.address, camera.port)
+        if entry is None or entry.reported or entry.run_id not in ("", self.store.run_id):
+            return
+        result = lost_write_result(entry)
+        self.store.add_result(c.slot, LOST_WRITE_SPEC, result, "")
+        if entry.run_id:
+            entry.reported = True
+            save(self._journal_folder(), entry)
+        self.on_event(
+            Event(
+                "result",
+                c.slot,
+                LOST_WRITE_SPEC.id,
+                LOST_WRITE_SPEC.title,
+                result.status.value,
+                redact(result.reason),
+                severity=LOST_WRITE_SPEC.severity.value,
+                module=LOST_WRITE_SPEC.module,
+                phase=int(LOST_WRITE_SPEC.phase),
+            )
+        )
 
     def _fill_missing(self, c: _Camera, result: CheckResult) -> None:
         for check_id, _ in c.plan:
