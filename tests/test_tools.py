@@ -1,8 +1,8 @@
 import os
 import sys
 
-from qa_tool.cli import main
 from qa_tool import tools
+from qa_tool.cli import main
 from qa_tool.tools import tool_path
 
 
