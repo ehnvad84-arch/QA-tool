@@ -6,6 +6,7 @@
 """
 
 import time
+from collections import Counter
 
 from qa_tool.checks.web.discover import Discovery, Item, Mark, Page, discover, plan_elements
 from qa_tool.checks.web.limits import DEFAULTS, limit
@@ -19,6 +20,7 @@ from qa_tool.core.checks import (
     Evidence,
     Phase,
     Status,
+    scrub,
 )
 from qa_tool.drivers.camera.browser import (
     BrowserCrashed,
@@ -60,6 +62,7 @@ class _Walk:
         self.pressed = 0
         self.repeated = 0
         self.left_elements: list[str] = []
+        self.marks: Counter = Counter()
 
     def out_of_time(self) -> bool:
         """Истёк ли предел обхода."""
@@ -87,6 +90,7 @@ class _Walk:
                 continue
             self._add("ELEMENT", press(self.ctx, self.session, item))
             self.pressed += item.mark is Mark.ORDINARY
+            self.marks[item.mark] += 1
             if self.session.activity()[3] != address:
                 open_page(self.ctx, self.session, page)
 
@@ -95,6 +99,10 @@ class _Walk:
         parts = [
             f"страниц найдено {len(found.pages) + len(found.left)}, открыто {self.pages_opened}",
             f"элементов нажато {self.pressed}",
+            f"не нажато: по запрету {self.marks[Mark.FORBIDDEN]}, "
+            f"опасных {self.marks[Mark.DANGER]}",
+            # запись появится с галочкой; строка есть всегда, чтобы сводка не менялась (S24)
+            "записей сделано 0, возвращено 0",
         ]
         if left_pages:
             parts.append(f"не проверены страницы: {_listed(left_pages)}")
@@ -158,13 +166,15 @@ def _run(ctx: CheckContext, session: BrowserSession, address: str, deadline: flo
             status, reason = Status.STAND_ERROR, "обход не открыл ни одной страницы"
     left_pages = [page.label for page in found.pages[walk.pages_opened :]] + found.left
     actual = walk.summary(found, left_pages, note)
-    return CheckResult(
+    result = CheckResult(
         status,
         reason=reason,
         actual=actual,
         evidence=[Evidence("web-walk.txt", actual)],
         children=walk.rows,
     )
+    scrub(result, sorted(session.cookies_seen))
+    return result
 
 
 @REGISTRY.check(

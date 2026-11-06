@@ -9,7 +9,8 @@ from qa_tool.checks import registry
 from qa_tool.checks.web import walk as walk_module
 from qa_tool.checks.web.walk import CHECK_ID, TIMEOUT_MARGIN_S, walk_seconds
 from qa_tool.core.checks import CheckContext, Status, run_check
-from qa_tool.core.models import Camera, Place, Threshold
+from qa_tool.core.models import Camera, Place, Scenario, Stand, Threshold
+from qa_tool.core.store import RunStore
 from qa_tool.core.tempfiles import TEMP_PREFIX
 from qa_tool.drivers.camera.browser import CameraSilent
 from tests.mock_web import MockWebCamera
@@ -190,3 +191,44 @@ def test_eight_cameras_at_once_do_not_share_anything():
     assert [r.status for r in results] == [Status.PASSED] * 8
     state = [(c.login_attempts, c.sessions) for c in cameras]
     assert state == [(1, 0)] * 8, state
+
+
+def stored_run(tmp_path, result, port):
+    camera = Camera(slot=1, address="127.0.0.1", port=port, username="admin")
+    stand = Stand(place=Place.COLOR_BOX, runs_dir=tmp_path / "runs", cameras=[camera])
+    store = RunStore.create(stand, Scenario())
+    store.add_result(1, SPEC, result, "t")
+    return store
+
+
+def test_no_password_or_cookie_in_run_folder(tmp_path):
+    leaky = """<h1>Камера</h1><a href="/image?token=leaked-token">Изображение</a>
+<script>console.error('cookie ' + document.cookie + ' password secret')</script>
+<button onclick="throw new Error('secret ' + document.cookie)">Обновить</button>
+<button>Пустая</button>"""
+    with MockWebCamera({"/": leaky, "/image": IMAGE}, auth="form") as camera:
+        port = int(camera.url.rsplit(":", 1)[1].strip("/"))
+        result = run_check(SPEC, context(port))
+    store = stored_run(tmp_path, result, port)
+    folder = store.run_dir
+    store.close()
+    found = [
+        path.name
+        for path in folder.rglob("*")
+        if path.is_file()
+        and any(mark in path.read_bytes() for mark in (b"secret", b"leaked-token", b"sid=ok"))
+    ]
+    assert not found
+
+
+def test_login_form_is_never_photographed():
+    _, result = walk({"/": HOME, "/image": IMAGE, "/net": NET}, auth="form")
+    pictures = [e for row in result.children for e in row.result.evidence if e.kind == "image"]
+    assert all(b"secret" not in e.content for e in pictures)
+    assert not any("вход" in row.title.lower() for row in result.children)
+
+
+def test_summary_counts_pages_presses_refusals_and_writes():
+    _, result = walk({"/": HOME, "/image": IMAGE, "/net": NET}, auth="form")
+    assert "не нажато: по запрету 2, опасных 1" in result.actual  # «Обновить сеть», «Выйти»
+    assert "записей сделано 0, возвращено 0" in result.actual

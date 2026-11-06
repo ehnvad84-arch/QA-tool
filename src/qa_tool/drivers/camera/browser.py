@@ -278,6 +278,8 @@ class BrowserSession:
         self.late_redirects: list[StoppedRequest] = []
         self.page_label = ""
         self.page_errors: list[str] = []
+        # парами «имя=значение»: короткое значение вроде «ok» вырезало бы обычные слова
+        self.cookies_seen: set[str] = set()
         self.bad_answers: list[str] = []
         self._error_times: list[float] = []
         self.dialogs: list[str] = []
@@ -762,7 +764,15 @@ class BrowserSession:
             except PlaywrightTimeout:
                 if time.monotonic() - started > limit_s:
                     raise CameraSilent(f"страница не загрузилась за {limit_s:.0f} с") from None
+        self._remember_cookies()
         return PageLoad(self._document_status, time.monotonic() - started, self._page.url)
+
+    def _remember_cookies(self) -> None:
+        """Запомнить куки: после выхода их значений уже не спросить, а вычистить их надо."""
+        with contextlib.suppress(PlaywrightError):
+            for cookie in self._context.cookies():
+                if cookie["value"]:
+                    self.cookies_seen.add(f"{cookie['name']}={cookie['value']}")
 
     def wait(self, ms: int) -> None:
         """Подождать шагами, не останавливая перехват: `time.sleep` повесил бы обработчики.
