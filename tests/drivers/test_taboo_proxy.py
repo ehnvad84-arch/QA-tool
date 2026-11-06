@@ -215,19 +215,32 @@ def test_html_with_doctype_keeps_its_status_and_headers(answering):
     assert response.status_code == 401 and "www-authenticate" in response.headers
 
 
-def test_multipart_answer_is_rewritten_and_checked_part_by_part(answering):
-    head = b"--b\r\nContent-Type: application/xop+xml\r\n\r\n"
-    tail = b"\r\n--b--\r\n"
-    kind = 'multipart/related; boundary="b"; type="application/xop+xml"'
-    hidden = b'<a xmlns:t="urn:t"><t:XAddr><![CDATA[http://10.9.9.9/x]]></t:XAddr></a>'
-    proxy, _ = answering(head + hidden + tail, Content_Type=kind)
-    assert httpx.get(proxy.base_url + "/x", timeout=10).status_code == 502
-    plain = b'<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>'
-    proxy, _ = answering(head + plain + tail, Content_Type=kind)
+@pytest.mark.parametrize(
+    "kind",
+    [
+        'multipart/related; boundary="b"; type="application/xop+xml"',
+        "Multipart/Related; boundary=b",
+        "multipart/mixed; boundary=b",
+        "text/xml; boundary=b; x=multipart",
+    ],
+)
+def test_multipart_answer_never_reaches_client(answering, kind):
+    body = b'--b\r\n\r\n<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>\r\n--b--\r\n'
+    proxy, _ = answering(body, Content_Type=kind)
     response = httpx.get(proxy.base_url + "/x", timeout=10)
-    assert response.status_code == 200 and b"10.9.9.9/x<" not in response.content.replace(
-        b"_foreign/10.9.9.9/x<", b""
-    )
+    assert response.status_code == 502 and "10.9.9.9" not in response.text
+    assert proxy.blocked
+
+
+def test_nested_address_fields_are_checked_quickly():
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    answer = b"<Uri>x" * 20_000 + b"</Uri>" * 20_000
+    try:
+        started = time.monotonic()
+        proxy.hides_address(answer)
+        assert time.monotonic() - started < 5
+    finally:
+        proxy.stop()
 
 
 def test_address_far_from_start_under_foreign_type_is_refused(answering):

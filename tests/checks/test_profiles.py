@@ -151,6 +151,8 @@ def test_rows_of_excluded_tests_and_stand_errors_are_not_a_run_of_onvif_tt():
     assert not profiles.ran_onvif_tt({"EVENT-2-1-9": ("пропущена", "исключён")})
     assert not profiles.ran_onvif_tt({"DEVICE-1-1-2": ("ошибка стенда", "нет связи")})
     assert not profiles.ran_onvif_tt({"RUV-G-REPLAY-1": ("прошла", "")})
+    for row in ("API-RUVER-1", "WEB-WALK-1", "STREAM-PARAMS-1", "IO-1", "COMPARE-1"):
+        assert not profiles.ran_onvif_tt({row: ("прошла", "")})
     assert profiles.ran_onvif_tt({"DEVICE-1-1-2": ("не прошла", "")})
 
 

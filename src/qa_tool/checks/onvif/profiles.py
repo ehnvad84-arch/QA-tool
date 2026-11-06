@@ -226,7 +226,10 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
 
 
 # строки наших проверок: тесты onvif-tt получают свои ID только в прогоне
-OWN_ROW_PREFIXES = ("RUV-", "CORE-", ONVIF_TT, "API-", "WEB-", "STREAM-")
+OWN_ROW_PREFIXES = (
+    *("RUV-", "CORE-", ONVIF_TT, "API-", "WEB-", "STREAM-", "IO-", "LENS-", "DAYNIGHT-"),
+    *("CODEC-", "SDCARD-", "IMAGE-", "ANALYTICS-QA-", "COMPARE-"),
+)
 
 
 def ran_onvif_tt(previous: dict[str, tuple[str, str]]) -> bool:
