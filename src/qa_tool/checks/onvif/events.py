@@ -28,7 +28,12 @@ from qa_tool.core.checks import (
     Status,
 )
 from qa_tool.drivers.camera.onvif_generic import service_urls, stand_service_url
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
+from qa_tool.drivers.camera.soap import (
+    CameraUnreachable,
+    OnvifFault,
+    SoapClient,
+    credentials_rejected,
+)
 
 CHECK_ID = "RUV-E-SUBSCRIBE-1"
 # RFC 5737, TEST-NET-1: адрес не принадлежит никому, поэтому уведомления камеры никуда не уйдут.
@@ -97,9 +102,13 @@ def subscribe(ctx: CheckContext) -> CheckResult:
 
     manager, reference = "", ""
     try:
-        events = service_urls(soap, ctx.camera).get("events")
+        foreign: list[str] = []
+        events = service_urls(soap, ctx.camera, foreign).get("events")
         if not events:
-            return CheckResult.skipped("камера не объявляет службу событий")
+            reason = "камера не объявляет службу событий"
+            if "events" in foreign:
+                reason = "служба событий на чужом хосте отброшена"
+            return CheckResult.skipped(reason)
         body = (
             "<wsnt:Subscribe><wsnt:ConsumerReference>"
             f"<wsa:Address>{CONSUMER}</wsa:Address></wsnt:ConsumerReference>"
@@ -133,7 +142,15 @@ def subscribe(ctx: CheckContext) -> CheckResult:
         unsubscribed, manager = manager, ""
         try:
             soap.call(unsubscribed, RENEW_BODY, addressing(RENEW_ACTION, unsubscribed, reference))
-        except OnvifFault:
+        except OnvifFault as e:
+            if credentials_rejected(e):
+                # отказ во входе не доказывает, что подписка отменена
+                return CheckResult(
+                    Status.STAND_ERROR,
+                    reason=f"после отмены камера отвергла вход: {e}",
+                    expected=expected,
+                    evidence=soap_evidence(soap),
+                )
             return CheckResult(
                 Status.PASSED,
                 expected=expected,
@@ -142,6 +159,8 @@ def subscribe(ctx: CheckContext) -> CheckResult:
             )
         manager = unsubscribed  # подписка жива: снять её ещё раз
         return failed("подписка живёт после Unsubscribe: повторный Renew принят")
+    except OnvifFault as e:
+        return failed(f"ONVIF: {e}")
     except CameraUnreachable as e:
         return CheckResult(
             Status.STAND_ERROR,

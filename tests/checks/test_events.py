@@ -4,6 +4,7 @@ from qa_tool.checks import load_all
 from qa_tool.checks.onvif import events
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
+from qa_tool.drivers.camera.soap import Exchange, OnvifFault, SoapClient
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import OnvifState
 
@@ -75,3 +76,34 @@ def test_camera_gone_is_a_stand_error():
 
 def test_consumer_address_is_reserved_for_documentation():
     assert events.CONSUMER.startswith("http://192.0.2.")  # RFC 5737: туда никто не ответит
+
+
+@pytest.mark.parametrize("camera", [{}], indirect=True)
+def test_refusal_to_log_in_after_unsubscribe_proves_nothing(camera, monkeypatch):
+    real = SoapClient.call
+
+    def call(self, url, body, soap_header=""):
+        if "Renew" in body and camera.state.notify_until is None:
+            raise OnvifFault("denied", code="ter:NotAuthorized")
+        return real(self, url, body, soap_header)
+
+    monkeypatch.setattr(SoapClient, "call", call)
+    assert run(camera).status is Status.STAND_ERROR
+
+
+@pytest.mark.parametrize("camera", [{}], indirect=True)
+def test_refused_get_services_is_a_failure_with_evidence(camera, monkeypatch):
+    def refuse(soap, *_):
+        soap.exchanges.append(Exchange("u", "запрос", 500, "ответ"))
+        raise OnvifFault("ter:Action")
+
+    monkeypatch.setattr(events, "service_urls", refuse)
+    result = run(camera)
+    assert result.status is Status.FAILED and result.evidence
+
+
+@pytest.mark.parametrize("camera", [{"foreign_services": ("events",)}], indirect=True)
+def test_events_on_foreign_host_are_named(camera):
+    result = run(camera)
+    assert result.status is Status.SKIPPED
+    assert "чужом хосте" in result.reason

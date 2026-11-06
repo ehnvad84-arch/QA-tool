@@ -112,7 +112,9 @@ class TabooProxy:
         match = _PORT_PREFIX.match(path.split("?", 1)[0])
         if match:
             query = path[len(path.split("?", 1)[0]) :]
-            return f"http://{self.camera_address}:{match.group(1)}{match.group(2) or '/'}{query}"
+            # за туннелем порт из ответа камеры выбирал бы службу на компьютере стенда
+            port = self.camera_port if self.lan_address else match.group(1)
+            return f"http://{self.camera_address}:{port}{match.group(2) or '/'}{query}"
         return f"http://{self.camera_address}:{self.camera_port}{path}"
 
     def rewrite(self, text: str) -> str:
@@ -128,7 +130,13 @@ class TabooProxy:
         def foreign_in_field(match: re.Match) -> str:
             return match.group(1) + _HTTP_URL.sub(self._to_foreign, match.group(3)) + match.group(4)
 
+        def hidden_in_field(match: re.Match) -> str:
+            return f"{match.group(1)}{self.base_url}{_FOREIGN}/{match.group(3)}"
+
+        # Клиент прочтёт такой адрес после разбора XML, а подмена по тексту его не видит:
+        # он ушёл бы мимо посредника с логином. У настоящих служб так не бывает, поэтому отказ.
         text = _HTTP_URL.sub(self._to_proxy, text)
+        text = _HIDDEN_ADDRESS_FIELD.sub(hidden_in_field, text)
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
 
     def rewrite_location(self, location: str) -> str:
@@ -141,15 +149,21 @@ class TabooProxy:
         location = location.strip()
         if location.startswith("//"):
             location = f"http:{location}"
-        rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
-        parts = urlsplit(rewritten)
+        try:
+            rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
+            parts = urlsplit(rewritten)
+        except ValueError:  # неразбираемый адрес вроде http://[1:2]/
+            return f"{self.base_url}{_FOREIGN}/"
         if (parts.scheme or parts.netloc) and not self._is_proxy_url(rewritten):
             return f"{self.base_url}{_FOREIGN}/"
         return rewritten
 
     def _is_proxy_url(self, url: str) -> bool:
         # не startswith: «http://посредник@чужой-хост/» начинается с адреса посредника
-        return urlsplit(url).netloc == urlsplit(self.base_url).netloc
+        try:
+            return urlsplit(url).netloc == urlsplit(self.base_url).netloc
+        except ValueError:
+            return False
 
     def _to_proxy(self, match: re.Match) -> str:
         scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
@@ -242,3 +256,9 @@ _HTTP_URL = re.compile(
 )
 # поля, где ONVIF передаёт адреса служб: <tt:XAddr>, <d:XAddrs>, <wsa:Address>, <tt:Uri>
 _ADDRESS_FIELD = re.compile(r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)([^<]*)(</)")
+# то же поле, но адрес спрятан от подмены: CDATA, комментарий или числовая ссылка на символ
+_HIDDEN_ADDRESS_FIELD = re.compile(
+    r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)"
+    r"(?:\s*<!\[CDATA\[.*?\]\]>|\s*<!--.*?-->[^<]*|[^<]*&#[^<]*)(</)",
+    re.DOTALL,
+)

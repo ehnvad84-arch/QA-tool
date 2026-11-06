@@ -108,6 +108,36 @@ def test_profiles_section_in_protocol(tmp_path, camera_sg):
     assert "Профили ONVIF" in load_workbook(path).sheetnames
 
 
+def test_replay_is_proved_only_by_real_playback():
+    replay = next(f for f in profiles.PROFILES["G"] if f.spec == "Replay Service")
+    rows = {
+        "DEVICE-1-1-20": ("прошла", ""),
+        "RUV-G-REPLAY-1": ("пропущена", "на карте нет записей"),
+    }
+    assert profiles.judge(replay, rows)[0] == profiles.UNCHECKED
+
+
+def test_broken_search_is_seen_even_if_other_search_tests_passed():
+    search = next(f for f in profiles.PROFILES["G"] if f.spec == "Recording Search Service")
+    rows = {"SEARCH-1-1-1": ("прошла", ""), "RUV-G-SEARCH-1": ("не прошла", "нет токена")}
+    assert profiles.judge(search, rows)[0] == profiles.BROKEN
+    assert profiles.judge(search, {"SEARCH-1-1-1": ("прошла", "")})[0] == profiles.UNCHECKED
+
+
+def test_profile_with_unproved_archive_is_not_passed(camera_sg):
+    previous = {
+        f"{mask.replace('*', '1')}": ("прошла", "")
+        for feature in profiles.PROFILES["G"]
+        for mask in feature.tests
+    }
+    previous["RUV-G-REPLAY-1"] = ("пропущена", "на карте нет записей")
+    camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
+    ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: previous})
+    row = next(c for c in run_check(SPEC, ctx).children if c.check_id == "RUV-PROFILE-G")
+    assert row.result.status is Status.SKIPPED
+    assert "Воспроизведение архива" in row.result.reason
+
+
 def test_declared_profile_without_any_checked_feature_is_not_passed(camera_sg):
     camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
     ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: {}})

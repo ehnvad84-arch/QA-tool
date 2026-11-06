@@ -99,6 +99,11 @@ def test_foreign_host_replaced_by_stand_address():
     assert fix("rtsp://10.0.0.5/live", "10.0.0.5", 554) == "rtsp://10.0.0.5/live"
 
 
+def test_port_out_of_range_from_camera_does_not_crash():
+    fix = metadata.to_stand_address
+    assert fix("rtsp://192.168.1.10:99999/a", "10.0.0.5", 554) == "rtsp://10.0.0.5:554/a"
+
+
 def test_forwarded_stand_port_wins_over_port_from_camera():
     fix = metadata.to_stand_address
     assert fix("rtsp://192.168.1.14:554/a?b=1", "127.0.0.1", 9614) == "rtsp://127.0.0.1:9614/a?b=1"

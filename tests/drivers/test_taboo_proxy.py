@@ -109,6 +109,37 @@ def test_camera_behind_tunnel_addresses_lead_to_forwarded_port():
         proxy.stop()
 
 
+def test_port_from_answer_is_ignored_behind_tunnel():
+    proxy = TabooProxy("127.0.0.1", 9114, lan_address="192.168.1.114")
+    assert proxy.camera_url("/_port/22/x") == "http://127.0.0.1:9114/x"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "<tds:XAddr><![CDATA[http://10.9.9.9/x]]></tds:XAddr>",
+        "<tds:XAddr>http&#58;//10.9.9.9/x</tds:XAddr>",
+        "<tds:XAddr><!-- c -->http://10.9.9.9/x</tds:XAddr>",
+    ],
+    ids=["CDATA", "числовая ссылка", "комментарий"],
+)
+def test_address_field_hidden_from_rewriting_goes_to_refusal(field):
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        out = proxy.rewrite(field)
+        assert "10.9.9.9" not in out and f"{proxy.base_url}/_foreign/" in out
+    finally:
+        proxy.stop()
+
+
+def test_unparsable_redirect_goes_to_refusal():
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        assert proxy.rewrite_location("http://[1:2]/").startswith(f"{proxy.base_url}/_foreign/")
+    finally:
+        proxy.stop()
+
+
 def test_foreign_host_not_forwarded(proxy):
     r = httpx.post(proxy.base_url + "/_foreign/192.168.1.99/onvif/ptz", content=b"<x/>", timeout=5)
     assert r.status_code == 502 and "QAToolForeignHost" in r.text

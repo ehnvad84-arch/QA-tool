@@ -155,7 +155,7 @@ def test_onvif_groups_tooltips_and_f1(qtbot, tmp_path, fleet):
     assert {"Тесты onvif-tt", "Профиль G: накопитель и архив", "Итог по профилям"} <= set(groups)
     archive = groups["Профиль G: накопитель и архив"]
     ids = {archive.child(i).data(0, Qt.ItemDataRole.UserRole) for i in range(archive.childCount())}
-    assert ids == {"RUV-SD-1", "RUV-SD-2", "RUV-G-REPLAY-1"}
+    assert ids == {"RUV-SD-1", "RUV-SD-2", "RUV-G-SEARCH-1", "RUV-G-REPLAY-1"}
     replay = next(
         i
         for i in scenario._check_items()

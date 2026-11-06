@@ -8,7 +8,7 @@ from qa_tool.checks.onvif import replay
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
 from qa_tool.drivers.camera.rtsp import RtpPacket, Track
-from qa_tool.drivers.camera.soap import CameraUnreachable
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
 from tests import mock_rtsp
 from tests.mock_camera import MockCamera, Passport
 from tests.mock_onvif import OnvifState
@@ -113,6 +113,57 @@ def test_camera_without_require_support_gets_retry_without_header():
 
 
 @needs_video
+def test_recording_after_clock_reset_is_kept():
+    begin = datetime.datetime(2026, 11, 6, 12, tzinfo=datetime.UTC)
+    recording = {"start": begin.isoformat(), "end": EPOCH.isoformat()}
+    assert replay.has_data(recording)  # конец раньше начала: часы сброшены, а данные есть
+
+
+def test_search_passes_with_no_records_and_fails_on_refusal():
+    search = REGISTRY.get(replay.SEARCH_CHECK_ID)
+    cam = start()
+    try:
+        result = run_check(search, ctx_for(cam))
+        assert result.status is Status.PASSED, result.reason
+        assert "записей: 0" in result.actual
+    finally:
+        cam.stop()
+
+
+def test_search_refused_by_camera_is_a_failure(monkeypatch):
+    def refuse(*_):
+        raise OnvifFault("FindRecordings не вернул SearchToken")
+
+    monkeypatch.setattr(replay, "find_recordings", refuse)
+    cam = start()
+    try:
+        assert run_check(REGISTRY.get(replay.SEARCH_CHECK_ID), ctx_for(cam)).status is Status.FAILED
+    finally:
+        cam.stop()
+
+
+@needs_video
+def test_silent_play_without_range_does_not_blame_seeking(monkeypatch):
+    monkeypatch.setattr(replay, "start_point", lambda *_: None)
+    cam = start(recordings=one_recording(), replay_range_silent=False)
+    calls = []
+    real = replay.play
+
+    def silent(client, seconds, start_at):
+        calls.append(start_at)
+        _, stats = real(client, seconds, start_at)
+        return "", {**stats, "frames": 0, "keyframes": 0, "seconds": 0.0}
+
+    monkeypatch.setattr(replay, "play", silent)
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.FAILED
+        assert "переход по времени" not in result.reason
+        assert calls == [None]
+    finally:
+        cam.stop()
+
+
 @pytest.mark.parametrize("moment", [None, EPOCH], ids=["сейчас", "1970"])
 def test_empty_recording_of_camera_without_card_is_not_an_archive(moment):
     now = moment or datetime.datetime.now(datetime.UTC).replace(microsecond=0)

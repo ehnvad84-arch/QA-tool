@@ -45,6 +45,9 @@ class Feature:
     spec: str  # фраза из Support Check — по ней тест сверяет список со спецификацией
     tests: tuple[str, ...]  # ID и маски строк протокола (onvif-tt и RUV-*)
     note: str = ""
+    # Строки, которые сами доказывают функцию. Остальные могут только опровергнуть её: например,
+    # DEVICE-1-1-20 ищет службу в GetServices, а архив при этом может не проигрываться.
+    proof: tuple[str, ...] = ()
 
 
 _DISCOVERY = Feature(
@@ -110,11 +113,17 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         _EVENTS,
         _PULLPOINT,
         _DIGEST,
-        Feature("Поиск записей", "Recording Search Service", ("SEARCH-*", "LOCAL-SEARCH-*")),
+        Feature(
+            "Поиск записей",
+            "Recording Search Service",
+            ("SEARCH-*", "LOCAL-SEARCH-*", "RUV-G-SEARCH-1"),
+            proof=("RUV-G-SEARCH-1",),
+        ),
         Feature(
             "Воспроизведение архива",
             "Replay Service",
             ("DEVICE-1-1-20", "RUV-G-REPLAY-1"),
+            proof=("RUV-G-REPLAY-1",),
         ),
         Feature(
             "Управление записью", "Recording Control Service", ("RECORDING-*", "LOCAL-RECORDING-*")
@@ -164,6 +173,7 @@ class FeatureVerdict:
     verdict: str
     basis: str
     note: str = ""
+    needs_proof: bool = False  # без своей проверки функция не даёт профилю «прошла»
 
 
 def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, str]:
@@ -176,7 +186,12 @@ def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, 
     if not rows:
         return UNCHECKED, "нет проверок этой функции в прогоне"
     failed = [i for i, (status, _) in rows.items() if status == Status.FAILED.value]
-    passed = [i for i, (status, _) in rows.items() if status == Status.PASSED.value]
+    proving = feature.proof or feature.tests
+    passed = [
+        i
+        for i, (status, _) in rows.items()
+        if status == Status.PASSED.value and any(fnmatch.fnmatch(i, m) for m in proving)
+    ]
     if failed:
         return BROKEN, "не прошли: " + ", ".join(sorted(failed))
     if passed:
@@ -228,7 +243,11 @@ def matrix(previous: dict[str, tuple[str, str]]) -> list[FeatureVerdict]:
     for profile, features in PROFILES.items():
         for feature in features:
             verdict, basis = judge(feature, previous)
-            out.append(FeatureVerdict(profile, feature.name, verdict, basis, feature.note))
+            out.append(
+                FeatureVerdict(
+                    profile, feature.name, verdict, basis, feature.note, bool(feature.proof)
+                )
+            )
     return out
 
 
@@ -284,6 +303,15 @@ def profiles(ctx: CheckContext) -> CheckResult:
                 reason=f"профиль {profile} объявлен, но обязательные функции: " + "; ".join(bad),
                 expected="все обязательные функции профиля работают",
                 actual="; ".join(bad),
+                evidence=[evidence],
+            )
+        elif unproved := [v for v in rows if v.verdict == UNCHECKED and v.needs_proof]:
+            # Без доказательства «прошла» нельзя (never.md), а дефекта камеры тоже не видно:
+            # например, на камере без карты архив проиграть нечем.
+            names = "; ".join(f"{v.feature} ({v.basis})" for v in unproved)
+            result = CheckResult(
+                Status.SKIPPED,
+                reason=f"профиль {profile} объявлен, но не подтверждено: {names}",
                 evidence=[evidence],
             )
         else:

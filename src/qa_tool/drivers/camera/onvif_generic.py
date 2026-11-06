@@ -42,7 +42,8 @@ def stand_service_url(camera: Camera, url: str) -> str | None:
     на порт 80 компьютера стенда.
     """
     parts = urlsplit(url)
-    if camera.lan_address and parts.hostname in (camera.address, camera.lan_address):
+    aliases = (camera.address.lower(), camera.lan_address.lower())
+    if camera.lan_address and parts.hostname in aliases:
         return urlunsplit(parts._replace(scheme="http", netloc=f"{camera.address}:{camera.port}"))
     return url if parts.hostname == camera.address else None
 

@@ -40,6 +40,7 @@ from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, Track
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
 CHECK_ID = "RUV-G-REPLAY-1"
+SEARCH_CHECK_ID = "RUV-G-SEARCH-1"
 THRESHOLD_KEY = "onvif.replay_min_s"
 DEFAULT_MIN_S = Threshold(10.0, "с", "стартовое значение (спека этапа 2)")
 DEFAULT_RECORD_S = 120.0
@@ -109,7 +110,7 @@ def has_data(recording: dict) -> bool:
     текущее время, Tiandy и второстепенные потоки Dahua — 1970 год).
     """
     begin, end = parse_time(recording["start"]), parse_time(recording["end"])
-    return not (begin and end and end <= begin)
+    return not (begin and end and end == begin)
 
 
 def _job_modes(soap: SoapClient, recording_url: str) -> list[tuple[str, str]]:
@@ -326,6 +327,47 @@ def start_point(recording: dict, seconds: float) -> datetime.datetime | None:
 
 
 @REGISTRY.check(
+    SEARCH_CHECK_ID,
+    module="onvif",
+    title="Поиск записей по ONVIF (Profile G)",
+    description="Запускаем поиск записей (FindRecordings) и читаем его результат. Ожидаем: камера "
+    "выдаёт токен поиска и завершает поиск. Пустой список — не ошибка: карта может быть пуста.",
+    phase=Phase.NETWORK,
+    order=19,
+    severity=Severity.MAJOR,
+    timeout_s=60.0,
+    group="Профиль G: накопитель и архив",
+    help_id="onvif-archive",
+)
+def search(ctx: CheckContext) -> CheckResult:
+    """Выполнить поиск записей: своя строка, чтобы сбой проигрывания не приписали поиску."""
+    soap = SoapClient(ctx.camera.username, ctx.password, timeout=10)
+    expected = "камера выдаёт токен поиска и завершает поиск"
+    try:
+        foreign: list[str] = []
+        services = service_urls(soap, ctx.camera, foreign)
+        if "search" not in services:
+            reason = "камера не объявляет поиск записей (Profile G)"
+            if "search" in foreign:
+                reason = "служба поиска на чужом хосте отброшена"
+            return CheckResult.skipped(reason)
+        found = find_recordings(soap, services["search"])
+    except (CameraUnreachable, OnvifFault) as e:
+        return CheckResult(
+            Status.FAILED,
+            reason=f"поиск записей не выполнен: {e}",
+            expected=expected,
+            evidence=soap_evidence(soap),
+        )
+    return CheckResult(
+        Status.PASSED,
+        expected=expected,
+        actual=f"поиск завершён, записей: {len(found)}",
+        evidence=soap_evidence(soap),
+    )
+
+
+@REGISTRY.check(
     CHECK_ID,
     module="onvif",
     title="Выдача архива по ONVIF (Profile G)",
@@ -420,9 +462,10 @@ def replay(ctx: CheckContext) -> CheckResult:
 
     client = new_client()
     exchanges = client.exchanges
+    start = start_point(latest, minimum.value)
     try:
         with client:
-            sdp, stats = play(client, minimum.value, start_point(latest, minimum.value))
+            sdp, stats = play(client, minimum.value, start)
         evidence.append(Evidence("sdp.txt", sdp))
     except (OSError, RtspError, ValueError) as e:
         return CheckResult(
@@ -433,7 +476,7 @@ def replay(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
     seek_broken = False
-    if not stats["frames"]:
+    if start and not stats["frames"]:
         # Отделяем «нет архива» от «нет перехода по времени»: это разные задачи программистам.
         retry = new_client()
         with contextlib.suppress(OSError, RtspError, ValueError), retry:

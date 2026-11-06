@@ -113,9 +113,13 @@ def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     parts = urlsplit(uri)
     if rtsp_port != DEFAULT_RTSP_PORT:
         return urlunsplit(parts._replace(netloc=f"{address}:{rtsp_port}"))
+    try:
+        port = parts.port
+    except ValueError:  # камера написала порт за пределами 0–65535
+        return urlunsplit(parts._replace(netloc=f"{address}:{rtsp_port}"))
     if parts.hostname == address:
         return uri
-    return urlunsplit(parts._replace(netloc=f"{address}:{parts.port or rtsp_port}"))
+    return urlunsplit(parts._replace(netloc=f"{address}:{port or rtsp_port}"))
 
 
 def documents(packets: list[RtpPacket], channel: int) -> list[str]:

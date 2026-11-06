@@ -62,7 +62,7 @@ FALSE_FAILURES = {
     "ANALYTICS-4-1-1": "тест onvif-tt ждёт атрибут Type, которого нет в tt:ConfigDescription",
     "LOCAL-SEARCH-FIND-RECORDINGS-EMPTY-SCOPE": "тест onvif-tt ищет атрибут SearchToken у ответа, "
     "который zeep уже развернул в строку, и падает, хотя камера токен вернула; поиск проверяет "
-    "RUV-G-REPLAY-1",
+    "RUV-G-SEARCH-1",
     "LOCAL-REPLAY-STREAM-URI": "тест onvif-tt ищет атрибут Uri у ответа, который zeep уже "
     "развернул в строку, и падает, хотя камера адрес вернула; адрес архива проверяет "
     "RUV-G-REPLAY-1",
