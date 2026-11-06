@@ -35,6 +35,9 @@ class Camera:
     rtsp_port: int = 554
     vendor: str = "generic"
     name: str = ""
+    # Адрес камеры в её собственной сети, если стенд ходит к ней через туннель или NAT: камера
+    # называет им свои службы. Только псевдоним для разбора ответов, соединений на него нет.
+    lan_address: str = ""
 
     def __post_init__(self) -> None:
         if not 1 <= self.slot <= MAX_SLOTS:

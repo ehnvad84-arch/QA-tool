@@ -224,7 +224,9 @@ def onvif_tt(ctx: CheckContext) -> CheckResult:
                     ),
                 )
             )
-    proxy = TabooProxy(ctx.camera.address, ctx.camera.port).start()
+    proxy = TabooProxy(
+        ctx.camera.address, ctx.camera.port, lan_address=ctx.camera.lan_address
+    ).start()
     restore_row = None
     try:
         result = _run(ctx, proxy, writes)

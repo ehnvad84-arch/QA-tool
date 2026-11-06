@@ -90,6 +90,25 @@ def test_path_without_leading_slash_is_not_glued_to_camera_host():
     assert p.camera_url("@10.9.9.9/x") is None
 
 
+def test_camera_behind_tunnel_addresses_lead_to_forwarded_port():
+    proxy = TabooProxy("127.0.0.1", 9114, lan_address="192.168.1.114").start()
+    try:
+        out = proxy.rewrite(
+            "<tds:XAddr>http://192.168.1.114/onvif/Media</tds:XAddr>"
+            "<tds:XAddr>http://127.0.0.1/onvif/x</tds:XAddr>"  # Dahua: хост из запроса, без порта
+            "<wsa:Address>http://192.168.1.114:80/onvif/Events/Sub1</wsa:Address>"
+            "<tds:XAddr>http://10.9.9.9/onvif/y</tds:XAddr>"
+        )
+        assert f"{proxy.base_url}/onvif/Media<" in out
+        assert f"{proxy.base_url}/onvif/x<" in out
+        assert f"{proxy.base_url}/onvif/Events/Sub1<" in out
+        assert f"{proxy.base_url}/_foreign/10.9.9.9/onvif/y<" in out
+        assert "192.168.1.114" not in out
+        assert proxy.camera_url("/onvif/Media") == "http://127.0.0.1:9114/onvif/Media"
+    finally:
+        proxy.stop()
+
+
 def test_foreign_host_not_forwarded(proxy):
     r = httpx.post(proxy.base_url + "/_foreign/192.168.1.99/onvif/ptz", content=b"<x/>", timeout=5)
     assert r.status_code == 502 and "QAToolForeignHost" in r.text

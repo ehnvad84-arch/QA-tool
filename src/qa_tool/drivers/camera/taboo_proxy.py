@@ -63,6 +63,7 @@ class TabooProxy:
         camera_address: адрес камеры со стенда (IP или имя).
         camera_port: HTTP-порт камеры по умолчанию (ONVIF Device Service).
         timeout_s: сколько ждать ответа камеры на один запрос, с.
+        lan_address: адрес камеры в её сети, если стенд ходит через туннель (`Camera.lan_address`).
 
     `start()` — до первого запроса, `stop()` — после модуля. Потокобезопасен: список
     остановленных запросов `blocked` пополняется под блокировкой.
@@ -71,6 +72,7 @@ class TabooProxy:
     camera_address: str
     camera_port: int = 80
     timeout_s: float = DEFAULT_TIMEOUT_S
+    lan_address: str = ""
     blocked: list[Blocked] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _server: ThreadingHTTPServer | None = field(default=None, repr=False)
@@ -151,6 +153,12 @@ class TabooProxy:
 
     def _to_proxy(self, match: re.Match) -> str:
         scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
+        if self.lan_address and host.lower() in (
+            self.camera_address.lower(),
+            self.lan_address.lower(),
+        ):
+            # за туннелем доступен один порт, а порты из ответа камеры — её внутренние
+            return f"{self.base_url}{path or ''}"
         if host.lower() == self.camera_address.lower():
             target = int(port) if port else (443 if scheme.lower() == "https" else 80)
             return f"{self.base_url}/_port/{target}{path or ''}"

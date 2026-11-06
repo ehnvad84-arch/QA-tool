@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 
 import pytest
@@ -257,6 +258,18 @@ def test_record_time_above_limit_is_capped(monkeypatch):
         ctx.extra["replay_record_s"] = replay.DEFAULT_RECORD_S * 10
         run_check(SPEC, ctx)
         assert seen["seconds"] == replay.DEFAULT_RECORD_S
+    finally:
+        cam.stop()
+
+
+@needs_video
+def test_camera_behind_tunnel_reaches_services_it_names_by_its_own_address():
+    cam = start(recordings=one_recording(), foreign_services=("search", "replay"))
+    try:
+        ctx = ctx_for(cam)
+        ctx.camera = dataclasses.replace(ctx.camera, lan_address="10.9.9.9")
+        result = run_check(SPEC, ctx)
+        assert result.status is Status.PASSED, result.reason
     finally:
         cam.stop()
 

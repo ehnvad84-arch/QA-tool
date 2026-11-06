@@ -1,7 +1,7 @@
 import pytest
 
-from qa_tool.core.config import load_scenario, load_stand, load_thresholds
-from qa_tool.core.models import Camera, ConfigError, Place, Scenario
+from qa_tool.core.config import load_scenario, load_stand, load_thresholds, save_stand
+from qa_tool.core.models import Camera, ConfigError, Place, Scenario, Stand
 
 
 def _stand_yaml(tmp_path, cameras: str, place: str = "color_box"):
@@ -38,6 +38,13 @@ def test_duplicate_slot_is_rejected(tmp_path):
     cams = "  - {slot: 2, address: a, username: u}\n  - {slot: 2, address: b, username: u}\n"
     with pytest.raises(ConfigError, match="Место 2 уже занято"):
         load_stand(_stand_yaml(tmp_path, cams))
+
+
+def test_address_behind_tunnel_survives_saving(tmp_path):
+    camera = Camera(slot=1, address="127.0.0.1", port=9114, username="a", lan_address="10.0.0.5")
+    path = tmp_path / "stand.yaml"
+    save_stand(Stand(place=Place.COLOR_BOX, runs_dir=tmp_path, cameras=[camera]), path)
+    assert load_stand(path).cameras[0].lan_address == "10.0.0.5"
 
 
 def test_password_in_stand_yaml_is_config_error(tmp_path):
