@@ -113,6 +113,7 @@ DIRECT = Camera(slot=1, address="192.168.1.10", port=80, username="a")
         ("http://192.168.1.114:80/onvif/a?b=1", "http://127.0.0.1:9114/onvif/a?b=1"),
         ("http://127.0.0.1/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),  # Dahua
         ("http://10.9.9.9/onvif/Replay", None),
+        ("http://[1:2]/onvif/Replay", None),
     ],
 )
 def test_service_of_camera_behind_tunnel(url, expected):

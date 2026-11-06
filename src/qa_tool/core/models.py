@@ -44,6 +44,8 @@ class Camera:
             raise ConfigError(f"Место {self.slot}: допустимы места 1–{MAX_SLOTS}")
         if not self.address:
             raise ConfigError(f"Место {self.slot}: не указан адрес камеры")
+        if set(self.lan_address) & set("/@ :\\"):
+            raise ConfigError(f"Место {self.slot}: адрес за туннелем — только IP или имя хоста")
 
 
 @dataclass

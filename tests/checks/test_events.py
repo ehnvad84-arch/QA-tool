@@ -107,3 +107,16 @@ def test_events_on_foreign_host_are_named(camera):
     result = run(camera)
     assert result.status is Status.SKIPPED
     assert "чужом хосте" in result.reason
+
+
+@pytest.mark.parametrize("camera", [{}], indirect=True)
+def test_answer_that_is_not_soap_after_unsubscribe_proves_nothing(camera, monkeypatch):
+    real = SoapClient.call
+
+    def call(self, url, body, soap_header=""):
+        if "Renew" in body and camera.state.notify_until is None:
+            raise OnvifFault("ответ не SOAP (HTTP 503)", status=503)
+        return real(self, url, body, soap_header)
+
+    monkeypatch.setattr(SoapClient, "call", call)
+    assert run(camera).status is Status.STAND_ERROR

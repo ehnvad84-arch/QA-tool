@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+from xml.etree import ElementTree
 
 import pytest
 
@@ -112,14 +113,13 @@ def test_camera_without_require_support_gets_retry_without_header():
         cam.stop()
 
 
-@needs_video
 def test_recording_after_clock_reset_is_kept():
     begin = datetime.datetime(2026, 11, 6, 12, tzinfo=datetime.UTC)
     recording = {"start": begin.isoformat(), "end": EPOCH.isoformat()}
     assert replay.has_data(recording)  # конец раньше начала: часы сброшены, а данные есть
 
 
-def test_search_passes_with_no_records_and_fails_on_refusal():
+def test_search_finished_with_no_records_passes():
     search = REGISTRY.get(replay.SEARCH_CHECK_ID)
     cam = start()
     try:
@@ -134,7 +134,7 @@ def test_search_refused_by_camera_is_a_failure(monkeypatch):
     def refuse(*_):
         raise OnvifFault("FindRecordings не вернул SearchToken")
 
-    monkeypatch.setattr(replay, "find_recordings", refuse)
+    monkeypatch.setattr(replay, "search_recordings", refuse)
     cam = start()
     try:
         assert run_check(REGISTRY.get(replay.SEARCH_CHECK_ID), ctx_for(cam)).status is Status.FAILED
@@ -160,6 +160,44 @@ def test_silent_play_without_range_does_not_blame_seeking(monkeypatch):
         assert result.status is Status.FAILED
         assert "переход по времени" not in result.reason
         assert calls == [None]
+    finally:
+        cam.stop()
+
+
+def test_search_camera_never_finished_is_a_failure(monkeypatch):
+    monkeypatch.setattr(replay, "search_recordings", lambda *_: ([], False))
+    cam = start()
+    try:
+        result = run_check(REGISTRY.get(replay.SEARCH_CHECK_ID), ctx_for(cam))
+        assert result.status is Status.FAILED
+        assert "не завершила поиск" in result.reason
+    finally:
+        cam.stop()
+
+
+def test_search_state_is_read_from_answer():
+    class Soap:
+        def __init__(self, state):
+            self.state = state
+
+        def call(self, _url, body):
+            if "FindRecordings" in body:
+                return ElementTree.fromstring('<a xmlns="urn:s"><SearchToken>1</SearchToken></a>')
+            return ElementTree.fromstring(
+                f'<a xmlns="urn:s"><SearchState>{self.state}</SearchState></a>'
+            )
+
+    assert replay.search_recordings(Soap("Completed"), "u") == ([], True)
+    assert replay.search_recordings(Soap("Searching"), "u") == ([], False)
+
+
+@needs_video
+def test_replay_uri_that_cannot_be_parsed_is_a_failure(monkeypatch):
+    monkeypatch.setattr(replay, "replay_uri", lambda *_: "rtsp://[1:2]/a")
+    cam = start(recordings=one_recording())
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.FAILED and "адрес" in result.reason
     finally:
         cam.stop()
 

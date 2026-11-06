@@ -40,6 +40,12 @@ def test_duplicate_slot_is_rejected(tmp_path):
         load_stand(_stand_yaml(tmp_path, cams))
 
 
+@pytest.mark.parametrize("value", ["http://10.0.0.5", "a b", "x@10.0.0.5", "10.0.0.5/24"])
+def test_address_behind_tunnel_must_be_a_bare_host(value):
+    with pytest.raises(ConfigError):
+        Camera(slot=1, address="127.0.0.1", username="a", lan_address=value)
+
+
 def test_address_behind_tunnel_survives_saving(tmp_path):
     camera = Camera(slot=1, address="127.0.0.1", port=9114, username="a", lan_address="10.0.0.5")
     path = tmp_path / "stand.yaml"

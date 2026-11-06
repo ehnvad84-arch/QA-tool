@@ -33,6 +33,7 @@ from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClien
 CHECK_ID = "RUV-PROFILES-1"
 PREVIOUS = PREVIOUS_RESULTS
 SCOPES = {"S": "Streaming", "G": "G", "M": "M", "T": "T"}
+STAND_ERROR_BASIS = "ошибка стенда: "
 WORKS, BROKEN, UNSUPPORTED, UNCHECKED = "работает", "не работает", "не поддержана", "не проверена"
 READ_ONLY = "проверено только чтением: изменение — табу (AD-7)"
 
@@ -192,8 +193,11 @@ def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, 
         for i, (status, _) in rows.items()
         if status == Status.PASSED.value and any(fnmatch.fnmatch(i, m) for m in proving)
     ]
+    errors = [i for i, (status, _) in rows.items() if status == Status.STAND_ERROR.value]
     if failed:
         return BROKEN, "не прошли: " + ", ".join(sorted(failed))
+    if feature.proof and errors:
+        return UNCHECKED, STAND_ERROR_BASIS + ", ".join(sorted(errors))
     if passed:
         return WORKS, "прошли: " + ", ".join(sorted(passed))
     not_advertised = [i for i, (_, reason) in rows.items() if "does not advertise" in reason]
@@ -269,7 +273,10 @@ def profiles(ctx: CheckContext) -> CheckResult:
         declared = declared_profiles(ctx)
     except (CameraUnreachable, OnvifFault) as e:
         return CheckResult.stand_error(f"не прочитать объявленные профили (GetScopes): {e}")
-    table = matrix(ctx.extra.get(PREVIOUS, {}))
+    previous = ctx.extra.get(PREVIOUS, {})
+    table = matrix(previous)
+    # свои ID тесты onvif-tt получают только в прогоне; RUV-* и CORE-* — наши проверки
+    onvif_tt_ran = any(not i.startswith(("RUV-", "CORE-", ONVIF_TT)) for i in previous)
     evidence = Evidence(
         "matrix.json",
         json.dumps(
@@ -305,12 +312,19 @@ def profiles(ctx: CheckContext) -> CheckResult:
                 actual="; ".join(bad),
                 evidence=[evidence],
             )
+        elif not onvif_tt_ran:
+            result = CheckResult(
+                Status.STAND_ERROR,
+                reason=f"профиль {profile} не подтверждён: onvif-tt не дал результатов",
+                evidence=[evidence],
+            )
         elif unproved := [v for v in rows if v.verdict == UNCHECKED and v.needs_proof]:
             # Без доказательства «прошла» нельзя (never.md), а дефекта камеры тоже не видно:
             # например, на камере без карты архив проиграть нечем.
             names = "; ".join(f"{v.feature} ({v.basis})" for v in unproved)
+            stand = any(v.basis.startswith(STAND_ERROR_BASIS) for v in unproved)
             result = CheckResult(
-                Status.SKIPPED,
+                Status.STAND_ERROR if stand else Status.SKIPPED,
                 reason=f"профиль {profile} объявлен, но не подтверждено: {names}",
                 evidence=[evidence],
             )

@@ -60,6 +60,11 @@ def termination(answer: Element) -> datetime.datetime | None:
     return parse_time(element.text or "") if element is not None else None
 
 
+def not_soap(fault: OnvifFault) -> bool:
+    """Ответ пришёл не от службы ONVIF, а от веб-сервера: страница ошибки или пустой ответ."""
+    return str(fault).startswith(("ответ не SOAP", "пустой ответ"))
+
+
 def addressing(action: str, url: str, reference: str = "") -> str:
     """Заголовки WS-Addressing запроса; `reference` — параметры из ссылки подписки."""
     return (
@@ -143,11 +148,11 @@ def subscribe(ctx: CheckContext) -> CheckResult:
         try:
             soap.call(unsubscribed, RENEW_BODY, addressing(RENEW_ACTION, unsubscribed, reference))
         except OnvifFault as e:
-            if credentials_rejected(e):
-                # отказ во входе не доказывает, что подписка отменена
+            if credentials_rejected(e) or not_soap(e):
+                # отказ во входе или сбой веб-сервера не доказывает, что подписка отменена
                 return CheckResult(
                     Status.STAND_ERROR,
-                    reason=f"после отмены камера отвергла вход: {e}",
+                    reason=f"ответ после отмены ничего не доказывает: {e}",
                     expected=expected,
                     evidence=soap_evidence(soap),
                 )

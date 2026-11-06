@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, urlsplit
 
+from defusedxml import ElementTree
+
 from qa_tool.core.taboo import TabooViolation
 from qa_tool.drivers.camera import http
 
@@ -29,6 +31,7 @@ DEFAULT_TIMEOUT_S = 75.0
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "keep-alive"}
 _PORT_PREFIX = re.compile(r"^/_port/(\d{1,5})(/.*)?$")
 _FOREIGN = "/_foreign"
+_ENVELOPE_LOOKUP = 512  # конверт SOAP стоит в начале ответа, снимок так не проверяется целиком
 TABOO_FAULT_CODE = "ter:QAToolTaboo"
 
 
@@ -130,14 +133,32 @@ class TabooProxy:
         def foreign_in_field(match: re.Match) -> str:
             return match.group(1) + _HTTP_URL.sub(self._to_foreign, match.group(3)) + match.group(4)
 
-        def hidden_in_field(match: re.Match) -> str:
-            return f"{match.group(1)}{self.base_url}{_FOREIGN}/{match.group(3)}"
-
-        # Клиент прочтёт такой адрес после разбора XML, а подмена по тексту его не видит:
-        # он ушёл бы мимо посредника с логином. У настоящих служб так не бывает, поэтому отказ.
         text = _HTTP_URL.sub(self._to_proxy, text)
-        text = _HIDDEN_ADDRESS_FIELD.sub(hidden_in_field, text)
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
+
+    def hides_address(self, text: str) -> bool:
+        """Остался ли после подмены адрес мимо посредника, видимый клиенту после разбора XML.
+
+        Подмена работает по тексту, а клиент читает разобранный XML: CDATA, комментарии и ссылки
+        на символы могут скрыть адрес от подмены, и клиент ушёл бы по нему с логином. Поэтому
+        ответ разбирается так же, как у клиента. Не XML — такого адреса в нём клиент не найдёт;
+        DTD запрещён, как и в SOAP-клиенте, и считается скрытием.
+        """
+        try:
+            root = ElementTree.fromstring(text)
+        except ElementTree.ParseError:
+            return False
+        except ValueError:
+            return True
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] not in _ADDRESS_FIELDS:
+                continue
+            for word in "".join(element.itertext()).split():
+                if word.lower().startswith(("http:", "https:", "//")) and (
+                    not self._is_proxy_url(word)
+                ):
+                    return True
+        return False
 
     def rewrite_location(self, location: str) -> str:
         """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ.
@@ -217,10 +238,17 @@ class TabooProxy:
                     return
                 content = response.content
                 content_type = response.headers.get("content-type", "")
-                if any(t in content_type for t in ("xml", "soap", "json", "html", "text")):
+                # SOAP-клиент на Content-Type не смотрит, поэтому и конверт под чужим типом — наш
+                textual = any(t in content_type for t in ("xml", "soap", "json", "html", "text"))
+                if textual or b"Envelope" in content[:_ENVELOPE_LOOKUP]:
                     charset = response.encoding or "utf-8"
                     # U+FFFD от битых байт однобайтовая кодировка обратно не примет
                     text = proxy.rewrite(content.decode(charset, "replace"))
+                    if proxy.hides_address(text):
+                        reason = "адрес службы скрыт от подмены: клиент ушёл бы мимо посредника"
+                        proxy._block(self.command, self.path, reason)
+                        self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
+                        return
                     content = text.encode(charset, "replace")
                 if "location" in response.headers:
                     location = response.headers["location"]
@@ -256,9 +284,4 @@ _HTTP_URL = re.compile(
 )
 # поля, где ONVIF передаёт адреса служб: <tt:XAddr>, <d:XAddrs>, <wsa:Address>, <tt:Uri>
 _ADDRESS_FIELD = re.compile(r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)([^<]*)(</)")
-# то же поле, но адрес спрятан от подмены: CDATA, комментарий или числовая ссылка на символ
-_HIDDEN_ADDRESS_FIELD = re.compile(
-    r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)"
-    r"(?:\s*<!\[CDATA\[.*?\]\]>|\s*<!--.*?-->[^<]*|[^<]*&#[^<]*)(</)",
-    re.DOTALL,
-)
+_ADDRESS_FIELDS = {"XAddr", "XAddrs", "Address", "Uri"}

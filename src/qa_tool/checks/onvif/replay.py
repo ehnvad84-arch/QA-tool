@@ -57,7 +57,12 @@ def _texts(element, name: str) -> list[str]:
 
 
 def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
-    """Записи камеры: токен, начало и конец (ONVIF Recording Search).
+    """Записи камеры: токен, начало и конец (ONVIF Recording Search)."""
+    return search_recordings(soap, search_url)[0]
+
+
+def search_recordings(soap: SoapClient, search_url: str) -> tuple[list[dict], bool]:
+    """Записи камеры и признак, что камера завершила поиск (SearchState Completed).
 
     Raises:
         OnvifFault: камера не начала поиск (нет SearchToken) — это её ошибка, а не стенда.
@@ -74,6 +79,7 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
         raise OnvifFault("FindRecordings не вернул SearchToken")
     token = tokens[0]
     found: list[dict] = []
+    completed = False
     try:
         for _ in range(5):  # поиск на камере асинхронный: ждём «Completed» не дольше ~25 с
             answer = soap.call(
@@ -91,6 +97,7 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
                     }
                 )
             if "Completed" in _texts(answer, "SearchState"):
+                completed = True
                 break
     finally:
         # Завершение поиска — только уборка: Dahua закрывает его сама после Completed и отвечает
@@ -100,7 +107,7 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
                 search_url,
                 f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
             )
-    return [r for r in found if r["token"] and has_data(r)]
+    return [r for r in found if r["token"] and has_data(r)], completed
 
 
 def has_data(recording: dict) -> bool:
@@ -351,11 +358,18 @@ def search(ctx: CheckContext) -> CheckResult:
             if "search" in foreign:
                 reason = "служба поиска на чужом хосте отброшена"
             return CheckResult.skipped(reason)
-        found = find_recordings(soap, services["search"])
+        found, completed = search_recordings(soap, services["search"])
     except (CameraUnreachable, OnvifFault) as e:
         return CheckResult(
             Status.FAILED,
             reason=f"поиск записей не выполнен: {e}",
+            expected=expected,
+            evidence=soap_evidence(soap),
+        )
+    if not completed:
+        return CheckResult(
+            Status.FAILED,
+            reason="камера не завершила поиск: нет состояния Completed",
             expected=expected,
             evidence=soap_evidence(soap),
         )
@@ -451,9 +465,20 @@ def replay(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
 
+    try:
+        stand_uri = to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port)
+    except ValueError:
+        return CheckResult(
+            Status.FAILED,
+            reason=f"GetReplayUri вернул неразбираемый адрес: {uri!r}",
+            expected=expected,
+            evidence=evidence,
+            threshold=minimum,
+        )
+
     def new_client() -> RtspClient:
         return RtspClient(
-            to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
+            stand_uri,
             ctx.camera.username,
             ctx.password,
             timeout=10,

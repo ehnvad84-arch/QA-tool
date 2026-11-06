@@ -138,6 +138,27 @@ def test_profile_with_unproved_archive_is_not_passed(camera_sg):
     assert "Воспроизведение архива" in row.result.reason
 
 
+def test_profile_is_not_passed_when_onvif_tt_gave_no_rows(camera_sg):
+    camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
+    previous = {"RUV-G-SEARCH-1": ("прошла", ""), "RUV-G-REPLAY-1": ("прошла", "")}  # onvif-tt упал
+    ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: previous})
+    row = next(c for c in run_check(SPEC, ctx).children if c.check_id == "RUV-PROFILE-G")
+    assert row.result.status is Status.STAND_ERROR
+    assert "onvif-tt" in row.result.reason
+
+
+def test_stand_error_in_proof_stays_a_stand_error(camera_sg):
+    camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
+    previous = {
+        "DEVICE-1-1-13": ("прошла", ""),
+        "RUV-G-SEARCH-1": ("прошла", ""),
+        "RUV-G-REPLAY-1": ("ошибка стенда", "таймаут"),
+    }
+    ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: previous})
+    row = next(c for c in run_check(SPEC, ctx).children if c.check_id == "RUV-PROFILE-G")
+    assert row.result.status is Status.STAND_ERROR
+
+
 def test_declared_profile_without_any_checked_feature_is_not_passed(camera_sg):
     camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
     ctx = CheckContext(camera, "admin", Place.COLOR_BOX, extra={PREVIOUS_RESULTS: {}})

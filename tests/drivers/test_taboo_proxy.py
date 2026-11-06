@@ -114,22 +114,68 @@ def test_port_from_answer_is_ignored_behind_tunnel():
     assert proxy.camera_url("/_port/22/x") == "http://127.0.0.1:9114/x"
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "<tds:XAddr><![CDATA[http://10.9.9.9/x]]></tds:XAddr>",
-        "<tds:XAddr>http&#58;//10.9.9.9/x</tds:XAddr>",
-        "<tds:XAddr><!-- c -->http://10.9.9.9/x</tds:XAddr>",
-    ],
-    ids=["CDATA", "числовая ссылка", "комментарий"],
-)
-def test_address_field_hidden_from_rewriting_goes_to_refusal(field):
+HIDDEN = [
+    "<![CDATA[http://10.9.9.9/x]]>",
+    "http&#58;//10.9.9.9/x",
+    "<!-- c -->http://10.9.9.9/x",
+    "http<![CDATA[://10.9.9.9/x]]>",
+    "http://10.9.9.9/x<![CDATA[]]>",
+    "<![CDATA[http://10.9.9.9/x]]> ",
+    "http:<!-- c -->//10.9.9.9/x",
+    "http://10.9.9.9/x<!-- c -->",
+    "http&#58;//10.9.9.9/x<!-- c -->",
+    "http://10.9.9.9/x<?pi?>",
+    "http://10.9.9.9/x<a/>",
+    "http&#58;//10.9.9.9/x<a/>",
+]
+
+
+@pytest.mark.parametrize("value", HIDDEN)
+def test_address_hidden_from_rewriting_is_seen_after_parsing(value):
     proxy = TabooProxy("127.0.0.1", 80).start()
     try:
-        out = proxy.rewrite(field)
-        assert "10.9.9.9" not in out and f"{proxy.base_url}/_foreign/" in out
+        answer = f'<a xmlns:tds="urn:t"><tds:XAddr>{value}</tds:XAddr></a>'
+        assert proxy.hides_address(proxy.rewrite(answer))
     finally:
         proxy.stop()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '<a xmlns:t="urn:t"><t:Uri>rtsp://10.9.9.9/x?a=1&amp;b=2</t:Uri></a>',
+        '<a xmlns:t="urn:t"><t:Uri>rtsp://10.9.9.9/x?a=1&#38;b=2</t:Uri></a>',
+        '<a xmlns:t="urn:t"><t:Uri><![CDATA[rtsp://10.9.9.9/x?a=1&b=2]]></t:Uri></a>',
+        '<a xmlns:t="urn:t"><t:Address><t:Type>IPv4</t:Type></t:Address></a>',
+        "<html><body>страница камеры</body></html>",
+        "не XML вовсе",
+    ],
+    ids=["amp", "числовая ссылка", "CDATA", "вложенный адрес", "HTML", "текст"],
+)
+def test_ordinary_answers_are_not_refused(answer):
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        assert not proxy.hides_address(proxy.rewrite(answer))
+    finally:
+        proxy.stop()
+
+
+def test_list_of_addresses_is_checked_word_by_word():
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        field = f"{proxy.base_url}/a http&#58;//10.9.9.9/x"
+        assert proxy.hides_address(f'<a xmlns:d="urn:d"><d:XAddrs>{field}</d:XAddrs></a>')
+    finally:
+        proxy.stop()
+
+
+def test_answer_with_hidden_address_never_reaches_client(answering):
+    body = b'<s:Envelope xmlns:s="urn:s" xmlns:t="urn:t"><t:XAddr><![CDATA[http://10.9.9.9/x]]>'
+    body += b"</t:XAddr></s:Envelope>"
+    proxy, _ = answering(body, Content_Type="application/octet-stream")
+    response = httpx.get(proxy.base_url + "/onvif/x", timeout=10)
+    assert response.status_code == 502 and "10.9.9.9" not in response.text
+    assert proxy.blocked
 
 
 def test_unparsable_redirect_goes_to_refusal():

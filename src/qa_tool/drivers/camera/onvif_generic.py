@@ -41,11 +41,15 @@ def stand_service_url(camera: Camera, url: str) -> str | None:
     но без порта. Оба варианта ведут на проброшенный порт: без этого запрос с логином ушёл бы
     на порт 80 компьютера стенда.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:  # адрес от камеры, разобрать нельзя: на такой идти нельзя
+        return None
     aliases = (camera.address.lower(), camera.lan_address.lower())
-    if camera.lan_address and parts.hostname in aliases:
+    if camera.lan_address and host in aliases:
         return urlunsplit(parts._replace(scheme="http", netloc=f"{camera.address}:{camera.port}"))
-    return url if parts.hostname == camera.address else None
+    return url if host == camera.address else None
 
 
 def service_urls(
