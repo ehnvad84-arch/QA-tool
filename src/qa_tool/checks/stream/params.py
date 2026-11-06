@@ -195,7 +195,12 @@ class ProfileRun:
         with client:
             self.sdp, self.track = start_video(client)
             self.channel = client.rtp_channel
-            self.meter = StreamMeter(self.track.encoding, self.track.clock_rate)
+            self.meter = StreamMeter(
+                self.track.encoding,
+                self.track.clock_rate,
+                declared_fps=self.profile.encoder.fps if self.profile.encoder else None,
+                fps_pct=limit(self.ctx, "stream.fps_pct").value,
+            )
             if self.track.encoding.upper() in CODEC_FORMATS:
                 self.sampler = Sampler(self.folder / f"sample-{self.number}", self.track)
             return client.watch(self._on_packet, seconds, self.ctx.stop_requested)

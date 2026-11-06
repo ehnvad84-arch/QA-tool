@@ -77,6 +77,33 @@ def test_several_packets_of_one_frame_are_one_frame():
     assert stats["jitter_ms"] == 0.0  # пачка пакетов одного кадра — не джиттер
 
 
+EVEN_SKIPS = {n for n in range(400) if n % 5 == 4}  # 20 кадр/с из датчика на 25: 40, 40, 40, 80 мс
+
+
+def test_camera_set_to_lower_frame_rate_has_no_dropped_frames():
+    meter = StreamMeter("H264", declared_fps=20, fps_pct=10)  # так шлют камеры 06.11
+    feed(meter, 400, skip=EVEN_SKIPS)
+    assert meter.stats()["dropped"] == 0
+
+
+def test_rate_close_to_sensor_rate_is_still_thinned_by_settings():
+    meter = StreamMeter("H264", declared_fps=23, fps_pct=10)  # Beward: 23 кадр/с из 25
+    feed(meter, 500, skip={n for n in range(500) if n % 25 in (6, 18)})
+    assert meter.stats()["dropped"] == 0
+
+
+def test_same_skips_without_lower_declared_rate_are_dropped_frames():
+    for meter in (StreamMeter("H264", declared_fps=25, fps_pct=10), StreamMeter("H264")):
+        feed(meter, 400, skip=EVEN_SKIPS)
+        assert meter.stats()["dropped"] == 79  # последний пропуск в конце: шага после него нет
+
+
+def test_longer_gap_on_top_of_thinned_frames_is_still_a_dropped_frame():
+    meter = StreamMeter("H264", declared_fps=20, fps_pct=10)
+    feed(meter, 400, skip=EVEN_SKIPS | {200, 201, 202})
+    assert meter.stats()["dropped"] > 0
+
+
 def test_dropped_frames_from_timestamp_gaps():
     meter = StreamMeter("H264")
     shown = [*range(50), *range(53, 100)]  # три кадра камера не выдала

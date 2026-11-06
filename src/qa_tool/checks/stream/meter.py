@@ -16,6 +16,11 @@ SEQUENCE_SPACE = 1 << 16
 TIMESTAMP_SPACE = 1 << 32
 JITTER_GAIN = 16  # RFC 3550 §6.4.1
 DROP_FACTOR = 2  # промежуток вдвое длиннее обычного — кадр пропущен
+# Камера с частотой ниже частоты датчика прореживает кадры: 20 кадр/с из 25 дают шаги 40, 40, 40,
+# 80 мс (испытания 06.11: Hikvision, Рувер, Beward). По форме это те же двойные шаги, что и потери,
+# различает только заявленная частота, поэтому без неё двойной шаг считается пропуском.
+EVEN_SKIP_MARGIN = 0.25  # доля обычного шага: метки камеры не всегда кратны ему точно
+SENSOR_RATE_MARGIN = 0.02  # шаг хранится в целых мс: 33 мс — это и 30, и 30,3 кадр/с
 SLICE_S = 60
 SECONDS_IN_HOUR = 3600
 # Камера с кэшем группы кадров отдаёт его пачкой сразу после PLAY: это не джиттер сети и не темп
@@ -42,7 +47,7 @@ class Tally:
     steps: Counter = field(default_factory=Counter)  # промежуток, мс → сколько раз
     min_delay_s: float | None = None
 
-    def stats(self, clock_rate: int) -> dict:
+    def stats(self, clock_rate: int, declared_fps: float | None = None, fps_pct: float = 0) -> dict:
         """Итог счёта.
 
         Пропуски с кадрами B считаются приближённо: выпавший кадр B меток вперёд не двигает и
@@ -50,6 +55,8 @@ class Tally:
 
         Args:
             clock_rate: частота меток RTP, Гц.
+            declared_fps: частота из настроек кодера, кадр/с; None — неизвестна.
+            fps_pct: допуск к заявленной частоте, %.
         """
         seconds = self.ticks / clock_rate
         usual = self.steps.most_common(1)[0][0] if self.steps else 0
@@ -59,6 +66,12 @@ class Tally:
             # а он сам растёт от пропусков, поэтому порог на кадр дальше законного шага
             usual, legal = seconds * 1000 / self.intervals, self.b_run + 1
             limit = usual * (legal + 1)
+        elif (
+            usual
+            and seconds
+            and self._thinned_by_settings(usual, self.intervals / seconds, declared_fps, fps_pct)
+        ):
+            limit = usual * (DROP_FACTOR + EVEN_SKIP_MARGIN)
         dropped = (
             sum(
                 n * max(round(gap / usual) - legal, 1)
@@ -86,6 +99,15 @@ class Tally:
             "time_jumps": self.time_jumps,
         }
 
+    @staticmethod
+    def _thinned_by_settings(
+        usual_ms: float, fps: float, declared_fps: float | None, fps_pct: float
+    ) -> bool:
+        """Кадры прорежены настройкой: заявлено меньше частоты датчика, и камера её держит."""
+        if not declared_fps or declared_fps >= 1000 / usual_ms * (1 - SENSOR_RATE_MARGIN):
+            return False
+        return abs(fps - declared_fps) <= declared_fps * fps_pct / 100
+
 
 class StreamMeter:
     """Копит счёт одной видеодорожки; кормить `add`, итог — `stats` и `minutes`.
@@ -95,6 +117,9 @@ class StreamMeter:
         clock_rate: частота меток RTP, Гц.
         slice_s: длина среза таблицы, с.
         warmup_s: столько секунд от первого пакета не идёт в джиттер и частоту по приходу.
+        declared_fps: частота из настроек кодера, кадр/с; нужна, чтобы отличить прореживание
+            кадров настройкой от потерь.
+        fps_pct: допуск к заявленной частоте, %.
     """
 
     def __init__(
@@ -103,8 +128,12 @@ class StreamMeter:
         clock_rate: int = 90_000,
         slice_s: float = SLICE_S,
         warmup_s: float = WARMUP_S,
+        declared_fps: float | None = None,
+        fps_pct: float = 0,
     ):
         self.encoding = encoding
+        self.declared_fps = declared_fps
+        self.fps_pct = fps_pct
         self.clock_rate = clock_rate
         self.slice_s = slice_s
         self.warmup_s = warmup_s
@@ -319,7 +348,7 @@ class StreamMeter:
         worst, window_s = self.worst_growth()
         mean = self._jitter_sum / self._jitter_count if self._jitter_count else 0.0
         return {
-            **self.total.stats(self.clock_rate),
+            **self.total.stats(self.clock_rate, self.declared_fps, self.fps_pct),
             "arrival_fps": self.arrival_fps,
             "gop": self.gop,
             "jitter_ms": round(self.max_jitter_s * 1000, 1),
@@ -331,4 +360,4 @@ class StreamMeter:
 
     def minutes(self) -> list[dict]:
         """Итоги по минутам — для таблицы стресс-теста."""
-        return [s.stats(self.clock_rate) for s in self.slices]
+        return [s.stats(self.clock_rate, self.declared_fps, self.fps_pct) for s in self.slices]
