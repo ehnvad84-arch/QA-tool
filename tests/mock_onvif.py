@@ -250,6 +250,8 @@ class OnvifServices:
             if job["token"] == token:
                 if self.state.job_stuck_active and job["mode"] == "Active":
                     continue
+                if job["mode"] == "Active" and mode != "Active" and self.state.recordings:
+                    self.state.recordings[-1]["end"] = _now()  # запись кончается при выключении
                 job["mode"] = mode
                 if mode == "Active":  # виртуальная камера «записывает» мгновенно
                     start = _now() - datetime.timedelta(seconds=60)
