@@ -8,7 +8,7 @@ Authorization, адрес потока — на хосте камеры из с�
 
 from xml.sax.saxutils import escape
 
-from qa_tool.checks.onvif.metadata import to_stand_address
+from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
 from qa_tool.checks.onvif.replay import play, soap_evidence
 from qa_tool.core.checks import (
     REGISTRY,
@@ -92,7 +92,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
     evidence = soap_evidence(soap)
-    if not uri.startswith("rtsp://"):
+    if not uri.startswith("rtsp://") or not well_formed(uri):
         return CheckResult(
             Status.FAILED,
             reason=f"GetStreamUri профиля {profile} вернул не RTSP-адрес: {uri!r}",

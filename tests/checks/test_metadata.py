@@ -99,6 +99,15 @@ def test_foreign_host_replaced_by_stand_address():
     assert fix("rtsp://10.0.0.5/live", "10.0.0.5", 554) == "rtsp://10.0.0.5/live"
 
 
+@pytest.mark.parametrize("uri", ["rtsp://[1:2]/a", "rtsp://10.0.0.5:99999/a"])
+def test_address_that_cannot_be_used_is_not_well_formed(uri):
+    assert not metadata.well_formed(uri)
+
+
+def test_ordinary_address_is_well_formed():
+    assert metadata.well_formed("rtsp://10.0.0.5/a") and metadata.well_formed("rtsp://h:554/a")
+
+
 def test_port_out_of_range_from_camera_does_not_crash():
     fix = metadata.to_stand_address
     assert fix("rtsp://192.168.1.10:99999/a", "10.0.0.5", 554) == "rtsp://10.0.0.5:554/a"

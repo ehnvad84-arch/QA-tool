@@ -291,6 +291,9 @@ def _run(ctx: CheckContext, proxy: TabooProxy, writes: bool) -> CheckResult:
             data = json.loads(report.read_text(encoding="utf-8"))
     except ValueError as e:
         return CheckResult.stand_error(f"отчёт onvif-tt не разобран: {e}")
+    if not data.get("results"):
+        # срыв на старте: pytest.exit оставляет отчёт, в котором нет ни одного теста
+        return CheckResult.stand_error(f"onvif-tt не выполнил ни одного теста: {tail[-300:]}")
     names = titles()
     children = [to_child(item, names) for item in data.get("results", [])]
     for test_id, why in EXCLUDED.items():

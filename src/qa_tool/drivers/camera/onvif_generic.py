@@ -49,7 +49,7 @@ def stand_service_url(camera: Camera, url: str) -> str | None:
     aliases = (camera.address.lower(), camera.lan_address.lower())
     if camera.lan_address and host in aliases:
         return urlunsplit(parts._replace(scheme="http", netloc=f"{camera.address}:{camera.port}"))
-    return url if host == camera.address else None
+    return url if host == camera.address.lower() else None
 
 
 def service_urls(

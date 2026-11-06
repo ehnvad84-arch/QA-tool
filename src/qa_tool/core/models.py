@@ -45,7 +45,7 @@ class Camera:
         if not self.address:
             raise ConfigError(f"Место {self.slot}: не указан адрес камеры")
         if set(self.lan_address) & set("/@ :\\"):
-            raise ConfigError(f"Место {self.slot}: адрес за туннелем — только IP или имя хоста")
+            raise ConfigError(f"Место {self.slot}: адрес за туннелем — только IPv4 или имя хоста")
 
 
 @dataclass

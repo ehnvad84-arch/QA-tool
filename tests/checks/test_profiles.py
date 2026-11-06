@@ -147,6 +147,19 @@ def test_profile_is_not_passed_when_onvif_tt_gave_no_rows(camera_sg):
     assert "onvif-tt" in row.result.reason
 
 
+def test_rows_of_excluded_tests_and_stand_errors_are_not_a_run_of_onvif_tt():
+    assert not profiles.ran_onvif_tt({"EVENT-2-1-9": ("пропущена", "исключён")})
+    assert not profiles.ran_onvif_tt({"DEVICE-1-1-2": ("ошибка стенда", "нет связи")})
+    assert not profiles.ran_onvif_tt({"RUV-G-REPLAY-1": ("прошла", "")})
+    assert profiles.ran_onvif_tt({"DEVICE-1-1-2": ("не прошла", "")})
+
+
+def test_stand_error_of_another_row_does_not_cancel_real_playback():
+    replay = next(f for f in profiles.PROFILES["G"] if f.spec == "Replay Service")
+    rows = {"RUV-G-REPLAY-1": ("прошла", ""), "DEVICE-1-1-20": ("ошибка стенда", "")}
+    assert profiles.judge(replay, rows)[0] == profiles.WORKS
+
+
 def test_stand_error_in_proof_stays_a_stand_error(camera_sg):
     camera = Camera(slot=1, address="127.0.0.1", port=camera_sg.port, username="admin")
     previous = {

@@ -16,6 +16,7 @@ import fnmatch
 import json
 from dataclasses import asdict, dataclass
 
+from qa_tool.checks.onvif.excluded import EXCLUDED
 from qa_tool.checks.onvif.onvif_tt import CHECK_ID as ONVIF_TT
 from qa_tool.core.checks import (
     PREVIOUS_RESULTS,
@@ -193,7 +194,11 @@ def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, 
         for i, (status, _) in rows.items()
         if status == Status.PASSED.value and any(fnmatch.fnmatch(i, m) for m in proving)
     ]
-    errors = [i for i, (status, _) in rows.items() if status == Status.STAND_ERROR.value]
+    errors = [
+        i
+        for i, (status, _) in rows.items()
+        if status == Status.STAND_ERROR.value and any(fnmatch.fnmatch(i, m) for m in feature.proof)
+    ]
     if failed:
         return BROKEN, "не прошли: " + ", ".join(sorted(failed))
     if feature.proof and errors:
@@ -218,6 +223,15 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
         for p, scope in SCOPES.items()
         if f"onvif://www.onvif.org/profile/{scope}".lower() in items
     }
+
+
+def ran_onvif_tt(previous: dict[str, tuple[str, str]]) -> bool:
+    """Есть ли итог хоть одного теста onvif-tt: исключённые строки добавляет сам QA-tool."""
+    done = (Status.PASSED.value, Status.FAILED.value)
+    return any(
+        status in done and i not in EXCLUDED and not i.startswith(("RUV-", "CORE-", ONVIF_TT))
+        for i, (status, _) in previous.items()
+    )
 
 
 def confirms(check_id: str) -> list[str]:
@@ -275,8 +289,7 @@ def profiles(ctx: CheckContext) -> CheckResult:
         return CheckResult.stand_error(f"не прочитать объявленные профили (GetScopes): {e}")
     previous = ctx.extra.get(PREVIOUS, {})
     table = matrix(previous)
-    # свои ID тесты onvif-tt получают только в прогоне; RUV-* и CORE-* — наши проверки
-    onvif_tt_ran = any(not i.startswith(("RUV-", "CORE-", ONVIF_TT)) for i in previous)
+    onvif_tt_ran = ran_onvif_tt(previous)
     evidence = Evidence(
         "matrix.json",
         json.dumps(

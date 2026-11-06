@@ -102,6 +102,14 @@ def stream_uri(soap: SoapClient, media2_url: str, profile: str) -> str:
 DEFAULT_RTSP_PORT = 554
 
 
+def well_formed(uri: str) -> bool:
+    """Разбирается ли адрес от камеры: порт в пределах, скобки IPv6 верные."""
+    try:
+        return urlsplit(uri).port is not None or bool(urlsplit(uri).hostname)
+    except ValueError:
+        return False
+
+
 def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     """Адрес потока на хосте камеры со стенда (security.md: только адреса стенда).
 
@@ -235,7 +243,7 @@ def metadata_stream(ctx: CheckContext) -> CheckResult:
             threshold=wait,
         )
     evidence = _soap_evidence(soap)
-    if not uri.startswith("rtsp://"):
+    if not uri.startswith("rtsp://") or not well_formed(uri):
         return CheckResult(
             Status.FAILED,
             reason=f"GetStreamUri профиля {profile} вернул не RTSP-адрес: {uri!r}",

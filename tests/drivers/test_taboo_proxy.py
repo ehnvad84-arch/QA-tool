@@ -135,7 +135,7 @@ def test_address_hidden_from_rewriting_is_seen_after_parsing(value):
     proxy = TabooProxy("127.0.0.1", 80).start()
     try:
         answer = f'<a xmlns:tds="urn:t"><tds:XAddr>{value}</tds:XAddr></a>'
-        assert proxy.hides_address(proxy.rewrite(answer))
+        assert proxy.hides_address(proxy.rewrite(answer).encode())
     finally:
         proxy.stop()
 
@@ -155,7 +155,7 @@ def test_address_hidden_from_rewriting_is_seen_after_parsing(value):
 def test_ordinary_answers_are_not_refused(answer):
     proxy = TabooProxy("127.0.0.1", 80).start()
     try:
-        assert not proxy.hides_address(proxy.rewrite(answer))
+        assert not proxy.hides_address(proxy.rewrite(answer).encode())
     finally:
         proxy.stop()
 
@@ -164,9 +164,41 @@ def test_list_of_addresses_is_checked_word_by_word():
     proxy = TabooProxy("127.0.0.1", 80).start()
     try:
         field = f"{proxy.base_url}/a http&#58;//10.9.9.9/x"
-        assert proxy.hides_address(f'<a xmlns:d="urn:d"><d:XAddrs>{field}</d:XAddrs></a>')
+        answer = f'<a xmlns:d="urn:d"><d:XAddrs>{field}</d:XAddrs></a>'
+        assert proxy.hides_address(answer.encode())
     finally:
         proxy.stop()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'<a xmlns:t="urn:t"><t:XAddr><![CDATA[http://10.9.9.9/x]]></t:XAddr></a>tail',
+        b'<a xmlns:t="urn:t"><t:XAddr>http&#58;//10.9.9.9/x</t:XAddr>',
+        b'<a xmlns:t="urn:t">&nbsp;<t:XAddr>http://10.9.9.9/x</t:XAddr></a>',
+        '<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>'.encode("utf-16"),
+        b'<!DOCTYPE a [<!ENTITY e "x">]><a/>',
+    ],
+    ids=["хвост", "незакрытый тег", "неизвестная сущность", "UTF-16", "DTD"],
+)
+def test_broken_xml_is_read_as_the_client_reads_it(raw):
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        assert proxy.hides_address(raw)
+    finally:
+        proxy.stop()
+
+
+def test_address_far_from_start_under_foreign_type_is_refused(answering):
+    body = b" " * 2000 + b'<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>'
+    proxy, _ = answering(body, Content_Type="application/octet-stream")
+    assert httpx.get(proxy.base_url + "/x", timeout=10).status_code == 502
+
+
+def test_picture_passes_untouched(answering):
+    jpeg = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 8
+    proxy, _ = answering(jpeg, Content_Type="image/jpeg")
+    assert httpx.get(proxy.base_url + "/x", timeout=10).content == jpeg
 
 
 def test_answer_with_hidden_address_never_reaches_client(answering):

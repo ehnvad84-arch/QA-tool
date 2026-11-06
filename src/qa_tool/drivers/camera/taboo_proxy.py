@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, urlsplit
 
-from defusedxml import ElementTree
+from lxml import etree
 
 from qa_tool.core.taboo import TabooViolation
 from qa_tool.drivers.camera import http
@@ -31,7 +31,6 @@ DEFAULT_TIMEOUT_S = 75.0
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "keep-alive"}
 _PORT_PREFIX = re.compile(r"^/_port/(\d{1,5})(/.*)?$")
 _FOREIGN = "/_foreign"
-_ENVELOPE_LOOKUP = 512  # конверт SOAP стоит в начале ответа, снимок так не проверяется целиком
 TABOO_FAULT_CODE = "ter:QAToolTaboo"
 
 
@@ -136,24 +135,35 @@ class TabooProxy:
         text = _HTTP_URL.sub(self._to_proxy, text)
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
 
-    def hides_address(self, text: str) -> bool:
+    def hides_address(self, content: bytes) -> bool:
         """Остался ли после подмены адрес мимо посредника, видимый клиенту после разбора XML.
 
-        Подмена работает по тексту, а клиент читает разобранный XML: CDATA, комментарии и ссылки
-        на символы могут скрыть адрес от подмены, и клиент ушёл бы по нему с логином. Поэтому
-        ответ разбирается так же, как у клиента. Не XML — такого адреса в нём клиент не найдёт;
-        DTD запрещён, как и в SOAP-клиенте, и считается скрытием.
+        Подмена работает по тексту, а клиент читает разобранный XML: CDATA, комментарии, ссылки
+        на символы и кодировка могут скрыть адрес от подмены, и клиент ушёл бы по нему с логином.
+        Поэтому разбираются исходящие байты и теми же настройками, что в zeep (`parse_xml` при
+        `strict=False`): битый XML клиент тоже прочтёт. Импортировать сам zeep здесь нельзя:
+        сетевые библиотеки закрыты тестом архитектуры (AD-7).
+
+        Args:
+            content: ответ в том виде, в каком он уйдёт клиенту.
+
+        Returns:
+            True — отдавать ответ нельзя. DTD тоже считается скрытием: zeep отвергает сущности.
         """
+        parser = etree.XMLParser(remove_comments=True, resolve_entities=False, recover=True)
         try:
-            root = ElementTree.fromstring(text)
-        except ElementTree.ParseError:
+            root = etree.fromstring(content, parser=parser)
+        except etree.XMLSyntaxError:
+            return False  # не XML: разбирать адреса клиенту не из чего
+        if root is None:
             return False
-        except ValueError:
+        if root.getroottree().docinfo.internalDTD is not None:
             return True
-        for element in root.iter():
-            if element.tag.rsplit("}", 1)[-1] not in _ADDRESS_FIELDS:
+        for element in root.iter("*"):
+            if etree.QName(element).localname not in _ADDRESS_FIELDS:
                 continue
-            for word in "".join(element.itertext()).split():
+            words = (element.text or "").split() + "".join(element.itertext()).split()
+            for word in words:
                 if word.lower().startswith(("http:", "https:", "//")) and (
                     not self._is_proxy_url(word)
                 ):
@@ -238,18 +248,17 @@ class TabooProxy:
                     return
                 content = response.content
                 content_type = response.headers.get("content-type", "")
-                # SOAP-клиент на Content-Type не смотрит, поэтому и конверт под чужим типом — наш
-                textual = any(t in content_type for t in ("xml", "soap", "json", "html", "text"))
-                if textual or b"Envelope" in content[:_ENVELOPE_LOOKUP]:
+                if any(t in content_type for t in ("xml", "soap", "json", "html", "text")):
                     charset = response.encoding or "utf-8"
                     # U+FFFD от битых байт однобайтовая кодировка обратно не примет
                     text = proxy.rewrite(content.decode(charset, "replace"))
-                    if proxy.hides_address(text):
-                        reason = "адрес службы скрыт от подмены: клиент ушёл бы мимо посредника"
-                        proxy._block(self.command, self.path, reason)
-                        self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
-                        return
                     content = text.encode(charset, "replace")
+                # проверяем любой ответ: SOAP-клиент на Content-Type не смотрит
+                if proxy.hides_address(content):
+                    reason = "адрес службы скрыт от подмены: клиент ушёл бы мимо посредника"
+                    proxy._block(self.command, self.path, reason)
+                    self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
+                    return
                 if "location" in response.headers:
                     location = response.headers["location"]
                     response.headers["location"] = proxy.rewrite_location(location)

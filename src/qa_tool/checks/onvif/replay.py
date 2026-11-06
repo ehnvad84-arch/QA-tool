@@ -23,7 +23,7 @@ import json
 import time
 from xml.sax.saxutils import escape
 
-from qa_tool.checks.onvif.metadata import to_stand_address
+from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
 from qa_tool.checks.onvif.storage import parse_time
 from qa_tool.core.checks import (
     REGISTRY,
@@ -456,7 +456,7 @@ def replay(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
     evidence = soap_evidence(soap)
-    if not uri.startswith("rtsp://"):
+    if not uri.startswith("rtsp://") or not well_formed(uri):
         return CheckResult(
             Status.FAILED,
             reason=f"GetReplayUri вернул не RTSP-адрес: {uri!r}",
@@ -465,20 +465,9 @@ def replay(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
 
-    try:
-        stand_uri = to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port)
-    except ValueError:
-        return CheckResult(
-            Status.FAILED,
-            reason=f"GetReplayUri вернул неразбираемый адрес: {uri!r}",
-            expected=expected,
-            evidence=evidence,
-            threshold=minimum,
-        )
-
     def new_client() -> RtspClient:
         return RtspClient(
-            stand_uri,
+            to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
             ctx.camera.username,
             ctx.password,
             timeout=10,

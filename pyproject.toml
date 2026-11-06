@@ -16,6 +16,7 @@ dependencies = [
     # onvif-tt запускает свои тесты через pytest.main, поэтому pytest нужен и программе.
     "onvif-tt @ git+https://github.com/OpenIPC/onvif-tt@8866b251bc63a3c746ca3f9b6544bdfcfcfa90df",
     "pytest>=8",
+    "lxml>=5",
 ]
 
 [project.scripts]
