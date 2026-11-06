@@ -9,6 +9,7 @@
 """
 
 import contextlib
+import math
 import os
 import shutil
 import tempfile
@@ -890,8 +891,39 @@ class BrowserSession:
             locator.select_option(value, timeout=CALL_LIMIT_MS)
         elif element.kind in ("checkbox", "radio"):
             locator.set_checked(value == "true", timeout=CALL_LIMIT_MS)
+        elif element.kind == "range":
+            # fill у ползунка не шлёт input и change так, как их ждут страницы
+            locator.evaluate(
+                "(e, v) => { e.value = v; e.dispatchEvent(new Event('input', {bubbles: true}));"
+                " e.dispatchEvent(new Event('change', {bubbles: true})); }",
+                value,
+                timeout=CALL_LIMIT_MS,
+            )
         else:
             locator.fill(value, timeout=CALL_LIMIT_MS)
+
+    def field_options(self, element: ElementInfo) -> list[str]:
+        """Значения доступных вариантов списка."""
+        self._check()
+        return self._locator(element).evaluate(
+            "e => [...e.options].filter(o => !o.disabled).map(o => o.value)",
+            timeout=CALL_LIMIT_MS,
+        )
+
+    def field_limits(self, element: ElementInfo) -> tuple[float, float, float]:
+        """Пределы и шаг числового поля; нет атрибута — без предела и шаг 1."""
+        self._check()
+        low, high, step = self._locator(element).evaluate(
+            "e => [e.min, e.max, e.step]", timeout=CALL_LIMIT_MS
+        )
+
+        def number(text: str, default: float) -> float:
+            try:
+                return float(text)
+            except ValueError:
+                return default
+
+        return number(low, -math.inf), number(high, math.inf), number(step, 1.0) or 1.0
 
     def read_field(self, element: ElementInfo) -> str:
         """Значение поля текстом."""

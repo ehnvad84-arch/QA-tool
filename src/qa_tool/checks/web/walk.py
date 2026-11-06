@@ -12,6 +12,7 @@ from qa_tool.checks.web.discover import Discovery, Item, Mark, Page, discover, p
 from qa_tool.checks.web.limits import DEFAULTS, limit
 from qa_tool.checks.web.login import login, logout, web_address
 from qa_tool.checks.web.probe import Row, open_page, press
+from qa_tool.checks.web.write import Writer, is_field
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -27,6 +28,7 @@ from qa_tool.drivers.camera.browser import (
     BrowserMissing,
     BrowserSession,
     CameraSilent,
+    ElementInfo,
     Stopped,
 )
 
@@ -64,10 +66,26 @@ class _Walk:
         self.repeated = 0
         self.left_elements: list[str] = []
         self.marks: Counter = Counter()
+        self.writer = Writer(ctx, session, self._reopen) if ctx.allow_writes else None
 
     def out_of_time(self) -> bool:
         """Истёк ли предел обхода."""
         return time.monotonic() >= self.deadline
+
+    def _reopen(self, page: Page) -> list[ElementInfo]:
+        return open_page(self.ctx, self.session, page).elements
+
+    def _field(self, page: Page, item: Item, elements: list[ElementInfo]) -> bool:
+        """Поле с галочкой «изменяющие»: записать или назвать причину; False — не поле."""
+        if self.writer is None or not is_field(item.element):
+            return False
+        reason = self.writer.refusal(item)
+        if reason:
+            subject = item.element.label or item.element.name or item.element.tag
+            self._add("ELEMENT", Row(subject, CheckResult.skipped(reason)))
+        else:
+            self._add("WRITE", self.writer.write(page, item, elements))
+        return True
 
     def _add(self, prefix: str, row: Row) -> None:
         self.rows.append(_child(prefix, len(self.rows) + 1, row))
@@ -89,6 +107,8 @@ class _Walk:
             if self.out_of_time():
                 self.left_elements.append(item.element.label)
                 continue
+            if self._field(page, item, row.elements):
+                continue
             self._add("ELEMENT", press(self.ctx, self.session, item))
             self.pressed += item.mark is Mark.ORDINARY
             self.marks[item.mark] += 1
@@ -102,8 +122,8 @@ class _Walk:
             f"элементов нажато {self.pressed}",
             f"не нажато: по запрету {self.marks[Mark.FORBIDDEN]}, "
             f"опасных {self.marks[Mark.DANGER]}",
-            # запись появится с галочкой; строка есть всегда, чтобы сводка не менялась (S24)
-            "записей сделано 0, возвращено 0",
+            f"записей сделано {self.writer.done if self.writer else 0}, "
+            f"возвращено {self.writer.restored if self.writer else 0}",
         ]
         if left_pages:
             parts.append(f"не проверены страницы: {_listed(left_pages)}")

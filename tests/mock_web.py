@@ -45,6 +45,7 @@ class MockWebCamera:
         sessions_limit: int = 3,
         must_change_password: bool = False,
         tls_dir: Path | None = None,
+        settings: dict[str, str] | None = None,
     ) -> None:
         """Запускается в `__enter__`.
 
@@ -56,6 +57,8 @@ class MockWebCamera:
             sessions_limit: сколько входов камера держит одновременно.
             must_change_password: вместо входа показывать смену пароля.
             tls_dir: папка для самоподписанного сертификата: сервер работает по HTTPS.
+            settings: настройки камеры: подставляются в страницы вместо `{{имя}}`, меняются
+                запросом POST /api/settings с телом JSON.
         """
         self.pages = pages or {}
         self.redirects = redirects or {}
@@ -69,6 +72,10 @@ class MockWebCamera:
         self.login_attempts = 0
         self.sessions = 0
         self.bodies: list[str] = []
+        self.settings = dict(settings or {})
+        self.saves_ignored = 0  # столько сохранений камера отвечает «ок» и не применяет
+        self.ignore_all_saves_after = 0  # после стольких сохранений перестаёт применять их
+        self.saves = 0
         self.http_login_seen = False
         self._server: ThreadingHTTPServer | None = None
 
@@ -100,7 +107,11 @@ class MockWebCamera:
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
+                if path == "/api/settings" and self.command == "POST":
+                    camera.save(json.loads(body or "{}"))
                 page = camera.pages.get(path)
+                for name, value in camera.settings.items():
+                    page = page.replace("{{" + name + "}}", value) if page else page
                 if self.command == "GET" and page is None:
                     self.send_error(404)
                     return
@@ -195,6 +206,14 @@ class MockWebCamera:
             self._server.socket = self._tls().wrap_socket(self._server.socket, server_side=True)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         return self
+
+    def save(self, values: dict[str, str]) -> None:
+        """Применить настройки, если камера сейчас их принимает."""
+        self.saves += 1
+        if self.saves_ignored > 0:
+            self.saves_ignored -= 1
+        elif not self.ignore_all_saves_after or self.saves <= self.ignore_all_saves_after:
+            self.settings.update({k: str(v) for k, v in values.items()})
 
     def __exit__(self, *_exc: object) -> None:
         self._server.shutdown()
