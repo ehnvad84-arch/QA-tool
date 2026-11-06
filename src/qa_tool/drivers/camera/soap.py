@@ -56,10 +56,11 @@ class CameraUnreachable(ConnectionError):
 class OnvifFault(RuntimeError):
     """Камера ответила SOAP Fault или не SOAP: `status` — код HTTP, `code` — подкод SOAP."""
 
-    def __init__(self, message: str, status: int = 0, code: str = ""):
+    def __init__(self, message: str, status: int = 0, code: str = "", detail: str = ""):
         super().__init__(message)
         self.status = status
         self.code = code
+        self.detail = detail  # имена и текст элементов Fault: признак бывает только в Detail
 
 
 # ter:NotAuthorized — код ONVIF, wsse:FailedAuthentication — код WS-Security (камеры на gSOAP,
@@ -219,7 +220,8 @@ class SoapClient:
         if fault is not None:
             reason = fault.findtext(".//s:Text", default="", namespaces=NS)
             code = fault.findtext(".//s:Subcode/s:Value", default="", namespaces=NS)
-            raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code)
+            detail = " ".join(f"{e.tag.split('}')[-1]} {e.text or ''}" for e in fault.iter())
+            raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code, detail)
         # SOAP 1.1 и страницы ошибок веб-сервера: разбираются как XML, но это не SOAP 1.2. Код и
         # статус нужны и здесь: иначе опечатка в пароле выглядит дефектом, и проверки камеры
         # продолжают тратить попытки входа до блокировки.

@@ -120,3 +120,43 @@ def test_answer_that_is_not_soap_after_unsubscribe_proves_nothing(camera, monkey
 
     monkeypatch.setattr(SoapClient, "call", call)
     assert run(camera).status is Status.STAND_ERROR
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        OnvifFault("wsrf-r:ResourceUnknownFault", 500),  # Hikvision и Beward: Receiver, HTTP 500
+        OnvifFault("Resource Unknown", 200, detail="ResourceUnknownFault"),  # Dahua
+    ],
+    ids=["причина", "детали"],
+)
+def test_real_answers_of_cameras_prove_subscription_is_gone(fault):
+    assert events.subscription_gone(fault)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        OnvifFault("s:Receiver внутренняя ошибка", 500),
+        OnvifFault("ter:ActionNotSupported", 400, "ter:ActionNotSupported"),
+        OnvifFault("if the unsubscribe has been executed,renew is invalid", 400),  # Tiandy
+    ],
+    ids=["500", "не поддержано", "свой текст"],
+)
+def test_other_refusals_prove_nothing(fault):
+    assert not events.subscription_gone(fault)
+
+
+@pytest.mark.parametrize("camera", [{}], indirect=True)
+def test_internal_error_after_unsubscribe_is_a_stand_error(camera, monkeypatch):
+    real = SoapClient.call
+
+    def call(self, url, body, soap_header=""):
+        if "Renew" in body and camera.state.notify_until is None:
+            raise OnvifFault("внутренняя ошибка", 500, "s:Receiver")
+        return real(self, url, body, soap_header)
+
+    monkeypatch.setattr(SoapClient, "call", call)
+    result = run(camera)
+    assert result.status is Status.STAND_ERROR
+    assert "ничего не доказывает" in result.reason

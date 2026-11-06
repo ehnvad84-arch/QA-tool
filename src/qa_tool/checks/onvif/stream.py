@@ -9,7 +9,7 @@ Authorization, адрес потока — на хосте камеры из с�
 from xml.sax.saxutils import escape
 
 from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
-from qa_tool.checks.onvif.replay import play, soap_evidence
+from qa_tool.checks.onvif.replay import frames_problem, play, soap_evidence
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -123,12 +123,14 @@ def video_stream(ctx: CheckContext) -> CheckResult:
         f"профиль {profile}: {stats['seconds']:g} с, кадров {stats['frames']}, "
         f"ключевых {stats['keyframes']}, {stats['codec']}"
     )
-    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"]:
-        reason = (
-            f"поток открылся, но видео шло {stats['seconds']:g} с"
-            if stats["keyframes"]
-            else "в потоке нет ключевых кадров — изображение не собрать"
-        )
+    uneven = frames_problem(ctx, stats)
+    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or uneven:
+        if not stats["keyframes"]:
+            reason = "в потоке нет ключевых кадров — изображение не собрать"
+        elif stats["seconds"] + 0.5 < minimum.value:
+            reason = f"поток открылся, но видео шло {stats['seconds']:g} с"
+        else:
+            reason = uneven
         return CheckResult(
             Status.FAILED,
             reason=reason,

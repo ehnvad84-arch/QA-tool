@@ -43,6 +43,11 @@ CHECK_ID = "RUV-G-REPLAY-1"
 SEARCH_CHECK_ID = "RUV-G-SEARCH-1"
 THRESHOLD_KEY = "onvif.replay_min_s"
 DEFAULT_MIN_S = Threshold(10.0, "с", "стартовое значение (спека этапа 2)")
+MIN_RATE_KEY = "onvif.min_frame_rate"
+MAX_GAP_KEY = "onvif.max_frame_gap_s"
+# Время берётся из меток RTP, поэтому без них два кадра дают любую длительность (замечание QA-01)
+DEFAULT_MIN_RATE = Threshold(1.0, "кадр/с", "стартовое значение")
+DEFAULT_MAX_GAP = Threshold(2.0, "с", "стартовое значение")
 DEFAULT_RECORD_S = 120.0
 REPLAY_HEADERS = {"Require": "onvif-replay"}
 OPTION_NOT_SUPPORTED = 551  # RFC 2326 §11.3.14: камера не знает заголовка Require
@@ -176,6 +181,9 @@ def record_for_a_while(soap: SoapClient, recording_url: str, seconds: float) -> 
                 for job, mode in original
                 if job in now and now[job] != mode
             ]
+            before = dict(original)
+            problems += [f"задание {job} исчезло" for job in before if job not in now]
+            problems += [f"задание {job} появилось" for job in now if job not in before]
     if refused is not None:
         if not problems:
             raise refused
@@ -232,12 +240,13 @@ def onvif_frame_info(extension: bytes) -> tuple[datetime.datetime, bool] | None:
 def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
     """Итог проигрывания дорожки: длительность по меткам RTP, кадры, ключевые, время архива."""
     video = [p for p in packets if p.channel == channel]
-    elapsed, previous = 0, None
+    elapsed, previous, longest = 0, None, 0
     for packet in video:
         if previous is not None:
             step = (packet.timestamp - previous) % 2**32
             if step < 2**31:  # метки идут вперёд; «назад» — переупорядоченный пакет
                 elapsed += step
+                longest = max(longest, step)
         previous = packet.timestamp
     keyframes = set()  # по меткам RTP: кадр делится на пакеты, а признак может стоять на каждом
     moments = []
@@ -249,6 +258,7 @@ def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
             keyframes.add(packet.timestamp)
     stats = {
         "seconds": round(elapsed / track.clock_rate, 2),
+        "max_gap_s": round(longest / track.clock_rate, 2),
         "frames": sum(p.marker for p in video),
         "keyframes": len(keyframes),
         "codec": track.encoding.lower(),
@@ -257,6 +267,27 @@ def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
         stats["archive"] = f"{min(moments):%Y-%m-%d %H:%M:%S} — {max(moments):%H:%M:%S} UTC"
         stats["first_utc"], stats["last_utc"] = min(moments).isoformat(), max(moments).isoformat()
     return stats
+
+
+def frames_problem(ctx: CheckContext, stats: dict) -> str:
+    """Почему длительность по меткам RTP нельзя считать видео; пусто — кадры идут ровно.
+
+    Args:
+        ctx: контекст проверки; пороги `onvif.min_frame_rate` и `onvif.max_frame_gap_s`.
+        stats: итог `summarize`.
+    """
+    rate = ctx.thresholds.get(MIN_RATE_KEY, DEFAULT_MIN_RATE).value
+    gap = ctx.thresholds.get(MAX_GAP_KEY, DEFAULT_MAX_GAP).value
+    if stats["frames"] < stats["seconds"] * rate:
+        return f"кадров {stats['frames']} за {stats['seconds']:g} с: меньше {rate:g} кадр/с"
+    if stats["max_gap_s"] > gap:
+        return f"разрыв между кадрами {stats['max_gap_s']:g} с при пределе {gap:g} с"
+    return ""
+
+
+def bounds_known(recording: dict) -> bool:
+    """Прочитаны ли обе границы записи: без них время кадров сверить не с чем."""
+    return bool(parse_time(recording["start"]) and parse_time(recording["end"]))
 
 
 def outside_recording(stats: dict, recording: dict) -> str:
@@ -509,18 +540,29 @@ def replay(ctx: CheckContext) -> CheckResult:
     if "archive" in stats:
         actual += f"; время кадров архива {stats['archive']}"
     mismatch = outside_recording(stats, latest)
-    if seek_broken or stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or mismatch:
+    uneven = frames_problem(ctx, stats)
+    short = stats["seconds"] + 0.5 < minimum.value
+    if seek_broken or short or not stats["keyframes"] or uneven or mismatch:
         if seek_broken:
             reason = "переход по времени не работает: на PLAY с Range кадров нет, с начала идут"
         elif not stats["keyframes"]:
             reason = "в архиве нет ключевых кадров — изображение не собрать"
-        elif stats["seconds"] + 0.5 < minimum.value:
+        elif short:
             reason = f"архив отдан, но проиграно {stats['seconds']:g} с"
         else:
-            reason = mismatch
+            reason = uneven or mismatch
         return CheckResult(
             Status.FAILED,
             reason=reason,
+            expected=expected,
+            actual=actual,
+            evidence=evidence,
+            threshold=minimum,
+        )
+    if not bounds_known(latest):
+        return CheckResult(
+            Status.STAND_ERROR,
+            reason="границы записи не прочитаны: время кадров сверить не с чем",
             expected=expected,
             actual=actual,
             evidence=evidence,

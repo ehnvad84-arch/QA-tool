@@ -199,6 +199,8 @@ class MockCamera:
         answer = services.handle(operation, body[0])
         if answer is not None:
             return 200, _envelope(answer)
+        if services.fault:
+            return 500, _fault(services.fault, services.fault)
         return 400, _fault(f"Action not supported: {operation}", "ter:ActionNotSupported")
 
     def _handler(self):

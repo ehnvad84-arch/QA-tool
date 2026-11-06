@@ -28,12 +28,7 @@ from qa_tool.core.checks import (
     Status,
 )
 from qa_tool.drivers.camera.onvif_generic import service_urls, stand_service_url
-from qa_tool.drivers.camera.soap import (
-    CameraUnreachable,
-    OnvifFault,
-    SoapClient,
-    credentials_rejected,
-)
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
 CHECK_ID = "RUV-E-SUBSCRIBE-1"
 # RFC 5737, TEST-NET-1: адрес не принадлежит никому, поэтому уведомления камеры никуда не уйдут.
@@ -60,9 +55,15 @@ def termination(answer: Element) -> datetime.datetime | None:
     return parse_time(element.text or "") if element is not None else None
 
 
-def not_soap(fault: OnvifFault) -> bool:
-    """Ответ пришёл не от службы ONVIF, а от веб-сервера: страница ошибки или пустой ответ."""
-    return str(fault).startswith(("ответ не SOAP", "пустой ответ"))
+def subscription_gone(fault: OnvifFault) -> bool:
+    """Доказывает ли отказ, что подписки больше нет.
+
+    Смотреть можно только на признак WS-ResourceFramework: код и статус ничего не значат. На
+    настоящих камерах 06.11 верный ответ приходил и как `Receiver` с HTTP 500 (Hikvision, Beward),
+    и как `Sender` с HTTP 200, где признак есть только в Detail (Dahua). Любой другой отказ
+    может быть внутренней ошибкой камеры, поэтому не считается доказательством (замечание QA-03).
+    """
+    return "resourceunknown" in f"{fault} {fault.detail}".lower().replace(" ", "")
 
 
 def addressing(action: str, url: str, reference: str = "") -> str:
@@ -148,8 +149,7 @@ def subscribe(ctx: CheckContext) -> CheckResult:
         try:
             soap.call(unsubscribed, RENEW_BODY, addressing(RENEW_ACTION, unsubscribed, reference))
         except OnvifFault as e:
-            if credentials_rejected(e) or not_soap(e):
-                # отказ во входе или сбой веб-сервера не доказывает, что подписка отменена
+            if not subscription_gone(e):
                 return CheckResult(
                     Status.STAND_ERROR,
                     reason=f"ответ после отмены ничего не доказывает: {e}",

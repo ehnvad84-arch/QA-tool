@@ -132,6 +132,7 @@ class OnvifServices:
         self.base_url = base_url  # http://127.0.0.1:<порт>/onvif
         self.rtsp_url = rtsp_url  # rtsp://127.0.0.1:<порт>
         self.envelope: ET.Element | None = None  # весь запрос: заголовки нужны службе событий
+        self.fault = ""  # подкод отказа вместо «операция не поддержана»
 
     def handle(self, operation: str, request: ET.Element) -> str | None:
         """Тело ответа без конверта или None, если операция не поддержана."""
@@ -383,6 +384,7 @@ class OnvifServices:
     def op_Renew(self, _request) -> str | None:  # noqa: N802
         s = self.state
         if s.notify_until is None or (s.subscribe_reference and not self._reference_echoed()):
+            self.fault = "wsrf-r:ResourceUnknownFault"  # так отвечает Hikvision
             return None
         if not s.renew_keeps_time:
             s.notify_until += datetime.timedelta(seconds=60)

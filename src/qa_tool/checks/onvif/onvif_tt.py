@@ -265,7 +265,8 @@ def _restore_row(taker: "SnapshotTaker", snap: "Snapshot") -> ChildResult:
         result = CheckResult(
             Status.PASSED,
             expected="настройки после изменяющих тестов совпадают с исходными",
-            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}",
+            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}"
+            + "".join(f"; {item.note}" for item in snap.items if item.note),
             evidence=evidence,
         )
     return ChildResult(RESTORE_ID, "Восстановление настроек после изменяющих тестов", result)

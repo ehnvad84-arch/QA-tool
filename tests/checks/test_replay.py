@@ -7,7 +7,7 @@ import pytest
 from qa_tool.checks import load_all
 from qa_tool.checks.onvif import replay
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
-from qa_tool.core.models import Camera, Place
+from qa_tool.core.models import Camera, Place, Threshold
 from qa_tool.drivers.camera.rtsp import RtpPacket, Track
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
 from tests import mock_rtsp
@@ -409,3 +409,93 @@ def test_lost_connection_while_enabling_recording_still_restores_modes(monkeypat
     with pytest.raises(CameraUnreachable):
         replay.record_for_a_while(None, "url", 0)
     assert calls == ["Active", "Idle"]
+
+
+def stats_of(**fields):
+    base = {"seconds": 12.0, "frames": 120, "keyframes": 12, "codec": "h264", "max_gap_s": 0.1}
+    return base | fields
+
+
+def context_with_thresholds(**values):
+    camera = Camera(slot=1, address="127.0.0.1", port=80, username="admin")
+    thresholds = {key: Threshold(value, "", "тест") for key, value in values.items()}
+    return CheckContext(camera, "admin", Place.COLOR_BOX, thresholds=thresholds)
+
+
+def test_summary_measures_longest_gap_between_frames():
+    track = Track("video", "H264", "c", 90000)
+    idr = bytes([0x65, 0])
+    packets = [RtpPacket(0, True, idr, 0), RtpPacket(0, True, idr, 1_000_000)]
+    stats = replay.summarize(packets, track, 0)
+    assert stats["frames"] == 2 and stats["max_gap_s"] == 11.11
+
+
+def test_two_frames_far_apart_are_not_ten_seconds_of_video():
+    ctx = context_with_thresholds()
+    problem = replay.frames_problem(ctx, stats_of(seconds=11.11, frames=2, max_gap_s=11.11))
+    assert "кадров" in problem
+
+
+def test_long_gap_inside_stream_is_a_problem():
+    ctx = context_with_thresholds()
+    assert "разрыв" in replay.frames_problem(ctx, stats_of(max_gap_s=5.0))
+
+
+def test_steady_stream_has_no_problem_and_thresholds_are_configurable():
+    assert replay.frames_problem(context_with_thresholds(), stats_of()) == ""
+    strict = context_with_thresholds(**{replay.MIN_RATE_KEY: 25})
+    assert "кадров" in replay.frames_problem(strict, stats_of())
+
+
+@needs_video
+@pytest.mark.parametrize(
+    "bounds",
+    [{"start": "", "end": ""}, {"start": "вчера", "end": "сегодня"}],
+    ids=["пустые", "мусор"],
+)
+def test_archive_without_readable_bounds_is_not_passed(monkeypatch, bounds):
+    real = replay.find_recordings
+
+    def spoiled(*args):
+        return [found | bounds for found in real(*args)]
+
+    monkeypatch.setattr(replay, "find_recordings", spoiled)
+    cam = start(recordings=one_recording())
+    try:
+        result = run_check(SPEC, ctx_for(cam))
+        assert result.status is Status.STAND_ERROR
+        assert "границы записи" in result.reason
+    finally:
+        cam.stop()
+
+
+class JobsSoap:
+    """Камера, у которой список заданий меняется после включения записи."""
+
+    def __init__(self, before, after):
+        self.answers = [before, after]
+
+    def call(self, _url, body):
+        if "GetRecordingJobs" not in body:
+            return ElementTree.fromstring("<a/>")
+        jobs = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        items = "".join(
+            f"<JobItem><JobToken>{token}</JobToken><Mode>{mode}</Mode></JobItem>"
+            for token, mode in jobs
+        )
+        return ElementTree.fromstring(f'<a xmlns="urn:x">{items}</a>')
+
+
+def test_job_gone_after_recording_is_a_changed_camera():
+    soap = JobsSoap([("job-1", "Idle")], [])
+    assert "job-1 исчезло" in " ".join(replay.record_for_a_while(soap, "u", 0))
+
+
+def test_new_job_after_recording_is_a_changed_camera():
+    soap = JobsSoap([("job-1", "Idle")], [("job-1", "Idle"), ("job-2", "Active")])
+    assert "job-2 появилось" in " ".join(replay.record_for_a_while(soap, "u", 0))
+
+
+def test_jobs_back_as_they_were_is_no_problem():
+    soap = JobsSoap([("job-1", "Idle")], [("job-1", "Idle")])
+    assert replay.record_for_a_while(soap, "u", 0) == []
