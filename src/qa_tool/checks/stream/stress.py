@@ -155,7 +155,13 @@ class StreamWatch(threading.Thread):
             if track is None:
                 return WatchEnd.STOPPED
             if self.meter is None:
-                self.meter = StreamMeter(track.encoding, track.clock_rate, self.slice_s)
+                self.meter = StreamMeter(
+                    track.encoding,
+                    track.clock_rate,
+                    self.slice_s,
+                    declared_fps=self.profile.encoder.fps if self.profile.encoder else None,
+                    fps_pct=limit(self.ctx, "stream.fps_pct").value,
+                )
             else:
                 self.meter.reconnected()
             self.playing = True
