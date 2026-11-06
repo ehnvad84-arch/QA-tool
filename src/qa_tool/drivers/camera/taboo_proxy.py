@@ -148,19 +148,24 @@ class TabooProxy:
             content: ответ в том виде, в каком он уйдёт клиенту.
 
         Returns:
-            True — отдавать ответ нельзя. DTD тоже считается скрытием: zeep отвергает сущности.
+            True — отдавать ответ нельзя. Сущности в DTD тоже считаются скрытием: zeep их
+            отвергает. Обычный DOCTYPE страницы ошибки веб-сервера — нет.
         """
-        parser = etree.XMLParser(remove_comments=True, resolve_entities=False, recover=True)
+        parser = etree.XMLParser(
+            remove_comments=True, resolve_entities=False, recover=True, huge_tree=True
+        )
         try:
             root = etree.fromstring(content, parser=parser)
         except etree.XMLSyntaxError:
             return False  # не XML: разбирать адреса клиенту не из чего
         if root is None:
             return False
-        if root.getroottree().docinfo.internalDTD is not None:
+        dtd = root.getroottree().docinfo.internalDTD
+        if dtd is not None and any(True for _ in dtd.iterentities()):
             return True
         for element in root.iter("*"):
-            if etree.QName(element).localname not in _ADDRESS_FIELDS:
+            # не etree.QName: на необъявленном префиксе он бросает ValueError
+            if re.split("[}:]", element.tag)[-1] not in _ADDRESS_FIELDS:
                 continue
             words = (element.text or "").split() + "".join(element.itertext()).split()
             for word in words:
@@ -248,13 +253,17 @@ class TabooProxy:
                     return
                 content = response.content
                 content_type = response.headers.get("content-type", "")
-                if any(t in content_type for t in ("xml", "soap", "json", "html", "text")):
-                    charset = response.encoding or "utf-8"
+                multipart = "multipart" in content_type.lower()
+                if multipart or any(
+                    t in content_type for t in ("xml", "soap", "json", "html", "text")
+                ):
+                    # в частях MTOM бывают двоичные данные: latin-1 сохраняет каждый байт
+                    charset = "latin-1" if multipart else response.encoding or "utf-8"
                     # U+FFFD от битых байт однобайтовая кодировка обратно не примет
                     text = proxy.rewrite(content.decode(charset, "replace"))
                     content = text.encode(charset, "replace")
-                # проверяем любой ответ: SOAP-клиент на Content-Type не смотрит
-                if proxy.hides_address(content):
+                # проверяем любой ответ: клиент может разобрать его и при чужом Content-Type
+                if any(proxy.hides_address(part) for part in _parts(content, content_type)):
                     reason = "адрес службы скрыт от подмены: клиент ушёл бы мимо посредника"
                     proxy._block(self.command, self.path, reason)
                     self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
@@ -281,6 +290,15 @@ class TabooProxy:
                 pass  # журнал запросов ведёт onvif-tt (last_request) и список blocked
 
         return Handler
+
+
+def _parts(content: bytes, content_type: str) -> list[bytes]:
+    """Что клиент может разобрать как XML: у MTOM — каждая часть без заголовков."""
+    boundary = re.search(r'boundary="?([^";\s]+)', content_type, re.IGNORECASE)
+    if "multipart" not in content_type.lower() or not boundary:
+        return [content]
+    pieces = content.split(b"--" + boundary.group(1).encode("latin-1", "replace"))
+    return [re.split(rb"\r?\n\r?\n", piece, maxsplit=1)[-1] for piece in pieces]
 
 
 # http(s)://[кто@]хост[:порт][/путь]; схема без учёта регистра (RFC 3986 §3.1): «HTTP://камера/…»

@@ -189,6 +189,47 @@ def test_broken_xml_is_read_as_the_client_reads_it(raw):
         proxy.stop()
 
 
+def test_undeclared_prefix_does_not_break_the_check():
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    try:
+        assert not proxy.hides_address(b"<a><x:Foo>text</x:Foo></a>")
+        assert proxy.hides_address(b"<a><x:XAddr>http://10.9.9.9/x</x:XAddr></a>")
+    finally:
+        proxy.stop()
+
+
+def test_deep_or_huge_document_is_read_like_the_client_reads_it():
+    proxy = TabooProxy("127.0.0.1", 80).start()
+    field = b'<t:XAddr xmlns:t="urn:t">http://10.9.9.9/x</t:XAddr>'
+    try:
+        assert proxy.hides_address(b"<a>" * 300 + field + b"</a>" * 300)
+        assert proxy.hides_address(b"<a><b>" + b"x" * 11_000_000 + b"</b>" + field + b"</a>")
+    finally:
+        proxy.stop()
+
+
+def test_html_with_doctype_keeps_its_status_and_headers(answering):
+    page = b"<!DOCTYPE html><html><body>401</body></html>"
+    proxy, _ = answering(page, 401, Content_Type="text/html", WWW_Authenticate="Digest x")
+    response = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert response.status_code == 401 and "www-authenticate" in response.headers
+
+
+def test_multipart_answer_is_rewritten_and_checked_part_by_part(answering):
+    head = b"--b\r\nContent-Type: application/xop+xml\r\n\r\n"
+    tail = b"\r\n--b--\r\n"
+    kind = 'multipart/related; boundary="b"; type="application/xop+xml"'
+    hidden = b'<a xmlns:t="urn:t"><t:XAddr><![CDATA[http://10.9.9.9/x]]></t:XAddr></a>'
+    proxy, _ = answering(head + hidden + tail, Content_Type=kind)
+    assert httpx.get(proxy.base_url + "/x", timeout=10).status_code == 502
+    plain = b'<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>'
+    proxy, _ = answering(head + plain + tail, Content_Type=kind)
+    response = httpx.get(proxy.base_url + "/x", timeout=10)
+    assert response.status_code == 200 and b"10.9.9.9/x<" not in response.content.replace(
+        b"_foreign/10.9.9.9/x<", b""
+    )
+
+
 def test_address_far_from_start_under_foreign_type_is_refused(answering):
     body = b" " * 2000 + b'<a xmlns:t="urn:t"><t:XAddr>http://10.9.9.9/x</t:XAddr></a>'
     proxy, _ = answering(body, Content_Type="application/octet-stream")

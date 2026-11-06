@@ -225,11 +225,15 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
     }
 
 
+# строки наших проверок: тесты onvif-tt получают свои ID только в прогоне
+OWN_ROW_PREFIXES = ("RUV-", "CORE-", ONVIF_TT, "API-", "WEB-", "STREAM-")
+
+
 def ran_onvif_tt(previous: dict[str, tuple[str, str]]) -> bool:
     """Есть ли итог хоть одного теста onvif-tt: исключённые строки добавляет сам QA-tool."""
     done = (Status.PASSED.value, Status.FAILED.value)
     return any(
-        status in done and i not in EXCLUDED and not i.startswith(("RUV-", "CORE-", ONVIF_TT))
+        status in done and i not in EXCLUDED and not i.startswith(OWN_ROW_PREFIXES)
         for i, (status, _) in previous.items()
     )
 
