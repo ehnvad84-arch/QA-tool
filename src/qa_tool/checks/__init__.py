@@ -4,7 +4,16 @@ import importlib
 
 from qa_tool.core.checks import REGISTRY, Registry
 
-MODULES = ["qa_tool.checks.core.connect"]
+MODULES = [
+    "qa_tool.checks.core.connect",
+    "qa_tool.checks.onvif.onvif_tt",
+    "qa_tool.checks.onvif.replay",
+    "qa_tool.checks.onvif.stream",
+    "qa_tool.checks.onvif.events",
+    "qa_tool.checks.onvif.metadata",
+    "qa_tool.checks.onvif.storage",
+    "qa_tool.checks.onvif.profiles",
+]
 
 
 def load_all() -> None:

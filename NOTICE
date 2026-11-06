@@ -1,0 +1,17 @@
+QA-tool — стенд проверки IP-камер.
+
+Программа использует сторонние компоненты:
+
+onvif-tt — https://github.com/OpenIPC/onvif-tt, коммит 8866b251bc63a3c746ca3f9b6544bdfcfcfa90df
+  Лицензия MIT. Copyright (c) 2026 OpenIPC and onvif-tt contributors.
+  Схемы ONVIF (WSDL/XSD) в составе onvif-tt распространяются по лицензии ONVIF: копировать,
+  распространять и публиковать можно при сохранении уведомления об авторских правах ONVIF.
+
+ONVIF Test Specifications — https://github.com/onvif/testspecs
+  Используется файл Profiles Conformance Device Test Specification (матрица профилей).
+  © ONVIF, Inc. Распространяется с сохранением уведомления об авторских правах.
+
+ffmpeg и ffprobe (в установщиках) — сборки BtbN FFmpeg-Builds, вариант LGPL 2.1.
+  Лицензия — в папке ffmpeg установленной программы (LICENSE.txt).
+
+Прочие зависимости Python перечислены в pyproject.toml и uv.lock; их лицензии — в пакетах.

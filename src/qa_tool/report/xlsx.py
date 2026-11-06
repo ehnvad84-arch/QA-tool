@@ -136,13 +136,32 @@ _SUMMARY_HEADERS = [
 
 
 def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
-    """Excel протокола камеры: листы «Сводка», «Проверки», «Задачи»."""
+    """Excel протокола камеры: «Сводка», «Проверки», «Задачи» и, если есть, «Профили ONVIF»."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Сводка"
     _table(ws, _SUMMARY_HEADERS, _summary_rows([p]), {2: 20, 3: 28, 11: 40})
     _table(wb.create_sheet("Проверки"), _CHECK_HEADERS, _check_rows(p), _CHECK_WIDTHS)
     _table(wb.create_sheet("Задачи"), _TASK_HEADERS, _task_rows(p), _TASK_WIDTHS)
+    if p.profiles.get("matrix"):
+        declared = set(p.profiles.get("declared", []))
+        rows = [
+            [
+                v["profile"],
+                "да" if v["profile"] in declared else "нет",
+                v["feature"],
+                v["verdict"],
+                v["basis"],
+                v.get("note", ""),
+            ]
+            for v in p.profiles["matrix"]
+        ]
+        _table(
+            wb.create_sheet("Профили ONVIF"),
+            ["Профиль", "Объявлен", "Обязательная функция", "Итог", "Основание", "Примечание"],
+            rows,
+            {3: 34, 4: 14, 5: 60, 6: 40},
+        )
     wb.save(path)
     return path
 

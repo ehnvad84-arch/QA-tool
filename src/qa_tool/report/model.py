@@ -80,6 +80,7 @@ class Protocol:
     verdict: str
     verdict_kind: str  # вид заключения: ok, fail, incomplete
     camera_name: str = field(default="")
+    profiles: dict = field(default_factory=dict)  # матрица RUV-PROFILES-1: declared, matrix
 
 
 def _threshold(row) -> str:
@@ -174,7 +175,20 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         verdict=text,
         verdict_kind=kind,
         camera_name=model,
+        profiles=_profiles_matrix(store, rows),
     )
+
+
+def _profiles_matrix(store: RunStore, rows: list[Row]) -> dict:
+    """Матрица профилей ONVIF из доказательства RUV-PROFILE-* (если проверка была в прогоне)."""
+    for row in rows:
+        if row.check_id.startswith("RUV-PROFILE-") and row.evidence:
+            path = store.run_dir / row.evidence / "matrix.json"
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+    return {}
 
 
 @dataclass

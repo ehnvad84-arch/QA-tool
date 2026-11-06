@@ -1,18 +1,41 @@
-"""Экран «Сценарий»: дерево модулей и проверок, разрешения, длительность стресса."""
+"""Экран «Сценарий»: дерево «модуль → группа → проверка», разрешения, длительность стресса."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QMessageBox,
-    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
 )
 
-from qa_tool.gui.help import helped
+from qa_tool.checks.onvif.profiles import confirms
+from qa_tool.core.checks import FIRST_CHECK, CheckSpec
+from qa_tool.gui.help import HELP_ID, helped
 from qa_tool.gui.screens.base import Screen
 from qa_tool.report.model import MODULE_TITLES
+
+# Решение директора 2026-11-03: длительность стресс-теста выбирается из списка шагом 10 минут;
+# для долгих прогонов (ночь, сутки) — часы.
+STRESS_CHOICES = [*range(10, 121, 10), 180, 240, 360, 480, 720, 1440]
+
+
+GENERAL_HELP = "scenario-checks"
+
+
+def check_tooltip(spec: CheckSpec) -> str:
+    """Подсказка строки проверки: «что делаем, что ожидаем» и какие функции профилей ONVIF
+    она подтверждает (та же матрица, что в разделе протокола «Профили ONVIF»)."""
+    profiles = confirms(spec.id)
+    if not profiles:
+        return spec.description
+    return f"{spec.description}\n\nПодтверждает профили ONVIF — {'; '.join(profiles)}."
+
+
+def stress_label(minutes: int) -> str:
+    """Подпись длительности: «40 мин», «3 ч», «24 ч»."""
+    return f"{minutes // 60} ч" if minutes >= 180 and minutes % 60 == 0 else f"{minutes} мин"
 
 
 class ScenarioScreen(Screen):
@@ -34,6 +57,7 @@ class ScenarioScreen(Screen):
         self.tree.setHeaderLabels(["Проверка", "Фаза", "Кому доступна"])
         self.tree.setColumnWidth(0, 420)
         self.tree.itemChanged.connect(self._changed)
+        self.tree.currentItemChanged.connect(self._current_changed)
         self.layout_.addWidget(self.tree, 1)
 
         form = QFormLayout()
@@ -52,16 +76,17 @@ class ScenarioScreen(Screen):
             "scenario-permissions",
         )
         self.stress = helped(
-            QSpinBox(),
-            "Сколько минут держать максимальную нагрузку в стресс-фазе.",
+            QComboBox(),
+            "Сколько держать максимальную нагрузку на все камеры в стресс-фазе: "
+            "от 10 минут до суток.",
             "scenario-stress",
         )
-        self.stress.setRange(1, 24 * 60)
-        self.stress.setSuffix(" мин")
-        self.stress.setMaximumWidth(140)
+        for minutes in STRESS_CHOICES:
+            self.stress.addItem(stress_label(minutes), minutes)
+        self.stress.setMaximumWidth(160)
         self.allow_writes.toggled.connect(self._changed)
         self.allow_destructive.toggled.connect(self._confirm_destructive)
-        self.stress.valueChanged.connect(self._changed)
+        self.stress.currentIndexChanged.connect(self._changed)
         form.addRow(self.allow_writes)
         form.addRow(self.allow_destructive)
         form.addRow("Длительность стресс-теста", self.stress)
@@ -82,11 +107,32 @@ class ScenarioScreen(Screen):
         self._changed()
 
     def _check_items(self) -> list[QTreeWidgetItem]:
-        items = []
-        for i in range(self.tree.topLevelItemCount()):
-            module = self.tree.topLevelItem(i)
-            items += [module.child(j) for j in range(module.childCount())]
+        """Строки проверок (листья дерева) — модули и группы только собирают их."""
+        items, stack = [], [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop(0)
+            if item.data(0, Qt.ItemDataRole.UserRole):
+                items.append(item)
+            stack[:0] = [item.child(j) for j in range(item.childCount())]
         return items
+
+    def _current_changed(self, current: QTreeWidgetItem | None, _previous=None) -> None:
+        # F1 на дереве открывает раздел справки выбранной строки (проверки или группы)
+        help_id = current.data(1, Qt.ItemDataRole.UserRole) if current else None
+        self.tree.setProperty(HELP_ID, help_id or GENERAL_HELP)
+
+    def _branch(self, parent, title: str, tooltip: str, help_id: str = "") -> QTreeWidgetItem:
+        item = QTreeWidgetItem([title])
+        item.setFlags(
+            item.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable
+        )
+        item.setToolTip(0, tooltip)
+        item.setData(1, Qt.ItemDataRole.UserRole, help_id)
+        if parent is None:
+            self.tree.addTopLevelItem(item)
+        else:
+            parent.addChild(item)
+        return item
 
     def _changed(self, *_args) -> None:
         if self._loading:
@@ -101,7 +147,7 @@ class ScenarioScreen(Screen):
         scenario.checks = None if checked == all_ids else checked
         scenario.allow_writes = self.allow_writes.isChecked()
         scenario.allow_destructive = self.allow_destructive.isChecked()
-        scenario.stress_minutes = self.stress.value()
+        scenario.stress_minutes = int(self.stress.currentData())
         self.state.save()
 
     def refresh(self) -> None:
@@ -109,30 +155,44 @@ class ScenarioScreen(Screen):
         scenario, stand = self.state.scenario, self.state.stand
         self.tree.clear()
         modules: dict[str, QTreeWidgetItem] = {}
+        groups: dict[tuple[str, str], QTreeWidgetItem] = {}
         for spec in self.state.registry().all():
             module = modules.get(spec.module)
             if module is None:
-                module = QTreeWidgetItem([MODULE_TITLES.get(spec.module, spec.module)])
-                module.setFlags(
-                    module.flags()
-                    | Qt.ItemFlag.ItemIsAutoTristate
-                    | Qt.ItemFlag.ItemIsUserCheckable
-                )
-                self.tree.addTopLevelItem(module)
+                title = MODULE_TITLES.get(spec.module, spec.module)
+                module = self._branch(None, title, f"Все проверки модуля «{title}».")
                 modules[spec.module] = module
+            parent = module
+            if spec.group:
+                parent = groups.get((spec.module, spec.group))
+                if parent is None:
+                    parent = self._branch(
+                        module, spec.group, f"Все проверки группы «{spec.group}».", spec.help_id
+                    )
+                    groups[(spec.module, spec.group)] = parent
             whom = "все производители" if spec.vendors is None else ", ".join(sorted(spec.vendors))
             item = QTreeWidgetItem([f"{spec.id} — {spec.title}", spec.phase.title, whom])
             item.setData(0, Qt.ItemDataRole.UserRole, spec.id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            selected = scenario.checks is None or spec.id in scenario.checks
+            always = spec.id == FIRST_CHECK  # идёт в каждом прогоне: снять её нельзя
+            flags = item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+            item.setFlags(flags & ~Qt.ItemFlag.ItemIsUserCheckable if always else flags)
+            selected = always or scenario.checks is None or spec.id in scenario.checks
             item.setCheckState(0, Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked)
-            item.setToolTip(0, spec.description)
+            item.setData(1, Qt.ItemDataRole.UserRole, spec.help_id)
+            item.setToolTip(0, check_tooltip(spec))
             if stand.cameras and not any(spec.applies_to(c) for c in stand.cameras):
                 item.setDisabled(True)
-                item.setToolTip(0, f"Нет камер этого производителя на стенде. {spec.description}")
-            module.addChild(item)
+                item.setToolTip(
+                    0, f"Нет камер этого производителя на стенде. {check_tooltip(spec)}"
+                )
+            parent.addChild(item)
         self.tree.expandAll()
+        self.tree.resizeColumnToContents(0)  # названия проверок длинные — без обрезки «…»
         self.allow_writes.setChecked(scenario.allow_writes)
         self.allow_destructive.setChecked(scenario.allow_destructive)
-        self.stress.setValue(scenario.stress_minutes)
+        index = self.stress.findData(scenario.stress_minutes)
+        if index < 0:  # значение из scenario.yaml не из списка — показываем его как есть
+            self.stress.addItem(stress_label(scenario.stress_minutes), scenario.stress_minutes)
+            index = self.stress.count() - 1
+        self.stress.setCurrentIndex(index)
         self._loading = False

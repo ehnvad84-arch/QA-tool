@@ -4,8 +4,8 @@ import pytest
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.discovery import discover
-from qa_tool.drivers.camera.onvif_generic import OnvifCamera
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
+from qa_tool.drivers.camera.onvif_generic import OnvifCamera, stand_service_url
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
 from tests.mock_camera import start_fleet
 
 
@@ -82,5 +82,50 @@ def test_garbage_probe_matches_are_skipped():
 def test_username_with_xml_characters_is_escaped():
     from qa_tool.drivers.camera.soap import SoapClient
 
-    header = SoapClient("a&b<c", "pw")._security_header()
+    header = SoapClient("a&b<c", "pw")._security_header("http://камера/")
     assert "<wsse:Username>a&amp;b&lt;c</wsse:Username>" in header
+
+
+@pytest.mark.parametrize(
+    ("fault", "rejected"),
+    [
+        (OnvifFault("x", 400, "ter:NotAuthorized"), True),
+        (OnvifFault("x", 400, "wsse:FailedAuthentication"), True),
+        (OnvifFault("ответ не SOAP (HTTP 401)", status=401), True),
+        (OnvifFault("x", 401, "ter:Other"), True),
+        (OnvifFault("ter:ActionNotSupported NotAuthorized HTTP 401", 500, "ter:Action"), False),
+        (OnvifFault("ответ не SOAP (HTTP 500)", status=500), False),
+        (OnvifFault("камера не объявляет службу"), False),
+    ],
+)
+def test_only_codes_decide_that_credentials_were_rejected(fault, rejected):
+    assert credentials_rejected(fault) is rejected
+
+
+TUNNEL = Camera(slot=1, address="127.0.0.1", port=9114, username="a", lan_address="192.168.1.114")
+DIRECT = Camera(slot=1, address="192.168.1.10", port=80, username="a")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://192.168.1.114/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),
+        ("http://192.168.1.114:80/onvif/a?b=1", "http://127.0.0.1:9114/onvif/a?b=1"),
+        ("http://127.0.0.1/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),  # Dahua
+        ("http://10.9.9.9/onvif/Replay", None),
+        ("http://[1:2]/onvif/Replay", None),
+    ],
+)
+def test_service_of_camera_behind_tunnel(url, expected):
+    assert stand_service_url(TUNNEL, url) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://192.168.1.10:8000/onvif/a", "http://192.168.1.10:8000/onvif/a"),
+        ("http://192.168.1.114/onvif/a", None),
+    ],
+)
+def test_direct_camera_keeps_addresses_and_has_no_aliases(url, expected):
+    assert stand_service_url(DIRECT, url) == expected

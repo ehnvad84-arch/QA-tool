@@ -56,10 +56,15 @@ class Tile(QGroupBox):
         self.progress.setVisible(camera is not None)
         self._show_counts()
 
-    def on_result(self, status: str) -> None:
+    def on_result(self, status: str, advance: bool = True) -> None:
+        """Учесть итог строки протокола; прогресс — только по проверкам сценария."""
         self.tally[status] = self.tally.get(status, 0) + 1
-        self.progress.setValue(self.progress.value() + 1)
+        if advance:
+            self.advance()
         self._show_counts()
+
+    def advance(self) -> None:
+        self.progress.setValue(self.progress.value() + 1)
 
     def _show_counts(self) -> None:
         t = self.tally
@@ -177,8 +182,10 @@ class RunScreen(Screen):
         elif event.kind == "started" and tile:
             tile.current.setText(f"идёт: {event.check_id} — {event.title}")
         elif event.kind == "result" and tile:
-            tile.on_result(event.status)
+            tile.on_result(event.status, advance=not event.part)
             tile.current.setText(f"{event.check_id}: {event.status}")
+        elif event.kind == "done" and tile:
+            tile.advance()  # составная проверка закончилась — её строки уже учтены
         elif event.kind == "lost" and tile:
             tile.current.setText(event.detail)
 

@@ -5,6 +5,7 @@
 tests/test_architecture.py не даёт импортировать httpx, requests и сокеты в обход этого модуля.
 """
 
+import logging
 import re
 
 import httpx
@@ -12,6 +13,10 @@ import httpx
 from qa_tool.core.taboo import check_http, check_onvif, check_web_request
 
 TransportError = httpx.TransportError  # драйверы ловят сетевые сбои, не импортируя httpx
+
+# onvif-tt при загрузке включает журнал INFO на весь процесс, и httpx пишет в консоль строку на
+# каждый запрос к камере. Обмены и так сохраняются в доказательствах (с вырезанными секретами).
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 _ENVELOPE = re.compile(r"<\s*(?:[\w.-]+:)?Envelope\b")

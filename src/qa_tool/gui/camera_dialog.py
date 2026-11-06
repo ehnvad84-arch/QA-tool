@@ -37,6 +37,12 @@ class CameraDialog(QDialog):
         self.rtsp_port = helped(QSpinBox(), "RTSP-порт видеопотока. Обычно 554.", "cameras-add")
         self.rtsp_port.setRange(1, 65535)
         self.rtsp_port.setValue(554)
+        self.lan_address = helped(
+            QLineEdit(),
+            "Заполняется, только если стенд ходит к камере через туннель или NAT: адрес камеры "
+            "в её собственной сети, например 192.168.1.10. Для камеры в сети стенда — пусто.",
+            "cameras-add",
+        )
         self.username = helped(QLineEdit("admin"), "Логин администратора камеры.", "cameras-add")
         self.password = helped(
             QLineEdit(),
@@ -63,6 +69,7 @@ class CameraDialog(QDialog):
             ("Адрес", self.address),
             ("HTTP-порт", self.port),
             ("RTSP-порт", self.rtsp_port),
+            ("Адрес за туннелем", self.lan_address),
             ("Логин", self.username),
             ("Пароль", self.password),
             ("Производитель", self.vendor),
@@ -86,4 +93,5 @@ class CameraDialog(QDialog):
             rtsp_port=self.rtsp_port.value(),
             username=self.username.text().strip(),
             vendor=self.vendor.currentText(),
+            lan_address=self.lan_address.text().strip(),
         )

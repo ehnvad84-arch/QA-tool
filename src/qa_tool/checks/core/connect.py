@@ -1,6 +1,7 @@
 """CORE-CONNECT-1: камера доступна по сети, ONVIF отвечает, паспорт — в шапку протокола."""
 
 from qa_tool.core.checks import (
+    CREDENTIALS_REJECTED,
     REGISTRY,
     UNREACHABLE,
     CheckContext,
@@ -10,13 +11,22 @@ from qa_tool.core.checks import (
     Status,
 )
 from qa_tool.drivers.camera.onvif_generic import OnvifCamera
-from qa_tool.drivers.camera.probe import rtsp_answers, tcp_open
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
+from qa_tool.drivers.camera.probe import RtspProbe, rtsp_probe, tcp_open
+from qa_tool.drivers.camera.soap import (
+    CLOCK_TOLERANCE_S,
+    CameraUnreachable,
+    OnvifFault,
+    credentials_rejected,
+)
 
 PASSPORT_KEY = "passport"
-NOT_AUTHORIZED = (
-    "NotAuthorized"  # подкод SOAP Fault ter:NotAuthorized — общий код отказа в доступе ONVIF
-)
+
+
+def _exchanges(driver: OnvifCamera) -> list[Evidence]:
+    return [
+        Evidence(f"onvif-{i}.txt", f"POST {x.url}\n{x.request}\n\nHTTP {x.status}\n{x.response}")
+        for i, x in enumerate(driver.exchanges, start=1)
+    ]
 
 
 @REGISTRY.check(
@@ -38,7 +48,8 @@ def connect(ctx: CheckContext) -> CheckResult:
     Паспорт (производитель, модель, прошивка, серийный номер) кладётся в
     `data[PASSPORT_KEY]` и уходит в шапку протокола. Закрытый HTTP-порт —
     «не прошла» с признаком `UNREACHABLE`: по нему рабочий процесс камеры пропускает
-    остальные её проверки, а не копит одинаковые задачи.
+    остальные её проверки, а не копит одинаковые задачи. Отказ по логину или паролю —
+    «ошибка стенда» с признаком `CREDENTIALS_REJECTED`, по нему проверки пропускаются так же.
     """
     cam, timeout = ctx.camera, float(ctx.extra.get("timeout_s", 5.0))
     expected = f"HTTP {cam.port} и RTSP {cam.rtsp_port} отвечают, ONVIF отдаёт паспорт"
@@ -51,28 +62,39 @@ def connect(ctx: CheckContext) -> CheckResult:
             actual="порт закрыт или камера не в сети",
             data={UNREACHABLE: True},
         )
-    if not rtsp_answers(cam.address, cam.rtsp_port, timeout):
+    rtsp = rtsp_probe(cam.address, cam.rtsp_port, timeout)
+    if rtsp is RtspProbe.NO_ANSWER:
         problems.append(f"RTSP (порт {cam.rtsp_port}) не отвечает")
     driver = OnvifCamera(cam, ctx.password, timeout)
     try:
         passport = driver.get_device_information()
     except OnvifFault as e:
-        if NOT_AUTHORIZED in str(e):
+        if credentials_rejected(e):
             # Решение директора 2026-11-03: неверный логин или пароль — ошибка настройки
             # стенда и подключения, а не дефект камеры; задачи программистам нет.
-            return CheckResult.stand_error(
+            # Камеру с одним лишь открытым паролем (WS-Security PasswordText) от неверного пароля
+            # не отличить, не послав его открытым текстом. Поэтому снимаем и её: 150 тестов
+            # с возможно неверным паролем заблокировали бы вход на камере.
+            reason = (
                 f"камера не приняла логин или пароль места {cam.slot} — проверьте их на экране "
-                f"«Камеры» ({e})"
+                f"«Камеры»; если они верны, камера принимает другой способ входа ({e})"
             )
+            difference = driver.soap.camera_clock_difference_s(driver.device_url)
+            if difference is not None and abs(difference) > CLOCK_TOLERANCE_S:
+                reason = (
+                    f"часы камеры расходятся с компьютером стенда на {abs(difference):.0f} с: "
+                    f"камера могла отказать из-за этого; {reason}"
+                )
+            result = CheckResult.stand_error(reason)
+            result.data[CREDENTIALS_REJECTED] = True
+            result.evidence = _exchanges(driver)
+            return result
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
     except CameraUnreachable as e:
         problems.append(f"ONVIF GetDeviceInformation: {e}")
         passport = None
-    evidence = [
-        Evidence(f"onvif-{i}.txt", f"POST {x.url}\n{x.request}\n\nHTTP {x.status}\n{x.response}")
-        for i, x in enumerate(driver.exchanges, start=1)
-    ]
+    evidence = _exchanges(driver)
     data = {}
     if passport is not None:
         data[PASSPORT_KEY] = vars(passport)
@@ -87,6 +109,9 @@ def connect(ctx: CheckContext) -> CheckResult:
         if passport
         else "паспорт не получен"
     )
+    if rtsp is RtspProbe.CLOSED:
+        # Ответа RTSP нет, поэтому в протоколе это не подтверждение: живой поток — RUV-S-STREAM-1.
+        actual += f"; RTSP (порт {cam.rtsp_port}) принял соединение и закрыл его без ответа"
     status = Status.FAILED if problems else Status.PASSED
     return CheckResult(
         status,

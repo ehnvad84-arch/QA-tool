@@ -15,8 +15,18 @@ from qa_tool.core.models import Camera, Place, Scenario, Threshold
 from qa_tool.core.secrets import redact
 from qa_tool.core.taboo import TabooViolation
 
+PREVIOUS_RESULTS = "previous_results"
+"""Ключ ctx.extra: итоги уже выполненных строк этой камеры {ID: (статус, причина)} —
+для проверок, которые сводят результаты других (матрица профилей ONVIF)."""
+
 UNREACHABLE = "unreachable"
 """Ключ в CheckResult.data: камера не ответила по сети (не ошибка проверки, а отсутствие связи)."""
+
+FIRST_CHECK = "CORE-CONNECT-1"
+"""Первая проверка каждой камеры: связь и паспорт."""
+
+CREDENTIALS_REJECTED = "credentials_rejected"
+"""Ключ в CheckResult.data: камера не приняла логин или пароль места — ошибка стенда."""
 
 
 class Status(StrEnum):
@@ -71,6 +81,7 @@ class CheckResult:
     threshold: Threshold | None = None
     data: dict[str, Any] = field(default_factory=dict)
     duration_s: float = 0.0
+    children: list["ChildResult"] = field(default_factory=list)
 
     @classmethod
     def skipped(cls, reason: str) -> "CheckResult":
@@ -84,6 +95,21 @@ class CheckResult:
 
 
 @dataclass
+class ChildResult:
+    """Один результат составной проверки — отдельная строка протокола со своим ID.
+
+    Составная проверка (например, прогон onvif-tt) выдаёт заранее неизвестный набор тестов:
+    регистрировать каждый в реестре нельзя, состав зависит от камеры.
+    """
+
+    check_id: str
+    title: str
+    result: CheckResult
+    description: str = ""
+    severity: "Severity | None" = None
+
+
+@dataclass
 class CheckContext:
     """Всё, что проверка получает о камере и стенде. Пароль — только в памяти рабочего процесса."""
 
@@ -92,6 +118,9 @@ class CheckContext:
     place: Place
     thresholds: dict[str, Threshold] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    # галочки сценария: составным проверкам (onvif-tt) решать, что из своего запускать
+    allow_writes: bool = False
+    allow_destructive: bool = False
 
 
 CheckFunc = Callable[[CheckContext], CheckResult]
@@ -115,6 +144,8 @@ class CheckSpec:
     severity: Severity = Severity.MAJOR
     order: int = 100  # порядок внутри фазы; CORE-CONNECT-1 — первым
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
+    group: str = ""  # подгруппа внутри модуля на экране «Сценарий»; пусто — прямо в модуле
+    help_id: str = ""  # раздел справки F1 для строки проверки; пусто — общий раздел «Проверки»
 
     def applies_to(self, camera: Camera) -> bool:
         """Подходит ли проверка производителю камеры (AD-4: адаптерные — только своим)."""
@@ -136,7 +167,7 @@ class Registry:
             title: название для экрана и протокола.
             description: «что делаем, что ожидаем» — уходит в протокол и шаги задачи.
             **options: поля CheckSpec (phase, resources, vendors, places, writes,
-                destructive, severity, order, timeout_s).
+                destructive, severity, order, timeout_s, group, help_id).
 
         Raises:
             ValueError: проверка с таким id уже зарегистрирована.
@@ -173,7 +204,13 @@ class Registry:
         for spec in self.all():
             if not spec.applies_to(camera):
                 continue
-            if scenario.checks is not None and spec.id not in scenario.checks:
+            # CORE-CONNECT-1 — всегда: без неё нет паспорта в шапке протокола, а неверный пароль
+            # стал бы ложными «не прошла» у остальных проверок (worker.py).
+            if (
+                scenario.checks is not None
+                and spec.id not in scenario.checks
+                and spec.id != FIRST_CHECK
+            ):
                 continue
             planned.append((spec, skip_reason(spec, scenario, place)))
         return planned
@@ -217,7 +254,11 @@ def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> Ch
         result = CheckResult.stand_error(
             redact(f"сбой проверки: {type(e).__name__}: {e}", [ctx.password])
         )
-    if result.status is Status.PASSED and not result.evidence:
+    if result.children:
+        for child in result.children:  # правило never.md — для каждой строки протокола
+            if child.result.status is Status.PASSED and not child.result.evidence:
+                child.result = CheckResult.stand_error("проверка не сохранила доказательство")
+    elif result.status is Status.PASSED and not result.evidence:
         result = CheckResult.stand_error("проверка не сохранила доказательство")
     result.duration_s = time.monotonic() - start
     return result
