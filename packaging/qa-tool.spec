@@ -7,6 +7,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 root = Path(SPECPATH).parent
 ffmpeg_bin = Path(os.environ["QA_FFMPEG_BIN"])
+browser = root / "build" / "browser"  # браузер ставит build.sh или build.ps1 до PyInstaller
+browser_libs = root / "build" / "browser-libs"  # только Linux: библиотеки браузера
 exe = ".exe" if os.name == "nt" else ""
 
 a = Analysis(
@@ -22,11 +24,17 @@ a = Analysis(
         # onvif-tt — набор тестов pytest: pytest собирает их из файлов .py, а не из архива
         # сборки, поэтому исходники и схемы ONVIF (WSDL, XSD) кладутся рядом файлами
         *collect_data_files("onvif_tt", include_py_files=True),
+        # браузер веб-обхода едет в установщике: на компьютере стенда может не быть интернета
+        (str(browser), "browser"),
+        *([(str(browser_libs), "browser-libs")] if browser_libs.exists() else []),
+        # драйвер Playwright — отдельная программа и её файлы, импорт их не найдёт
+        *collect_data_files("playwright"),
     ],
     hiddenimports=[
         *collect_submodules("qa_tool"),
         *collect_submodules("keyring.backends"),
         *collect_submodules("onvif_tt"),
+        *collect_submodules("playwright"),
         *pytest.freeze_includes(),  # модули pytest, которые он грузит по имени, а не импортом
     ],
     excludes=["tests"],

@@ -66,7 +66,7 @@
 - [ ] T19 — Браузер в сборках, `qa-tool doctor`, smoke веб-обхода, CI · сценарий: S23 · проверка: auto · исполнитель: main
   Файлы: packaging/qa-tool.spec, packaging/linux/build.sh, packaging/windows/build.ps1, src/qa_tool/tools.py, src/qa_tool/cli.py, .github/workflows/ci.yml; новый packaging/smoke_web.py.
   Готово, когда: CI обе сборки зелёные; smoke в собранной программе проходит обход mock без скачиваний; размер установщиков записан в progress.md; без браузера — «ошибка стенда».
-- [ ] T20 — Справка F1, security.md, ROADMAP, версия · сценарий: S4, S9, S10, S24 · проверка: auto · исполнитель: main
+- [x] T20 — Справка F1, security.md, ROADMAP, версия · сценарий: S4, S9, S10, S24 · проверка: auto · исполнитель: main
   Файлы: docs/manual/web.md, docs/rules/security.md, docs/ROADMAP.md, pyproject.toml, uv.lock.
   Готово, когда: раздел описывает режимы и галочку; остаточные риски таблицы спеки записаны; тест справки зелёный.
 - [ ] T21 — Обход без записи на камерах разных производителей · сценарий: S1, S2, S3, S7, S8, S9, S10, S11, S15, S16, S17, S18, S19, S24 · проверка: manual · исполнитель: main

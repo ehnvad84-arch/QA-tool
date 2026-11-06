@@ -51,6 +51,7 @@ from qa_tool.core.taboo import (
 from qa_tool.core.tempfiles import TEMP_PREFIX
 from qa_tool.drivers.camera.digest import digest_header, parse_challenge, uses_qop
 from qa_tool.drivers.camera.http import is_soap
+from qa_tool.tools import browser_env, use_bundled_browser
 
 # без сетевого обмена: содержимое лежит в самой странице
 _LOCAL_SCHEMES = frozenset({"data", "blob", "about"})
@@ -317,6 +318,7 @@ class BrowserSession:
             BrowserMissing: браузер не установлен или не запускается.
         """
         self._temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_PREFIX}{self._temp_tag}-")
+        use_bundled_browser()
         self._start_driver()
         try:
             self._browser = self._launch()
@@ -361,6 +363,9 @@ class BrowserSession:
             "headless": True,
             "proxy": {"server": _DEAD_PROXY, "bypass": f"<-loopback>,{self.host}"},
         }
+        env = browser_env()
+        if env is not None:
+            options["env"] = env
         try:
             browser = self._playwright.chromium.launch(chromium_sandbox=True, **options)
         except PlaywrightError:
