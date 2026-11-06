@@ -195,6 +195,7 @@ class MockCamera:
         services = OnvifServices(
             self.state, f"http://127.0.0.1:{self.port}/onvif", f"rtsp://127.0.0.1:{self.rtsp_port}"
         )
+        services.envelope = root
         answer = services.handle(operation, body[0])
         if answer is not None:
             return 200, _envelope(answer)

@@ -129,12 +129,13 @@ class SoapClient:
             "</wsse:UsernameToken></wsse:Security>"
         )
 
-    def call(self, url: str, body: str) -> Element:
+    def call(self, url: str, body: str, soap_header: str = "") -> Element:
         """Вызвать операцию ONVIF.
 
         Args:
             url: адрес сервиса ONVIF.
             body: тело `<s:Body>` с одной операцией.
+            soap_header: дополнительные элементы `<s:Header>`, например WS-Addressing.
 
         Returns:
             Первый элемент Body ответа.
@@ -147,16 +148,16 @@ class SoapClient:
         """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         try:
-            return self._post(url, self._secured(url, body))
+            return self._post(url, self._secured(url, body, soap_header))
         except OnvifFault as fault:
             if _FAILED_AUTHENTICATION not in fault.code.lower() or not self._camera_clock_differs(
                 url
             ):
                 raise
-        return self._post(url, self._secured(url, body))
+        return self._post(url, self._secured(url, body, soap_header))
 
-    def _secured(self, url: str, body: str) -> str:
-        header = f"<s:Header>{self._security_header(url)}</s:Header>"
+    def _secured(self, url: str, body: str, soap_header: str = "") -> str:
+        header = f"<s:Header>{self._security_header(url)}{soap_header}</s:Header>"
         return f"<s:Envelope {_ENVELOPE_XMLNS}>{header}<s:Body>{body}</s:Body></s:Envelope>"
 
     def _camera_clock_differs(self, url: str) -> bool:

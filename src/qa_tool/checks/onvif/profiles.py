@@ -63,7 +63,9 @@ _PULLPOINT = Feature(
     "Pull-Point Notification",
     ("EVENT-3-1-*", "LOCAL-EVENT-PULLPOINT-CREATE"),
 )
-_EVENTS = Feature("Служба событий", "Event Service", ("EVENT-*", "DEVICE-1-1-16"))
+_EVENTS = Feature(
+    "Служба событий", "Event Service", ("EVENT-*", "DEVICE-1-1-16", "RUV-E-SUBSCRIBE-1")
+)
 _METADATA = Feature("Метаданные", "Metadata", ("RUV-M-METADATA-1", "RUV-M-STREAM-1"))
 
 PROFILES: dict[str, tuple[Feature, ...]] = {
@@ -72,7 +74,11 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         _DISCOVERY,
         _NETWORK,
         _USERS,
-        Feature("События: WS-BaseNotification", "WS-BasicNotification", ("EVENT-2-1-*",)),
+        Feature(
+            "События: WS-BaseNotification",
+            "WS-BasicNotification",
+            ("EVENT-2-1-*", "RUV-E-SUBSCRIBE-1"),
+        ),
         _PULLPOINT,
         Feature(
             "Аутентификация WS-UsernameToken",
@@ -108,7 +114,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         Feature(
             "Воспроизведение архива",
             "Replay Service",
-            ("DEVICE-1-1-20", "LOCAL-REPLAY-STREAM-URI", "RUV-G-REPLAY-1"),
+            ("DEVICE-1-1-20", "RUV-G-REPLAY-1"),
         ),
         Feature(
             "Управление записью", "Recording Control Service", ("RECORDING-*", "LOCAL-RECORDING-*")
