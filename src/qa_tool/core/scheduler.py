@@ -13,6 +13,7 @@ from qa_tool.core.checks import CheckResult, Phase, Status
 from qa_tool.core.models import Scenario, Stand, Threshold
 from qa_tool.core.secrets import get_password, redact
 from qa_tool.core.store import RunStore
+from qa_tool.core.tempfiles import remove_stale_browser_files
 from qa_tool.core.worker import STOPPED, WorkerArgs, resolve_registry, worker_main
 
 DEFAULT_REGISTRY = "qa_tool.checks:registry"
@@ -96,6 +97,7 @@ class Runner:
         passwords = {
             cam.slot: get_password(cam) for cam in self.stand.cameras
         }  # ConfigError — до создания папки прогона
+        remove_stale_browser_files()
         self.store = RunStore.create(self.stand, self.scenario)
         self.outbox = self._mp.Queue()
         plans = {

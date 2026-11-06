@@ -6,7 +6,9 @@
 `BrowserSession` останавливает изменяющие запросы при любом нажатии.
 """
 
+import math
 import re
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
@@ -66,15 +68,15 @@ class ElementPlan:
 
     items: list[Item] = field(default_factory=list)
     repeated: int = 0
-    over_limit: int = 0
+    over_limit: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Discovery:
-    """Итог поиска страниц; `left_out` — найденные, но не открытые из-за предела."""
+    """Итог поиска страниц; `left` — найденные, но не открытые из-за предела."""
 
     pages: list[Page] = field(default_factory=list)
-    left_out: int = 0
+    left: list[str] = field(default_factory=list)
 
 
 def classify(element: ElementInfo, page_forbidden: str = "") -> Item:
@@ -164,7 +166,7 @@ def plan_elements(
         if seen[key] > same_limit:
             plan.repeated += 1
         elif len(plan.items) >= total_limit:
-            plan.over_limit += 1
+            plan.over_limit.append(element.label)
         else:
             plan.items.append(classify(element, page_forbidden))
     return plan
@@ -191,16 +193,19 @@ def _navigation(elements: list[ElementInfo], forbidden: str) -> list[ElementInfo
     ]
 
 
-def discover(ctx: CheckContext, session: BrowserSession, address: str) -> Discovery:
+def discover(
+    ctx: CheckContext, session: BrowserSession, address: str, deadline: float = math.inf
+) -> Discovery:
     """Найти страницы интерфейса от главной.
 
     Args:
         ctx: контекст проверки; порог `web.pages_limit`.
         session: сессия после входа.
         address: адрес главной страницы.
+        deadline: момент `time.monotonic()`, после которого новые страницы не открываются.
 
     Returns:
-        Страницы в порядке открытия и число не открытых из-за предела.
+        Страницы в порядке открытия и названия не открытых из-за предела.
 
     Raises:
         CameraSilent: страница не загрузилась.
@@ -219,7 +224,7 @@ def discover(ctx: CheckContext, session: BrowserSession, address: str) -> Discov
                 seen.add(target.url)
                 queue.append(target)
 
-    while queue and len(found.pages) < pages_limit:
+    while queue and len(found.pages) < pages_limit and time.monotonic() < deadline:
         page = queue.popleft()
         elements = _open(session, ctx, page)
         found.pages.append(page)
@@ -234,9 +239,9 @@ def discover(ctx: CheckContext, session: BrowserSession, address: str) -> Discov
             if reaction.stopped:
                 continue
             if len(found.pages) >= pages_limit:
-                found.left_out += 1
+                found.left.append(element.label)
                 continue
             found.pages.append(Page(page.url, element.label, tab=element.label))
             remember(session.elements(), page)
-    found.left_out += len(queue)
+    found.left += [page.label for page in queue]
     return found

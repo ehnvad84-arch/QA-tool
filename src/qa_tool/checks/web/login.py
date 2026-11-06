@@ -12,7 +12,7 @@ from qa_tool.checks.rtsp_refusal import refused_password, remember_web_refusal
 from qa_tool.checks.web.limits import limit
 from qa_tool.core.checks import CheckContext
 from qa_tool.core.taboo import is_logout_label
-from qa_tool.drivers.camera.browser import BrowserSession, ElementInfo
+from qa_tool.drivers.camera.browser import PAGE_LIMIT_S, BrowserSession, ElementInfo
 from qa_tool.drivers.camera.probe import tcp_open
 
 POLL_MS = 200
@@ -180,7 +180,7 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     return _refused(ctx, "форма входа осталась на экране")
 
 
-def logout(session: BrowserSession, address: str) -> str:
+def logout(session: BrowserSession, address: str, limit_s: float = PAGE_LIMIT_S) -> str:
     """Выйти одним нажатием, чтобы освободить подключение камеры.
 
     Кнопка выхода обычно есть только в шапке главной страницы, поэтому сначала открывается она.
@@ -188,11 +188,12 @@ def logout(session: BrowserSession, address: str) -> str:
     Args:
         session: открытая сессия браузера.
         address: адрес веб-интерфейса.
+        limit_s: предел загрузки главной страницы, с.
 
     Returns:
         Пометка для сводки; пусто — выход выполнен.
     """
-    session.open(address)
+    session.open(address, limit_s)
     session.wait(POLL_MS * 3)
     for item in session.elements():
         if is_logout_label(item.label) and not item.disabled:

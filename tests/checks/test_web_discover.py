@@ -104,7 +104,7 @@ def test_elements_limit_says_what_is_left():
     rows = [element(f"Кнопка {chr(1040 + n)}") for n in range(30)]
     plan = plan_elements(context(**{"web.elements_limit": 10}), rows)
     assert len(plan.items) == 10
-    assert plan.over_limit == 20
+    assert len(plan.over_limit) == 20
 
 
 @pytest.mark.parametrize(
@@ -124,7 +124,7 @@ def test_spa_pages_and_tabs_are_found():
     camera, found = run({"/": SPA})
     names = {page.label for page in found.pages}
     assert {"Изображение", "Надписи", "Видео", "Доп", "Запас", "Сеть", "Имена"} <= names
-    assert found.left_out == 0
+    assert not found.left
     assert camera.writes() == []
 
 
@@ -148,7 +148,7 @@ def test_endless_pages_stop_at_limit_and_say_so():
     pages = {"/": '<a href="/p1">1</a><a href="/p2">2</a><a href="/p3">3</a><a href="/p4">4</a>'}
     _, found = run(pages, **{"web.pages_limit": 2})
     assert len(found.pages) == 2
-    assert found.left_out == 3
+    assert len(found.left) == 3
 
 
 def test_danger_menu_item_is_not_pressed():

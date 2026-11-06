@@ -47,6 +47,7 @@ from qa_tool.core.taboo import (
     web_danger_word,
     web_forbidden_word,
 )
+from qa_tool.core.tempfiles import TEMP_PREFIX
 from qa_tool.drivers.camera.digest import digest_header, parse_challenge, uses_qop
 from qa_tool.drivers.camera.http import is_soap
 
@@ -93,7 +94,6 @@ STEP_MS = 200  # шаг ожидания: «Стоп» должен срабат
 CALL_LIMIT_MS = 1000  # предел одного вызова Playwright, иначе «Стоп» не уложится в 5 с
 PAGE_LIMIT_S = 30.0
 TEXT_LIMIT = 200  # подписи и ошибки приходят от камеры: длинный текст ломает протокол
-TEMP_PREFIX = "qa-web-"
 HTTP_ERROR = 400
 FAVICON = "/favicon.ico"  # значок браузер просит сам, у камеры его может не быть, это не ошибка
 BROWSER_LOAD_MESSAGES = ("Failed to load resource", "ERR_BLOCKED_BY_CLIENT")
@@ -905,6 +905,10 @@ class BrowserSession:
     def session_state(self) -> dict:
         """Куки сессии только в памяти: для новой сессии после падения браузера, на диск нельзя."""
         return self._context.storage_state()
+
+    def finishing(self) -> None:
+        """Дать завершить вход после «Стоп»: дальше шаги ожидания «Стоп» не проверяют."""
+        self._stop_requested = lambda: False
 
     def close(self) -> None:
         """Закрыть браузер и драйвер; повторный вызов безопасен."""

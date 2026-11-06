@@ -1,9 +1,13 @@
 import json
+import os
+import tempfile
+import time
 
 import pytest
 
 from qa_tool.core.models import Camera, Place, Scenario, Stand
 from qa_tool.core.scheduler import Runner
+from qa_tool.core.tempfiles import STALE_AFTER_S, TEMP_PREFIX, remove_stale_browser_files
 from qa_tool.core.worker import LOST_DURING_CHECK
 from tests.fake_checks import MAIN, SLOW
 from tests.mock_camera import start_fleet
@@ -326,3 +330,16 @@ def test_typo_in_password_on_html_401_camera_costs_one_login(tmp_path, fleet, mo
     rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
     assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
     assert fleet[0].requests.count("GetDeviceInformation") == 1
+
+
+def test_runner_removes_browser_files_of_killed_process(tmp_path, fleet, monkeypatch):
+    stale = tmp_path / f"{TEMP_PREFIX}1-old"
+    fresh = tmp_path / f"{TEMP_PREFIX}2-now"
+    stale.mkdir()
+    fresh.mkdir()
+    (stale / "Cookies").write_text("сессия", encoding="utf-8")
+    hour_ago = time.time() - STALE_AFTER_S - 60
+    os.utime(stale, (hour_ago, hour_ago))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    assert remove_stale_browser_files() == 1
+    assert not stale.exists() and fresh.exists()
