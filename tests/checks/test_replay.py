@@ -499,3 +499,55 @@ def test_new_job_after_recording_is_a_changed_camera():
 def test_jobs_back_as_they_were_is_no_problem():
     soap = JobsSoap([("job-1", "Idle")], [("job-1", "Idle")])
     assert replay.record_for_a_while(soap, "u", 0) == []
+
+
+def stream_of(steps, repeat=1):
+    """Пакеты видео с шагами меток; `repeat` — пакетов на одну метку."""
+    idr, stamp, packets = bytes([0x65, 0]), 0, []
+    for step in steps:
+        stamp = (stamp + step) % 2**32
+        packets += [RtpPacket(0, True, idr, stamp) for _ in range(repeat)]
+    return packets
+
+
+TRACK = Track("video", "H264", "c", 90000)
+STEP = int(1.9 * 90000)
+
+
+@pytest.mark.parametrize(
+    "packets",
+    [
+        stream_of([STEP, -STEP] * 6),  # метки качаются туда-обратно
+        stream_of([STEP] * 6, repeat=2),  # маркер на двух пакетах кадра
+        stream_of([0] * 11 + [int(1.99 * 90000)] * 6),  # 12 маркеров на одной метке
+    ],
+    ids=["качаются", "два маркера", "одна метка"],
+)
+def test_tricks_with_timestamps_are_not_video(packets):
+    stats = replay.summarize(packets, TRACK, 0)
+    short = stats["seconds"] + 0.5 < 10
+    assert short or replay.frames_problem(context_with_thresholds(), stats)
+
+
+def test_stream_without_marker_bit_is_counted_by_timestamps():
+    packets = [RtpPacket(0, False, bytes([0x65, 0]), n * 3600) for n in range(300)]
+    stats = replay.summarize(packets, TRACK, 0)
+    assert stats["frames"] == 300 and stats["seconds"] == 11.96
+    assert replay.frames_problem(context_with_thresholds(), stats) == ""
+
+
+def test_b_frames_going_back_do_not_shorten_or_stretch_time():
+    stamps = [0, 7200, 3600, 14400, 10800]
+    packets = [RtpPacket(0, True, bytes([0x41, 0]), s) for s in stamps]
+    assert replay.summarize(packets, TRACK, 0)["seconds"] == 0.16
+
+
+@needs_video
+def test_one_readable_bound_is_not_enough(monkeypatch):
+    real = replay.find_recordings
+    monkeypatch.setattr(replay, "find_recordings", lambda *a: [r | {"end": ""} for r in real(*a)])
+    cam = start(recordings=one_recording())
+    try:
+        assert run_check(SPEC, ctx_for(cam)).status is Status.STAND_ERROR
+    finally:
+        cam.stop()

@@ -60,7 +60,7 @@ class OnvifFault(RuntimeError):
         super().__init__(message)
         self.status = status
         self.code = code
-        self.detail = detail  # имена и текст элементов Fault: признак бывает только в Detail
+        self.detail = detail  # имена элементов внутри Detail: их камера не подставляет текстом
 
 
 # ter:NotAuthorized — код ONVIF, wsse:FailedAuthentication — код WS-Security (камеры на gSOAP,
@@ -220,8 +220,11 @@ class SoapClient:
         if fault is not None:
             reason = fault.findtext(".//s:Text", default="", namespaces=NS)
             code = fault.findtext(".//s:Subcode/s:Value", default="", namespaces=NS)
-            detail = " ".join(f"{e.tag.split('}')[-1]} {e.text or ''}" for e in fault.iter())
-            raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code, detail)
+            block = fault.find("s:Detail", NS)
+            names = [] if block is None else [e.tag.split("}")[-1] for e in block.iter()]
+            raise OnvifFault(
+                f"{code} {reason}".strip(), response.status_code, code, " ".join(names)
+            )
         # SOAP 1.1 и страницы ошибок веб-сервера: разбираются как XML, но это не SOAP 1.2. Код и
         # статус нужны и здесь: иначе опечатка в пароле выглядит дефектом, и проверки камеры
         # продолжают тратить попытки входа до блокировки.

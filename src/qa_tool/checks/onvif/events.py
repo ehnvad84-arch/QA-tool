@@ -58,12 +58,12 @@ def termination(answer: Element) -> datetime.datetime | None:
 def subscription_gone(fault: OnvifFault) -> bool:
     """Доказывает ли отказ, что подписки больше нет.
 
-    Смотреть можно только на признак WS-ResourceFramework: код и статус ничего не значат. На
-    настоящих камерах 06.11 верный ответ приходил и как `Receiver` с HTTP 500 (Hikvision, Beward),
-    и как `Sender` с HTTP 200, где признак есть только в Detail (Dahua). Любой другой отказ
-    может быть внутренней ошибкой камеры, поэтому не считается доказательством (замечание QA-03).
+    Смотреть можно только на элемент `ResourceUnknownFault` в Detail. Код и статус ничего не
+    значат: на настоящих камерах 06.11 верный ответ приходил и как `Receiver` с HTTP 500
+    (Hikvision, Beward), и как `Sender` с HTTP 200 (Dahua). Свободный текст причины тоже не
+    доказательство: в нём камера может написать что угодно (замечание QA-03).
     """
-    return "resourceunknown" in f"{fault} {fault.detail}".lower().replace(" ", "")
+    return "ResourceUnknownFault" in fault.detail.split()
 
 
 def addressing(action: str, url: str, reference: str = "") -> str:

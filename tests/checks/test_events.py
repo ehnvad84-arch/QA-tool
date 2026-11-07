@@ -125,10 +125,10 @@ def test_answer_that_is_not_soap_after_unsubscribe_proves_nothing(camera, monkey
 @pytest.mark.parametrize(
     "fault",
     [
-        OnvifFault("wsrf-r:ResourceUnknownFault", 500),  # Hikvision и Beward: Receiver, HTTP 500
-        OnvifFault("Resource Unknown", 200, detail="ResourceUnknownFault"),  # Dahua
+        OnvifFault("wsrf-r:ResourceUnknownFault", 500, detail="Detail ResourceUnknownFault"),
+        OnvifFault("Resource Unknown", 200, detail="Detail ResourceUnknownFault Timestamp"),
     ],
-    ids=["причина", "детали"],
+    ids=["Hikvision и Beward", "Dahua"],
 )
 def test_real_answers_of_cameras_prove_subscription_is_gone(fault):
     assert events.subscription_gone(fault)
@@ -140,8 +140,11 @@ def test_real_answers_of_cameras_prove_subscription_is_gone(fault):
         OnvifFault("s:Receiver внутренняя ошибка", 500),
         OnvifFault("ter:ActionNotSupported", 400, "ter:ActionNotSupported"),
         OnvifFault("if the unsubscribe has been executed,renew is invalid", 400),  # Tiandy
+        OnvifFault("internal failure: resource unknown", 500),
+        OnvifFault("ter:NotAuthorized Resource Unknown", 401, "ter:NotAuthorized"),
+        OnvifFault("wsrf-r:ResourceUnknownFault", 500),  # только текст, элемента нет
     ],
-    ids=["500", "не поддержано", "свой текст"],
+    ids=["500", "не поддержано", "свой текст", "слова в причине", "вход", "текст признака"],
 )
 def test_other_refusals_prove_nothing(fault):
     assert not events.subscription_gone(fault)

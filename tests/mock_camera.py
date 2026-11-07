@@ -54,11 +54,12 @@ def _envelope(body: str) -> bytes:
     ).encode()
 
 
-def _fault(reason: str, subcode: str = "ter:NotAuthorized") -> bytes:
+def _fault(reason: str, subcode: str = "ter:NotAuthorized", detail: str = "") -> bytes:
     return _envelope(
         "<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode>"
         f"<s:Value>{subcode}</s:Value></s:Subcode></s:Code>"
-        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason></s:Fault>'
+        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason>'
+        f"{f'<s:Detail>{detail}</s:Detail>' if detail else ''}</s:Fault>"
     )
 
 
@@ -200,7 +201,7 @@ class MockCamera:
         if answer is not None:
             return 200, _envelope(answer)
         if services.fault:
-            return 500, _fault(services.fault, services.fault)
+            return 500, _fault(services.fault, services.fault, services.fault_detail)
         return 400, _fault(f"Action not supported: {operation}", "ter:ActionNotSupported")
 
     def _handler(self):

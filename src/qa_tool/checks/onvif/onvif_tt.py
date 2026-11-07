@@ -253,20 +253,20 @@ def _restore_row(taker: "SnapshotTaker", snap: "Snapshot") -> ChildResult:
     """Строка протокола «вернули ли настройки камеры как были» (AD-3, never.md)."""
     restored, problems = taker.restore(snap)
     evidence = [Evidence("restored.txt", "Восстановлено и сверено:\n" + "\n".join(restored))]
+    notes = "".join(f"; {item.note}" for item in snap.items if item.note)
     if problems:
         result = CheckResult(
             Status.STAND_ERROR,
             reason="камера осталась изменённой: " + "; ".join(problems),
             expected="настройки после изменяющих тестов совпадают с исходными",
-            actual="; ".join(problems),
+            actual="; ".join(problems) + notes,
             evidence=evidence,
         )
     else:
         result = CheckResult(
             Status.PASSED,
             expected="настройки после изменяющих тестов совпадают с исходными",
-            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}"
-            + "".join(f"; {item.note}" for item in snap.items if item.note),
+            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}{notes}",
             evidence=evidence,
         )
     return ChildResult(RESTORE_ID, "Восстановление настроек после изменяющих тестов", result)

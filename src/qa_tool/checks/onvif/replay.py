@@ -240,13 +240,17 @@ def onvif_frame_info(extension: bytes) -> tuple[datetime.datetime, bool] | None:
 def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
     """Итог проигрывания дорожки: длительность по меткам RTP, кадры, ключевые, время архива."""
     video = [p for p in packets if p.channel == channel]
-    elapsed, previous, longest = 0, None, 0
+    # Длительность — размах меток, а не сумма шагов: метки, качающиеся туда-обратно, иначе дали бы
+    # любое время. Кадры — разные метки, а не биты маркера: маркер ставит сама камера.
+    position, lowest, highest, previous, longest = 0, 0, 0, None, 0
     for packet in video:
         if previous is not None:
             step = (packet.timestamp - previous) % 2**32
-            if step < 2**31:  # метки идут вперёд; «назад» — переупорядоченный пакет
-                elapsed += step
-                longest = max(longest, step)
+            if step >= 2**31:  # «назад» — кадр B или переупорядоченный пакет
+                step -= 2**32
+            position += step
+            lowest, highest = min(lowest, position), max(highest, position)
+            longest = max(longest, step)
         previous = packet.timestamp
     keyframes = set()  # по меткам RTP: кадр делится на пакеты, а признак может стоять на каждом
     moments = []
@@ -257,9 +261,9 @@ def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
         if (info and info[1]) or is_keyframe(track.encoding, packet.payload):
             keyframes.add(packet.timestamp)
     stats = {
-        "seconds": round(elapsed / track.clock_rate, 2),
+        "seconds": round((highest - lowest) / track.clock_rate, 2),
         "max_gap_s": round(longest / track.clock_rate, 2),
-        "frames": sum(p.marker for p in video),
+        "frames": len({p.timestamp for p in video}),
         "keyframes": len(keyframes),
         "codec": track.encoding.lower(),
     }

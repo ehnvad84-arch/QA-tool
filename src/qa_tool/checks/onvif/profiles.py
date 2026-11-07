@@ -105,6 +105,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
             "Видеопоток RTSP",
             "Media Streaming",
             ("LOCAL-MEDIA-S-STREAM-URI", "RUV-S-STREAM-1"),
+            proof=("RUV-S-STREAM-1",),
         ),
     ),
     "G": (
@@ -156,6 +157,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
             "Видеопоток RTSP",
             "RTSP streaming",
             ("LOCAL-MEDIA2-STREAM-URI", "RUV-S-STREAM-1"),
+            proof=("RUV-S-STREAM-1",),
         ),
         Feature("Снимок JPEG", "JPEG Snapshot", ()),
         _METADATA,

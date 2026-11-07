@@ -80,7 +80,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
     """Поток первого медиапрофиля открывается, кадры и ключевые кадры идут."""
     soap = SoapClient(ctx.camera.username, ctx.password, timeout=10)
     minimum = ctx.thresholds.get(THRESHOLD_KEY, DEFAULT_MIN_S)
-    expected = f"видео идёт ≥ {minimum.value:g} {minimum.unit}, есть ключевой кадр"
+    expected = f"видео идёт ровно ≥ {minimum.value:g} {minimum.unit}, есть ключевой кадр"
     try:
         profile, uri = first_stream(soap, service_urls(soap, ctx.camera))
     except (CameraUnreachable, OnvifFault) as e:
