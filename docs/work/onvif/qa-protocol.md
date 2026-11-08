@@ -5,8 +5,8 @@
 | Продукт | QA-tool: программа проверки IP-камер на стенде |
 | Что передаётся | Этап 2: проверка камеры по ONVIF, профили S, G, M, T, архив, метаданные, SD-карта |
 | Pull request | [PR №2](https://github.com/ehnvad84-arch/QA-tool/pull/2), ветка `feature/onvif` → `main` |
-| Проверяемый коммит | [`0c18323`](https://github.com/ehnvad84-arch/QA-tool/tree/0c183238173d3cd13ef3ea9f043b68108c8d2fcf) |
-| Дата | 06.11.2026 |
+| Проверяемый коммит | [`7d3b959`](https://github.com/ehnvad84-arch/QA-tool/tree/7d3b9591a04f2d00eeab77fc880aa61cac5069c1) |
+| Редакция | 2 от 08.11.2026: исправления по отчёту QA, см. [ответ на отчёт](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/qa-response.md) |
 | Что нужно от вас | Вердикт по разделу 7. Merge будет только после него |
 
 ## 1. Коротко
@@ -44,10 +44,10 @@ QA-tool подключается к IP-камере и проверяет, ра�
 |---|---|---|
 | CORE-CONNECT-1 | Подключение и паспорт камеры, идёт всегда | При отказе во входе остальные проверки камеры «пропущена», вход не повторяется |
 | ONVIF-TT | Запускает тесты onvif-tt | Строка на тест. Если не выполнен ни один тест — «ошибка стенда» |
-| RUV-S-STREAM-1 | Читает видеопоток RTSP | Кадры идут не меньше 5 с, есть ключевой кадр |
-| RUV-E-SUBSCRIBE-1 | Подписка на события: подписаться, продлить, отменить | Срок продлевается, после отмены подписки нет |
+| RUV-S-STREAM-1 | Читает видеопоток RTSP | Кадры идут не меньше 5 с ровно: не реже 1 кадра в секунду, без разрывов дольше 2 с, есть ключевой кадр |
+| RUV-E-SUBSCRIBE-1 | Подписка на события: подписаться, продлить, отменить | Срок продлевается, после отмены подписки нет. Доказательство отмены — только элемент `ResourceUnknownFault` в Detail ответа, иначе «ошибка стенда» |
 | RUV-G-SEARCH-1 | Поиск записей | Камера завершает поиск. Пустой список — не ошибка |
-| RUV-G-REPLAY-1 | Проигрывает архив | Не меньше 10 с, есть ключевые кадры, время кадров внутри записи |
+| RUV-G-REPLAY-1 | Проигрывает архив | Не меньше 10 с ровно, есть ключевые кадры, время кадров внутри записи. Границы записи не прочитаны — «ошибка стенда» |
 | RUV-SD-1, RUV-SD-2 | Накопитель и свежесть записи | Камера с записью сообщает о накопителе |
 | RUV-M-* | Метаданные и аналитика, только чтение | Только для камер с Profile M |
 | RUV-PROFILES-1 | Итог по профилям S, G, M, T | См. правила ниже |
@@ -67,15 +67,15 @@ QA-tool подключается к IP-камере и проверяет, ра�
 
 | Проверка | Результат |
 |---|---|
-| Тесты `uv run pytest` | 435 passed |
+| Тесты `uv run pytest` | 464 passed |
 | Линтер, форматирование, проверка комментариев | чисто |
 | Хук перед пушем (линтер, комментарии, тесты) | пройден |
-| CI: Ubuntu, Windows, аудит зависимостей | [проверки PR](https://github.com/ehnvad84-arch/QA-tool/pull/2/checks) |
+| CI: Ubuntu, Windows, аудит зависимостей, обе сборки | зелёный на проверяемом коммите: [проверки PR](https://github.com/ehnvad84-arch/QA-tool/pull/2/checks) |
 | Инструкция раздела 5 | выполнена на чистой копии из GitHub |
 
 ### Ревью кода
 
-Независимое ревью прошло шесть кругов в свежем контексте. Нашлись три блокера, все закрыты. Последняя проверка нашла подтверждённый обход посредника через ответы `multipart`: запрос с логином доходил до ловушки на настоящем клиенте onvif-tt. Обход закрыт. Все находки и вердикты: [review.md](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/review.md), [security-check.md](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/security-check.md).
+Независимое ревью прошло восемь кругов в свежем контексте. Нашлись три блокера, все закрыты. Внешний QA по первой редакции нашёл ещё пять дефектов, все воспроизведены и исправлены: см. ответ на отчёт. Последняя проверка нашла подтверждённый обход посредника через ответы `multipart`: запрос с логином доходил до ловушки на настоящем клиенте onvif-tt. Обход закрыт. Все находки и вердикты: [review.md](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/review.md), [security-check.md](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/security-check.md).
 
 Итог последнего круга:
 
@@ -108,12 +108,12 @@ Dahua с IP .110 не проверена: камера отвергла вход
 ```bash
 git clone https://github.com/ehnvad84-arch/QA-tool.git
 cd QA-tool
-git checkout 0c183238173d3cd13ef3ea9f043b68108c8d2fcf
+git checkout 7d3b9591a04f2d00eeab77fc880aa61cac5069c1
 uv sync
 uv run pytest
 ```
 
-Ожидается: 435 passed, около 4 минут.
+Ожидается: 464 passed, около 4 минут.
 
 Запуск виртуальной камеры, в отдельном терминале. Логин и пароль `admin`:
 
@@ -160,14 +160,18 @@ uv run pytest tests/checks/test_profiles.py tests/checks/test_events.py tests/ch
 
 | Риск | Тест | Где смотреть код |
 |---|---|---|
-| Запрещённая команда не доходит до камеры | `test_forbidden_operation_never_reaches_camera` | [taboo.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/core/taboo.py) |
-| Адрес мимо посредника | `test_address_hidden_from_rewriting_is_seen_after_parsing` | [taboo_proxy.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/drivers/camera/taboo_proxy.py) |
+| Запрещённая команда не доходит до камеры | `test_forbidden_operation_never_reaches_camera` | [taboo.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/core/taboo.py) |
+| Адрес мимо посредника | `test_address_hidden_from_rewriting_is_seen_after_parsing` | [taboo_proxy.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/drivers/camera/taboo_proxy.py) |
 | Клиент читает битый XML иначе, чем посредник | `test_broken_xml_is_read_as_the_client_reads_it` | там же |
-| Профиль G без проигранного архива | `test_profile_with_unproved_archive_is_not_passed` | [profiles.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/checks/onvif/profiles.py) |
-| onvif-tt сорвался на старте | `test_report_without_any_test_is_a_stand_error` | [onvif_tt.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/checks/onvif/onvif_tt.py) |
-| Поиск не завершён | `test_search_camera_never_finished_is_a_failure` | [replay.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/checks/onvif/replay.py) |
-| Подписка не отменяется | `test_defects_of_camera_are_failures` | [events.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/checks/onvif/events.py) |
-| Камера за туннелем | `test_service_of_camera_behind_tunnel` | [onvif_generic.py](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/src/qa_tool/drivers/camera/onvif_generic.py) |
+| Профиль G без проигранного архива | `test_profile_with_unproved_archive_is_not_passed` | [profiles.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/profiles.py) |
+| onvif-tt сорвался на старте | `test_report_without_any_test_is_a_stand_error` | [onvif_tt.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/onvif_tt.py) |
+| Поиск не завершён | `test_search_camera_never_finished_is_a_failure` | [replay.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/replay.py) |
+| Подписка не отменяется | `test_defects_of_camera_are_failures` | [events.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/events.py) |
+| Два кадра выдают за 10 с видео (QA-01) | `test_tricks_with_timestamps_are_not_video` | [replay.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/replay.py) |
+| Нет границ записи (QA-02) | `test_archive_without_readable_bounds_is_not_passed` | там же |
+| Отказ 500 после отмены подписки (QA-03) | `test_other_refusals_prove_nothing` | [events.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/events.py) |
+| Реле и задания записи (QA-04, QA-05) | `test_relay_reported_active_goes_back_to_active`, `test_job_gone_after_recording_is_a_changed_camera` | [snapshot.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/checks/onvif/snapshot.py) |
+| Камера за туннелем | `test_service_of_camera_behind_tunnel` | [onvif_generic.py](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/src/qa_tool/drivers/camera/onvif_generic.py) |
 
 ## 6. Известные ограничения
 
@@ -194,7 +198,12 @@ uv run pytest tests/checks/test_profiles.py tests/checks/test_events.py tests/ch
 - **Ответы `multipart` отвергаются целиком.** Настоящую камеру с MTOM посредник не пропустит: итог «ошибка стенда». Если так ответят `GetServices` и `GetCapabilities`, строки профилей покажут ложное «не поддержана». В текстах ответов 06.11 признаков MTOM нет, но заголовки ответов не сохранялись.
 - **Большой ответ (находка 62)** занимает поток посредника: 273 КБ — около 14 с. Страдает только процесс этой камеры.
 
-**Отложенные находки:** 47, 57, 59, 60, 62, 67, 72, 73, С2. Описания в review.md и security-check.md. Находка №37 упомянута в журнале, но описания нет нигде.
+**Риски новых порогов и реле:**
+
+- **Разрыв кадров 2 с.** Порог не проверен на настоящем архиве: запись по событиям с законным разрывом может дать ложную «не прошла» (находка 76). Порог `onvif.max_frame_gap_s` настраивается.
+- **Реле.** Прочитать состояние реле по ONVIF нельзя. Если камера его не сообщает, после изменяющих тестов ставится `inactive`, а в протоколе пишется «состояние реле не подтверждено».
+
+**Отложенные находки:** 47, 57, 59, 60, 62, 67, 72, 73, 76, 79, 81, 83, 84, С2. Описания в review.md и security-check.md. Находка №37 упомянута в журнале, но описания нет нигде.
 
 **Не разобрано:** тесты onvif-tt `ANALYTICS-1-1-1`, `ANALYTICS-4-1-4`, `DEVICEIO-3-1-3`, `EVENT-3-1-12`. Часть из них может оказаться ложными провалами.
 
@@ -217,12 +226,12 @@ uv run pytest tests/checks/test_profiles.py tests/checks/test_events.py tests/ch
 ## 8. Ссылки
 
 - [PR №2](https://github.com/ehnvad84-arch/QA-tool/pull/2): изменения, проверки, обсуждение
-- [Файлы на проверяемом коммите](https://github.com/ehnvad84-arch/QA-tool/tree/0c183238173d3cd13ef3ea9f043b68108c8d2fcf)
-- [Спецификация этапа](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/feature-spec.md)
-- [План задач](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/plan.md)
-- [Журнал работ](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/progress.md)
-- [Ревью](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/review.md)
-- [Проверка безопасности](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/work/onvif/security-check.md)
-- [Справка пользователя по ONVIF](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/manual/onvif.md)
-- [Правила проекта: запреты](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/rules/never.md)
-- [Архитектурные решения](https://github.com/ehnvad84-arch/QA-tool/blob/0c183238173d3cd13ef3ea9f043b68108c8d2fcf/docs/rules/architecture.md)
+- [Файлы на проверяемом коммите](https://github.com/ehnvad84-arch/QA-tool/tree/7d3b9591a04f2d00eeab77fc880aa61cac5069c1)
+- [Спецификация этапа](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/feature-spec.md)
+- [План задач](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/plan.md)
+- [Журнал работ](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/progress.md)
+- [Ревью](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/review.md)
+- [Проверка безопасности](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/work/onvif/security-check.md)
+- [Справка пользователя по ONVIF](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/manual/onvif.md)
+- [Правила проекта: запреты](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/rules/never.md)
+- [Архитектурные решения](https://github.com/ehnvad84-arch/QA-tool/blob/7d3b9591a04f2d00eeab77fc880aa61cac5069c1/docs/rules/architecture.md)
