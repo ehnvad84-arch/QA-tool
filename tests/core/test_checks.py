@@ -3,11 +3,13 @@ import pytest
 from qa_tool.core.checks import (
     CheckContext,
     CheckResult,
+    ChildResult,
     Evidence,
     Phase,
     Registry,
     Status,
     run_check,
+    scrub,
 )
 from qa_tool.core.models import Camera, Place, Scenario
 
@@ -111,3 +113,22 @@ def test_duplicate_id_rejected():
     reg.check("T-1", "core", "", "")(ok)
     with pytest.raises(ValueError, match="уже зарегистрирована"):
         reg.check("T-1", "core", "", "")(ok)
+
+
+def test_password_repeated_by_camera_is_removed_from_everything():
+    secret = "S3cret-pw"
+    child = CheckResult(
+        Status.FAILED, reason=f"пароль {secret}", evidence=[Evidence("a.txt", f"тело {secret}")]
+    )
+    result = CheckResult(
+        Status.PASSED,
+        actual=f"ответ {secret}",
+        expected=f"ждали {secret}",
+        evidence=[Evidence("b.txt", secret), Evidence("c.png", secret.encode(), kind="image")],
+        children=[ChildResult("X-1", f"строка {secret}", child)],
+    )
+    scrub(result, [secret, ""])
+    texts = [result.actual, result.expected, child.reason, child.evidence[0].content]
+    texts += [result.evidence[0].content, result.children[0].title]
+    assert not any(secret in text for text in texts)
+    assert result.evidence[1].content == secret.encode()  # двоичные доказательства не трогаем

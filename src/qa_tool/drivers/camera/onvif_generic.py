@@ -1,6 +1,7 @@
 """Общий ONVIF-драйвер: годится для любой камеры, своей и конкурента (AD-4)."""
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.soap import NS, SoapClient
@@ -15,6 +16,73 @@ class Passport:
     firmware: str
     serial: str
     hardware: str
+
+
+# пространство имён службы ONVIF → короткое имя (GetServices)
+SERVICE_KEYS = {
+    "http://www.onvif.org/ver10/device/wsdl": "device",
+    "http://www.onvif.org/ver10/media/wsdl": "media",
+    "http://www.onvif.org/ver20/media/wsdl": "media2",
+    "http://www.onvif.org/ver10/events/wsdl": "events",
+    "http://www.onvif.org/ver20/imaging/wsdl": "imaging",
+    "http://www.onvif.org/ver20/ptz/wsdl": "ptz",
+    "http://www.onvif.org/ver10/deviceIO/wsdl": "deviceio",
+    "http://www.onvif.org/ver10/recording/wsdl": "recording",
+    "http://www.onvif.org/ver10/search/wsdl": "search",
+    "http://www.onvif.org/ver10/replay/wsdl": "replay",
+    "http://www.onvif.org/ver20/analytics/wsdl": "analytics",
+}
+
+
+def stand_service_url(camera: Camera, url: str) -> str | None:
+    """Адрес службы, по которому до неё дойдёт стенд; None — служба на чужом хосте.
+
+    Камера за туннелем называет службы своим внутренним адресом, а Dahua — хостом из запроса,
+    но без порта. Оба варианта ведут на проброшенный порт: без этого запрос с логином ушёл бы
+    на порт 80 компьютера стенда.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:  # адрес от камеры, разобрать нельзя: на такой идти нельзя
+        return None
+    aliases = (camera.address.lower(), camera.lan_address.lower())
+    if camera.lan_address and host in aliases:
+        return urlunsplit(parts._replace(scheme="http", netloc=f"{camera.address}:{camera.port}"))
+    return url if host == camera.address.lower() else None
+
+
+def service_urls(
+    soap: SoapClient, camera: Camera, foreign: list[str] | None = None
+) -> dict[str, str]:
+    """Адреса служб камеры по GetServices; адрес на чужом хосте отброшен (security.md).
+
+    Args:
+        soap: клиент ONVIF камеры.
+        camera: камера со стенда.
+        foreign: сюда дописываются имена отброшенных служб — для причины в протоколе.
+
+    Raises:
+        CameraUnreachable, OnvifFault: GetServices не прошёл.
+    """
+    device_url = f"http://{camera.address}:{camera.port}/onvif/device_service"
+    answer = soap.call(
+        device_url,
+        "<tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>",
+    )
+    out = {"device": device_url}
+    for service in (e for e in answer.iter() if e.tag.endswith("}Service")):
+        namespace = next((c.text or "" for c in service if c.tag.endswith("}Namespace")), "")
+        url = next((c.text or "" for c in service if c.tag.endswith("}XAddr")), "").strip()
+        key = SERVICE_KEYS.get(namespace.strip())
+        if not key or key == "device":
+            continue
+        reachable = stand_service_url(camera, url)
+        if reachable:
+            out[key] = reachable
+        elif foreign is not None:
+            foreign.append(key)
+    return out
 
 
 class OnvifCamera:

@@ -19,6 +19,6 @@ syslibs="$HOME/.cache/qa-tool-syslibs/root/usr/lib/x86_64-linux-gnu"
 [ -d "$syslibs" ] && export LD_LIBRARY_PATH="$syslibs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # на общем VPS тесты идут в песочнице qa-test, чтобы не мешать другим проектам
 runner=()
-[ -x "$HOME/bin/qa-limited" ] && runner=("$HOME/bin/qa-limited")
+command -v qa-test >/dev/null && runner=(qa-test)
 "${runner[@]}" uv run pytest -q -p no:cacheprovider
 echo "pre-push: всё чисто"

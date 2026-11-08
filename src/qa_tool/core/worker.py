@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qa_tool.core.checks import (
+    CREDENTIALS_REJECTED,
+    FIRST_CHECK,
+    PREVIOUS_RESULTS,
     UNREACHABLE,
     CheckContext,
     CheckResult,
@@ -24,7 +27,6 @@ from qa_tool.core.checks import (
 from qa_tool.core.models import Camera, Place, Threshold
 from qa_tool.drivers.camera.probe import tcp_open
 
-FIRST_CHECK = "CORE-CONNECT-1"
 STOPPED = "прогон остановлен"
 LOST_DURING_CHECK = "камера перестала отвечать во время проверки (сбой камеры или прошивки)"
 
@@ -48,6 +50,8 @@ class WorkerArgs:
     sync_checks: set[str] = field(default_factory=set)
     thresholds: dict[str, Threshold] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    allow_writes: bool = False
+    allow_destructive: bool = False
 
 
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
@@ -76,15 +80,31 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
     """
     registry = resolve_registry(args.registry_ref)
     slot = args.camera.slot
-    ctx = CheckContext(args.camera, args.password, args.place, args.thresholds, dict(args.extra))
+    ctx = CheckContext(
+        args.camera,
+        args.password,
+        args.place,
+        args.thresholds,
+        dict(args.extra),
+        allow_writes=args.allow_writes,
+        allow_destructive=args.allow_destructive,
+    )
     by_phase: dict[Phase, list[tuple[str, str | None]]] = {}
     for check_id, skip in args.plan:
         by_phase.setdefault(registry.get(check_id).phase, []).append((check_id, skip))
     alive_checked = False  # камера отвечала хотя бы раз — дальше пропажа = «нет связи»
     unreachable_from_start = False
+    # Решение директора 2026-11-03: неверный логин или пароль — ошибка стенда. Остальные
+    # проверки с ним всё равно получили бы отказ и стали бы ложными «не прошла» с задачами.
+    rejected_from_start = False
+
+    previous = ctx.extra.setdefault(PREVIOUS_RESULTS, {})
 
     def send_result(check_id: str, result: CheckResult, started: str) -> None:
         outbox.put(("result", slot, check_id, result, started))
+        rows = [(c.check_id, c.result) for c in result.children] or [(check_id, result)]
+        for row_id, row in rows:
+            previous[row_id] = (row.status.value, row.reason)
 
     def lost() -> None:
         outbox.put(("lost", slot, "нет связи"))
@@ -109,6 +129,10 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 continue
             if unreachable_from_start:
                 reason = f"камера не на связи с начала прогона (см. {FIRST_CHECK})"
+                send_result(check_id, CheckResult.skipped(reason), started)
+                continue
+            if rejected_from_start:
+                reason = f"камера не приняла логин или пароль (см. {FIRST_CHECK})"
                 send_result(check_id, CheckResult.skipped(reason), started)
                 continue
             liveness = args.extra.get("liveness", True)
@@ -139,6 +163,9 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                     result.data.get(UNREACHABLE)
                 )
                 alive_checked = not unreachable_from_start
+                rejected_from_start = check_id == FIRST_CHECK and bool(
+                    result.data.get(CREDENTIALS_REJECTED)
+                )
             if (
                 was_reachable
                 and result.status in (Status.FAILED, Status.STAND_ERROR)

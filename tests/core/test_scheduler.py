@@ -243,3 +243,66 @@ def test_camera_lost_during_first_check_is_camera_defect(tmp_path, fleet):
     rows = {r["slot"]: (r["status"], r["reason"]) for r in store.results()}
     assert rows[2] == ("не прошла", LOST_DURING_CHECK)
     assert rows[1][0] == "не прошла"
+
+
+def test_composite_check_writes_child_rows_and_tasks(tmp_path, fleet):
+    from qa_tool.report.model import build_protocol
+
+    events = []
+    stand = make_stand(tmp_path, fleet[:1])
+    runner = Runner(
+        stand, Scenario(checks=["FAKE-COMPOSITE-1"]), registry_ref=REF, on_event=events.append
+    )
+    store = runner.run()
+    rows = {r["check_id"]: (r["status"], r["reason"]) for r in store.results()}
+    assert list(rows) == ["SUB-1", "SUB-2", "SUB-3"]
+    assert rows["SUB-1"][0] == "прошла"
+    assert rows["SUB-2"] == ("не прошла", "password=*** отказ")
+    assert rows["SUB-3"][0] == "ошибка стенда"  # «прошла» без доказательства
+    evidence = next((store.run_dir / "evidence" / "1" / "SUB-1").iterdir()).read_text()
+    assert "s3cret" not in evidence
+    protocol = build_protocol(store, 1)
+    assert [t.title.split("]")[0] for t in protocol.tasks] == ["[SUB-2"]
+    parts = [e for e in events if e.kind == "result"]
+    assert [e.check_id for e in parts] == ["SUB-1", "SUB-2", "SUB-3"] and all(e.part for e in parts)
+    assert [e.check_id for e in events if e.kind == "done"] == ["FAKE-COMPOSITE-1"]
+
+
+def test_wrong_password_skips_other_checks_instead_of_false_failures(tmp_path, fleet, monkeypatch):
+    # решение директора 2026-11-03: неверный пароль — ошибка стенда, задач программистам нет
+    from qa_tool.report.model import build_protocol
+
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    stand = make_stand(tmp_path, fleet[:2])
+    runner = Runner(stand, Scenario(checks=["CORE-CONNECT-1", "RUV-S-STREAM-1"]))
+    store = runner.run()
+    bad = {r["check_id"]: (r["status"], r["reason"]) for r in store.results(slot=1)}
+    assert bad["CORE-CONNECT-1"][0] == "ошибка стенда"
+    assert bad["RUV-S-STREAM-1"] == (
+        "пропущена",
+        "камера не приняла логин или пароль (см. CORE-CONNECT-1)",
+    )
+    assert build_protocol(store, 1).tasks == []
+    good = {r["check_id"]: r["status"] for r in store.results(slot=2)}
+    assert good == {"CORE-CONNECT-1": "прошла", "RUV-S-STREAM-1": "прошла"}
+
+
+def test_connect_check_runs_even_if_scenario_left_it_out(tmp_path, fleet, monkeypatch):
+    # без неё неверный пароль дал бы ложные «не прошла», а протокол — шапку без паспорта
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    stand = make_stand(tmp_path, fleet[:1])
+    store = Runner(stand, Scenario(checks=["RUV-S-STREAM-1"])).run()
+    rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
+    assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
+
+
+def test_typo_in_password_on_html_401_camera_costs_one_login(tmp_path, fleet, monkeypatch):
+    # иначе проверки камеры продолжали бы входить с неверным паролем до её блокировки
+    monkeypatch.setenv("QA_TOOL_PASSWORD_1", "wrong")
+    fleet[0].auth_reply = "http401page"
+    fleet[0].requests.clear()
+    stand = make_stand(tmp_path, fleet[:1])
+    store = Runner(stand, Scenario(checks=["CORE-CONNECT-1", "RUV-S-STREAM-1"])).run()
+    rows = {r["check_id"]: r["status"] for r in store.results(slot=1)}
+    assert rows == {"CORE-CONNECT-1": "ошибка стенда", "RUV-S-STREAM-1": "пропущена"}
+    assert fleet[0].requests.count("GetDeviceInformation") == 1

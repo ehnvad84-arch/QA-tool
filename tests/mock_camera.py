@@ -9,9 +9,9 @@
 
 import argparse
 import base64
+import datetime
 import hashlib
 import socket
-import socketserver
 import struct
 import threading
 import uuid
@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
+from tests.mock_rtsp import MockRtspServer
+
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",
@@ -27,6 +30,10 @@ NS = {
     "wsu": "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd",
     "wsa": "http://schemas.xmlsoap.org/ws/2004/08/addressing",
 }
+PASSWORD_DIGEST_TYPE = (
+    "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0"
+    "#PasswordDigest"
+)
 VENDORS = ["Ruver", "Hikvision", "Dahua", "Axis", "Uniview", "Raysharp"]
 
 
@@ -42,17 +49,17 @@ class Passport:
 def _envelope(body: str) -> bytes:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
-        f'<s:Envelope xmlns:s="{NS["s"]}" xmlns:tds="http://www.onvif.org/ver10/device/wsdl"'
-        ' xmlns:tt="http://www.onvif.org/ver10/schema">'
+        f'<s:Envelope xmlns:s="{NS["s"]}" {ENVELOPE_NS}>'
         f"<s:Body>{body}</s:Body></s:Envelope>"
     ).encode()
 
 
-def _fault(reason: str) -> bytes:
+def _fault(reason: str, subcode: str = "ter:NotAuthorized", detail: str = "") -> bytes:
     return _envelope(
         "<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode>"
-        "<s:Value>ter:NotAuthorized</s:Value></s:Subcode></s:Code>"
-        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason></s:Fault>'
+        f"<s:Value>{subcode}</s:Value></s:Subcode></s:Code>"
+        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason>'
+        f"{f'<s:Detail>{detail}</s:Detail>' if detail else ''}</s:Fault>"
     )
 
 
@@ -63,14 +70,27 @@ def password_digest(nonce: bytes, created: str, password: str) -> str:
 
 
 class MockCamera:
-    def __init__(self, passport: Passport, username: str = "admin", password: str = "admin"):
+    auth_reply = "onvif"  # отказ по паролю: onvif, gsoap (TMID-018), http401, http401page, soap11
+    clock_skew_s = 0  # часы камеры ушли: отметка времени запроса считается просроченной
+
+    def __init__(
+        self,
+        passport: Passport,
+        username: str = "admin",
+        password: str = "admin",
+        state: OnvifState | None = None,
+    ):
         self.passport = passport
+        self.state = state or OnvifState()
         self.username = username
         self.password = password
         self.requests: list[str] = []
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
-        self._rtsp = socketserver.ThreadingTCPServer(("127.0.0.1", 0), self._rtsp_handler())
-        self._rtsp.daemon_threads = True
+        self.rtsp = MockRtspServer(
+            metadata="M" in self.state.profiles and self.state.metadata_stream,
+            require_unsupported=self.state.replay_require_unsupported,
+            range_silent=self.state.replay_range_silent,
+        )
         self._threads: list[threading.Thread] = []
 
     @property
@@ -79,17 +99,17 @@ class MockCamera:
 
     @property
     def rtsp_port(self) -> int:
-        return self._rtsp.server_address[1]
+        return self.rtsp.port
 
     @property
     def xaddr(self) -> str:
         return f"http://127.0.0.1:{self.port}/onvif/device_service"
 
     def start(self) -> "MockCamera":
-        for server in (self._http, self._rtsp):
-            t = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
-            t.start()
-            self._threads.append(t)
+        t = threading.Thread(target=self._http.serve_forever, args=(0.05,), daemon=True)
+        t.start()
+        self._threads.append(t)
+        self.rtsp.start()
         return self
 
     def stop(self) -> None:
@@ -97,26 +117,63 @@ class MockCamera:
         if getattr(self, "_stopped", False):
             return
         self._stopped = True
-        for server in (self._http, self._rtsp):
-            server.shutdown()
-            server.server_close()
+        self._http.shutdown()
+        self._http.server_close()
+        self.rtsp.stop()
 
     def _authorized(self, root: ET.Element) -> bool:
         token = root.find(".//wsse:UsernameToken", NS)
         if token is None:
             return False
         user = token.findtext("wsse:Username", default="", namespaces=NS)
-        digest = token.findtext("wsse:Password", default="", namespaces=NS)
+        password = token.find("wsse:Password", NS)
+        # как gSOAP: тип сравнивается точно, иначе пароль считается открытым текстом и не совпадает
+        if password is None or password.get("Type") != PASSWORD_DIGEST_TYPE:
+            return False
+        digest = password.text or ""
         nonce = base64.b64decode(token.findtext("wsse:Nonce", default="", namespaces=NS))
         created = token.findtext("wsu:Created", default="", namespaces=NS)
+        if self.clock_skew_s:
+            sent = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if abs((sent - self._now()).total_seconds()) > 5:
+                return False
         return user == self.username and digest == password_digest(nonce, created, self.password)
 
+    def _now(self) -> datetime.datetime:
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=self.clock_skew_s)
+
     def answer(self, payload: bytes) -> tuple[int, bytes]:
-        root = ET.fromstring(payload)
+        try:
+            root = ET.fromstring(payload)
+        except ET.ParseError as e:  # как настоящая камера: ошибка в ответ, а не обрыв связи
+            return 400, _fault(f"Malformed request: {e}")
         body = root.find("s:Body", NS)
         operation = body[0].tag.split("}")[-1] if body is not None and len(body) else ""
         self.requests.append(operation)
+        if operation == "GetSystemDateAndTime" and self.clock_skew_s:
+            t = self._now()
+            return 200, _envelope(
+                "<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:UTCDateTime><tt:Time>"
+                f"<tt:Hour>{t.hour}</tt:Hour><tt:Minute>{t.minute}</tt:Minute>"
+                f"<tt:Second>{t.second}</tt:Second></tt:Time><tt:Date><tt:Year>{t.year}</tt:Year>"
+                f"<tt:Month>{t.month}</tt:Month><tt:Day>{t.day}</tt:Day></tt:Date></tt:UTCDateTime>"
+                "</tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>"
+            )
         if not self._authorized(root):
+            if self.auth_reply == "gsoap":
+                reason = "The security token could not be authenticated or authorized"
+                return 400, _fault(reason, "wsse:FailedAuthentication")
+            if self.auth_reply == "http401":
+                return 401, b"Unauthorized"
+            if self.auth_reply == "http401page":
+                page = b"<html><head><title>401</title></head><body>Unauthorized</body></html>"
+                return 401, page
+            if self.auth_reply == "soap11":
+                return 500, (
+                    b'<e:Envelope xmlns:e="http://schemas.xmlsoap.org/soap/envelope/"><e:Body>'
+                    b"<e:Fault><faultcode>ter:NotAuthorized</faultcode>"
+                    b"<faultstring>denied</faultstring></e:Fault></e:Body></e:Envelope>"
+                )
             return 400, _fault("Sender not Authorized")
         p = self.passport
         if operation == "GetDeviceInformation":
@@ -136,7 +193,16 @@ class MockCamera:
                 f"<tt:Media><tt:XAddr>{base}/media_service</tt:XAddr></tt:Media>"
                 "</tds:Capabilities></tds:GetCapabilitiesResponse>"
             )
-        return 400, _fault(f"Action not supported: {operation}")
+        services = OnvifServices(
+            self.state, f"http://127.0.0.1:{self.port}/onvif", f"rtsp://127.0.0.1:{self.rtsp_port}"
+        )
+        services.envelope = root
+        answer = services.handle(operation, body[0])
+        if answer is not None:
+            return 200, _envelope(answer)
+        if services.fault:
+            return 500, _fault(services.fault, services.fault, services.fault_detail)
+        return 400, _fault(f"Action not supported: {operation}", "ter:ActionNotSupported")
 
     def _handler(self):
         camera = self
@@ -153,18 +219,6 @@ class MockCamera:
 
             def log_message(self, *args):
                 pass
-
-        return Handler
-
-    @staticmethod
-    def _rtsp_handler():
-        class Handler(socketserver.StreamRequestHandler):
-            def handle(self):
-                request = self.rfile.readline()
-                if request.startswith(b"OPTIONS"):
-                    self.wfile.write(
-                        b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: OPTIONS, DESCRIBE\r\n\r\n"
-                    )
 
         return Handler
 

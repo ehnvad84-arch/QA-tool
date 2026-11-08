@@ -7,9 +7,13 @@ from pathlib import Path
 
 
 def tool_path(name: str) -> str | None:
-    """Путь к ffmpeg или ffprobe: из собранной программы, иначе из PATH; None — нет."""
+    """Путь к ffmpeg или ffprobe: из собранной программы, из папки QA_TOOL_FFMPEG_DIR
+    (разработка и тесты), иначе из PATH; None — нет."""
     exe = name + (".exe" if os.name == "nt" else "")
     bundled = Path(getattr(sys, "_MEIPASS", "")) / "ffmpeg" / exe
     if getattr(sys, "frozen", False) and bundled.exists():
         return str(bundled)
+    folder = os.environ.get("QA_TOOL_FFMPEG_DIR")
+    if folder and (Path(folder) / exe).exists():
+        return str(Path(folder) / exe)
     return shutil.which(name)

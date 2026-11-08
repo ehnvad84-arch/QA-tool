@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+import pytest
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
@@ -16,9 +17,16 @@ a = Analysis(
         (str(root / "docs" / "manual"), "manual"),
         (str(ffmpeg_bin.parent / "LICENSE.txt"), "ffmpeg"),  # LGPL: лицензия рядом с ffmpeg
         *collect_data_files("qa_tool"),
+        # onvif-tt — набор тестов pytest: pytest собирает их из файлов .py, а не из архива
+        # сборки, поэтому исходники и схемы ONVIF (WSDL, XSD) кладутся рядом файлами
+        *collect_data_files("onvif_tt", include_py_files=True),
     ],
-    hiddenimports=collect_submodules("qa_tool"),
-    excludes=["tests", "pytest"],
+    hiddenimports=[
+        *collect_submodules("qa_tool"),
+        *collect_submodules("onvif_tt"),
+        *pytest.freeze_includes(),  # модули pytest, которые он грузит по имени, а не импортом
+    ],
+    excludes=["tests"],
 )
 pyz = PYZ(a.pure)
 icon = str(root / "packaging" / "icon.ico") if os.name == "nt" else None

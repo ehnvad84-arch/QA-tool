@@ -16,7 +16,7 @@
   <tr><th>Адрес · место на стенде</th><td>{{ p.address }} · место {{ p.slot }}</td></tr>
   <tr><th>Место стенда</th><td>{{ p.place }}</td></tr>
   <tr><th>Сценарий</th><td>
-    {% if p.scenario.checks %}проверки: {{ p.scenario.checks | join(", ") }}{% else %}все доступные проверки{% endif %};
+    {% if p.scenario.checks %}проверки: {{ (p.scenario.checks if "CORE-CONNECT-1" in p.scenario.checks else ["CORE-CONNECT-1"] + p.scenario.checks) | join(", ") }}{% else %}все доступные проверки{% endif %};
     изменяющие — {{ "разрешены" if p.scenario.allow_writes else "запрещены" }};
     разрушающие — {{ "разрешены" if p.scenario.allow_destructive else "запрещены" }}
   </td></tr>
@@ -34,6 +34,22 @@
   <tr><td>{{ module }}</td><td>{{ c["прошла"] }}</td><td>{{ c["не прошла"] }}</td><td>{{ c["ошибка стенда"] }}</td><td>{{ c["пропущена"] }}</td></tr>
   {% endfor %}
 </table>
+
+{% if p.profiles.matrix %}
+<h2>Профили ONVIF</h2>
+<p>Объявлены камерой: {{ p.profiles.declared | join(", ") or "ни одного" }}. Обязательные функции — по ONVIF Profiles Conformance Device Test Specification.</p>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Профиль</th><th>Обязательная функция</th><th>Итог</th><th>Основание</th></tr></thead>
+  {% for v in p.profiles.matrix %}
+  <tr>
+    <td>{{ v.profile }}{% if v.profile not in p.profiles.declared %} <span class="muted">(не объявлен)</span>{% endif %}</td>
+    <td>{{ v.feature }}{% if v.note %}<br><span class="muted">{{ v.note }}</span>{% endif %}</td>
+    <td class="{{ 'st-прошла' if v.verdict == 'работает' else ('st-не-прошла' if v.verdict in ('не работает', 'не поддержана') else 'st-пропущена') }}">{{ v.verdict }}</td>
+    <td>{{ v.basis }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
 
 <h2>2. Результаты проверок</h2>
 <table border="1" cellspacing="0" cellpadding="4">

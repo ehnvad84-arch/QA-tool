@@ -60,3 +60,22 @@ _register("FAKE-SYNC-Z", 0.1, phase=Phase.SYNC, resources={"light"}, order=3)
 
 MAIN = ["FAKE-NET-1", "FAKE-NET-2", "FAKE-SYNC-1", "FAKE-LIGHT-1", "FAKE-STRESS-1"]
 SLOW = ["FAKE-SLOW-1", "FAKE-SLOW-2", "FAKE-SLOW-3"]
+
+
+def _composite(ctx):
+    from qa_tool.core.checks import ChildResult
+
+    ok = CheckResult(Status.PASSED, evidence=[Evidence("x.txt", "Authorization: Digest s3cret")])
+    return CheckResult(
+        Status.PASSED,
+        children=[
+            ChildResult("SUB-1", "первая", ok),
+            ChildResult(
+                "SUB-2", "вторая", CheckResult(Status.FAILED, reason="password=s3cret отказ")
+            ),
+            ChildResult("SUB-3", "без доказательства", CheckResult(Status.PASSED)),
+        ],
+    )
+
+
+REGISTRY.check("FAKE-COMPOSITE-1", "fake", "составная", "что делаем")(_composite)

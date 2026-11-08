@@ -1,9 +1,14 @@
 import os
 import sys
+from pathlib import Path
 
 import keyring
 import pytest
 from keyring.backend import KeyringBackend
+
+# ffmpeg и ffprobe закреплённой сборки из кэша packaging/fetch.py — тем же, что в установщиках
+for _bin in sorted((Path.home() / ".cache" / "qa-tool-build").glob("ffmpeg-*/*/bin")):
+    os.environ.setdefault("QA_TOOL_FFMPEG_DIR", str(_bin))
 
 if sys.platform.startswith("linux"):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # тесты окна и PDF без экрана
