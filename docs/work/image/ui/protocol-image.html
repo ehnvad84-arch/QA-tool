@@ -1,0 +1,228 @@
+<!doctype html>
+<!-- Макет раздела протокола камеры «Приложение 1. Картинка: снимки и замеры» (ui-designer, этап 1).
+     Только таблицы и атрибуты width/height: этот же HTML печатает в PDF QTextDocument, он не знает flex, grid и max-width.
+     Серые ячейки — заглушки снимков; в протоколе вместо них <img> миниатюры со ссылкой на превью. Данные выдуманы. -->
+<html lang="ru"><head><meta charset="utf-8">
+<title>Макет: протокол камеры, раздел «Картинка»</title>
+<style>
+  body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #111; }
+  h1 { font-size: 15pt; margin: 0 0 4pt 0; }
+  h2 { font-size: 12pt; margin: 14pt 0 4pt 0; }
+  h3 { font-size: 10pt; margin: 0 0 2pt 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #e8e8e8; text-align: left; }
+  td, th { vertical-align: top; }
+  .muted { color: #555; }
+  .st-прошла { color: #11632a; }
+  .st-не-прошла { color: #a11212; font-weight: bold; }
+  .st-ошибка-стенда { color: #8a5a00; }
+  .st-пропущена { color: #555; }
+  /* новое: заглушка снимка и рамка пояснения; цвета — из существующих (_style.html, xlsx) */
+  .thumb { background: #2b2824; color: #b1a99d; text-align: center; vertical-align: middle; font-size: 8pt; }
+  .noimg { background: #eeeeee; color: #555; text-align: center; vertical-align: middle; font-size: 8pt; }
+  .note { background: #f6f6f6; }
+  .blocker { background: #f4cccc; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head><body>
+
+<p class="muted">… разделы 1–3 протокола без изменений; в разделе 2 у строк IMAGE-* в столбце «Доказательство» добавлено «снимки — Приложение 1, п. N» …</p>
+<p>Приложения: 1 — Картинка: снимки и замеры.</p>
+<h2>4. Подписи</h2>
+<p class="muted">…</p>
+
+<!-- ===================== Приложение 1 ===================== -->
+<h2 class="pagebreak">Приложение 1. Картинка: снимки и замеры</h2>
+<p>Сцена: обычная (без управляемого света и таблиц). Изменяющие проверки разрешены. Режим экспозиции камеры: автоматический (программа его не меняет).
+Каждая настройка ставилась в 0 %, 50 % и 100 % диапазона, который объявила камера; после каждой возвращалось исходное значение.</p>
+
+<!-- Возврат настроек: при «не прошла» блок наверху раздела, иначе одна строка -->
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr><td class="blocker" colspan="3"><b>IMAGE-RESTORE-1 · не прошла · блокер.</b> Значения не возвращены: камера осталась с изменёнными настройками. Верните их вручную в веб-интерфейсе камеры.</td></tr>
+  <tr><th width="40%">Настройка</th><th width="30%">Было до проверки</th><th>Осталось</th></tr>
+  <tr><td>Резкость</td><td>50</td><td>100</td></tr>
+</table>
+<p class="muted">Если всё вернулось: «Возврат настроек: все значения возвращены и сверены».</p>
+
+<!-- Текущее состояние: IMAGE-STATE-1 -->
+<h3>1. Текущее состояние до проверки · IMAGE-STATE-1 · <span class="st-прошла">прошла</span></h3>
+<table border="0" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="45%">
+      <table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="460" height="259">снимок текущего кадра<br>(превью, ссылка на before1.jpg)</td></tr></table>
+      <span class="muted">Кадр 1920 × 1080, H.264, профиль «MainStream»</span>
+    </td>
+    <td>
+      <table border="1" cellspacing="0" cellpadding="3">
+        <thead><tr><th>Настройка</th><th>Текущее значение</th><th>Диапазон камеры</th><th>Положение в диапазоне</th></tr></thead>
+        <tr><td>Яркость</td><td>50</td><td>0–100</td><td>50 %</td></tr>
+        <tr><td>Контраст</td><td>50</td><td>0–100</td><td>50 %</td></tr>
+        <tr><td>Насыщенность</td><td>55</td><td>0–100</td><td>55 %</td></tr>
+        <tr><td>Резкость</td><td>50</td><td>0–100</td><td>50 %</td></tr>
+        <tr><td>Баланс белого, красный</td><td>128</td><td>0–255</td><td>50 %</td></tr>
+        <tr><td>Баланс белого, синий</td><td>128</td><td>0–255</td><td>50 %</td></tr>
+        <tr><td>WDR</td><td>выкл</td><td>вкл / выкл</td><td>—</td></tr>
+        <tr><td>Компенсация засветки</td><td>выкл, 0</td><td>0–10</td><td>—</td></tr>
+        <tr><td>Шумоподавление</td><td class="muted">не объявлена</td><td>—</td><td>—</td></tr>
+        <tr><td>Режим экспозиции</td><td>автоматический</td><td colspan="2" class="muted">программа его не меняет</td></tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Блок настройки: левая колонка — описание и итог, три колонки — снимки 0/50/100 % -->
+<h3 class="pagebreak">2. Яркость · IMAGE-BRIGHT-1</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-прошла">прошла</b> · эффект есть<br>
+      Величина: средняя яркость кадра, уровни 0–255.<br>
+      Ожидалось: растёт на каждом шаге не меньше чем на 3,0.<br>
+      <span class="muted">Порог: 3,0 уровня (стартовое значение: уточнить по эталонным камерам)</span><br>
+      Сцена: кадры до и после совпадают (разница 0,6 при пороге 3,0).
+    </td>
+    <th width="24%">0 %</th><th width="24%">50 %</th><th>100 %</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 0 %</td></tr></table>
+        величина <b>82,4</b><br><span class="muted">записано 0, прочитано 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 50 %</td></tr></table>
+        величина <b>121,0</b> (+38,6)<br><span class="muted">записано 50, прочитано 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 100 %</td></tr></table>
+        величина <b>163,5</b> (+42,5)<br><span class="muted">записано 100, прочитано 100</span></td>
+  </tr>
+</table>
+<br>
+
+<!-- Не прошла: эффект неровный (шаги в разные стороны) -->
+<h3>3. Насыщенность · IMAGE-SAT-1</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-не-прошла">не прошла</b> · эффект неровный<br>
+      На шаге 50 → 100 % насыщенность упала на 6,2, ожидался рост.<br>
+      Величина: насыщенность цвета, %.<br>
+      Ожидалось: растёт на каждом шаге не меньше чем на 2,0.<br>
+      <span class="muted">Порог: 2,0 % (стартовое значение: уточнить по эталонным камерам)</span><br>
+      Выборки потока для программистов: clip_p000.h264, clip_p050.h264, clip_p100.h264.
+    </td>
+    <th width="24%">0 %</th><th width="24%">50 %</th><th>100 %</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 0 %</td></tr></table>
+        величина <b>31,2</b></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 50 %</td></tr></table>
+        величина <b>44,0</b> (+12,8)</td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 100 %</td></tr></table>
+        величина <b>37,8</b> (<b class="st-не-прошла">−6,2</b>)</td>
+  </tr>
+</table>
+<br>
+
+<!-- Пропущена: автоэкспозиция — коротко в блоке, развёрнуто в «Пояснении А» ниже -->
+<h3>4. Контраст · IMAGE-CONTRAST-1</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-пропущена">пропущена</b> · эффект погашен автоэкспозицией<br>
+      От 0 до 100 % разброс яркости изменился на 0,9 при пороге 2,0. Это не признано дефектом камеры.<br>
+      <b>Что сделать: см. пояснение А в конце приложения.</b>
+    </td>
+    <th width="24%">0 %</th><th width="24%">50 %</th><th>100 %</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 0 %</td></tr></table>величина <b>96,1</b></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 50 %</td></tr></table>величина <b>96,5</b></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 100 %</td></tr></table>величина <b>97,0</b></td>
+  </tr>
+</table>
+<br>
+
+<!-- Ошибка стенда: сцена нестабильна — вместо положений показываются кадры «до» -->
+<h3 class="pagebreak">5. Баланс белого, красный · IMAGE-WB-1</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-ошибка-стенда">ошибка стенда</b> · сцена менялась<br>
+      Два кадра до проверки различаются на 5,2 при пороге 3,0: в кадре движение или мигает свет. Настройка не менялась. Это не дефект камеры.<br>
+      <b>Что сделать:</b> уберите движение из бокса, проверьте свет и повторите прогон.
+    </td>
+    <th width="24%">до, кадр 1</th><th width="24%">до, кадр 2 (через 1 с)</th><th>—</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">кадр «до» 1</td></tr></table></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">кадр «до» 2</td></tr></table></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="230" height="129">не снимался:<br>сцена нестабильна</td></tr></table></td>
+  </tr>
+</table>
+<br>
+
+<!-- Не прошла: камера не приняла значение; на этом положении снимка нет -->
+<h3>6. Баланс белого, синий · IMAGE-WB-2</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-не-прошла">не прошла</b> · камера не приняла значение<br>
+      Камера не приняла значение 255 из объявленного диапазона 0–255: после записи прочитано 128.<br>
+      <span class="muted">Ответ камеры: «ter:InvalidArgVal» (обрезано до 300 знаков)</span>
+    </td>
+    <th width="24%">0 %</th><th width="24%">50 %</th><th>100 %</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 0 %</td></tr></table>величина <b>100 %</b></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок 50 %</td></tr></table>величина <b>91 %</b> (−9)</td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="230" height="129">нет снимка:<br>камера не приняла 255</td></tr></table>—</td>
+  </tr>
+</table>
+<br>
+
+<!-- Только два положения: WDR «вкл/выкл» -->
+<h3 class="pagebreak">7. WDR · IMAGE-WDR-1</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>
+    <td width="28%" rowspan="2">
+      <b class="st-прошла">прошла</b> · эффект есть<br>
+      У камеры только «выкл / вкл», поэтому два положения.<br>
+      Величина: разница между светлыми и тёмными участками, уровни 0–255.<br>
+      Ожидалось: уменьшается не меньше чем на 4,0.
+    </td>
+    <th width="24%">выкл</th><th width="24%">—</th><th>вкл</th>
+  </tr>
+  <tr>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок «выкл»</td></tr></table>величина <b>188,0</b></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="230" height="129">нет положения 50 %:<br>у камеры только вкл / выкл</td></tr></table></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">снимок «вкл»</td></tr></table>величина <b>151,4</b> (−36,6)</td>
+  </tr>
+</table>
+<br>
+
+<!-- Короткие строки без снимков: не поддерживается, не разрешено, сцена не подходит -->
+<h3>8. Настройки без снимков</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th width="28%">Настройка</th><th width="14%">Результат</th><th>Причина</th></tr></thead>
+  <tr><td>Шумоподавление · IMAGE-NR-1</td><td class="st-пропущена">пропущена</td><td>камера не объявляет эту настройку в ONVIF Imaging</td></tr>
+  <tr><td>Резкость · IMAGE-SHARP-1</td><td class="st-ошибка-стенда">ошибка стенда</td><td>кадр не получен: нет ключевого кадра за 12 с. Проверьте поток камеры на экране «Прогон» и повторите</td></tr>
+  <tr><td>Компенсация засветки · IMAGE-BLC-1</td><td class="st-пропущена">пропущена</td><td>сцена не подходит: в кадре нет пересвеченных и тёмных участков (0,2 % при нужном 1 %). Нужна сцена этапа 6 — контровой свет</td></tr>
+</table>
+
+<!-- Пояснения: одно на камеру, перечисляет настройки, к которым относится -->
+<h3 class="pagebreak">Пояснение А. Почему настройки пропущены из-за автоэкспозиции и как проверить их вручную</h3>
+<table border="1" cellspacing="0" cellpadding="8"><tr><td class="note">
+  <p><b>Относится к:</b> контраст (IMAGE-CONTRAST-1). Режим экспозиции камеры: автоматический.
+  <span class="muted">Если камера не сообщила режим: «Камера не сообщила режим экспозиции; программа считает его автоматическим, чтобы не выдать ложную задачу».</span></p>
+  <p><b>Что произошло.</b> Камера сама держит яркость кадра постоянной: когда программа меняла настройку, автоматическая экспозиция
+  подстраивала выдержку и усиление и возвращала картинку к прежней яркости. Поэтому по кадрам нельзя сказать, работает настройка или нет,
+  и программа не считает это дефектом камеры: строка «пропущена», задачи программистам нет.</p>
+  <p><b>Как проверить вручную.</b></p>
+  <ol>
+    <li>Откройте веб-интерфейс камеры, раздел настроек изображения, подраздел экспозиции. Запишите текущий режим и значения выдержки и усиления.</li>
+    <li>Включите ручной режим экспозиции и задайте выдержку и усиление так, чтобы картинка была нормальной яркости.</li>
+    <li>В программе на экране «Сценарий» оставьте только модуль «Картинка», включите «Разрешить изменяющие проверки» и запустите прогон.</li>
+    <li>После прогона верните в камере режим экспозиции и значения, записанные в шаге 1.</li>
+  </ol>
+  <p><b>Программа режим экспозиции не меняет никогда</b>, даже с галочкой «изменяющие»: он влияет на все остальные настройки изображения и на другие проверки.</p>
+  <p class="muted">Компенсацию засветки так не проверить: она работает только при автоматической экспозиции, и при ручной будет «пропущена: работает только с автоэкспозицией».
+  Её проверка — на сцене с контровым светом (этап 6). Подробнее — справка F1, раздел «Картинка: автоэкспозиция».</p>
+</td></tr></table>
+
+</body></html>
