@@ -117,13 +117,18 @@ def imaging_video(picture: dict[str, float]) -> bytes | None:
         return None
     p = {k: round(v, 3) for k, v in sorted(picture.items())}
     key = hashlib.sha1(repr(p).encode()).hexdigest()[:12]
-    path = CACHE / f"imaging-{key}.h264"
+    path = CACHE / f"imaging2-{key}.h264"
     if path.exists():
         return path.read_bytes()
+    shift = (p["brightness"] - 0.5) * 0.4 * 255
+    gain = 0.5 + p["contrast"]
+    sat = 2 * p["saturation"]
+    # lutyuv по формуле фильтра eq: eq есть только в GPL-сборках ffmpeg, а CI и установщики
+    # берут LGPL-сборку BtbN — с eq ролик не строился, и тесты картинки падали
     chain = [
         "loop=loop=29:size=1:start=0",
-        f"eq=brightness={(p['brightness'] - 0.5) * 0.4:.3f}:contrast={0.5 + p['contrast']:.3f}"
-        f":saturation={2 * p['saturation']:.3f}",
+        f"lutyuv=y='clip((val-128)*{gain:.3f}+128+{shift:.3f},0,255)'"
+        f":u='clip((val-128)*{sat:.3f}+128,0,255)':v='clip((val-128)*{sat:.3f}+128,0,255)'",
         f"unsharp=5:5:{(p['sharpness'] - 0.5) * 3:.3f}",
         f"colorchannelmixer=rr={0.6 + 0.8 * p['red']:.3f}:bb={0.6 + 0.8 * p['blue']:.3f}",
     ]
