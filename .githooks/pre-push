@@ -20,5 +20,22 @@ syslibs="$HOME/.cache/qa-tool-syslibs/root/usr/lib/x86_64-linux-gnu"
 # на общем VPS тесты идут в песочнице qa-test, чтобы не мешать другим проектам
 runner=()
 command -v qa-test >/dev/null && runner=(qa-test)
-"${runner[@]}" uv run pytest -q -p no:cacheprovider
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+if ! "${runner[@]}" uv run pytest -q -p no:cacheprovider -rf 2>&1 | tee "$log"; then
+  # Решение директора 2026-11-08: на общем VPS соседние проекты нагружают процессор, и тесты
+  # с браузером и видеопотоком, чувствительные ко времени, падали по одному, каждый раз разные
+  # (шесть пушей подряд). До трёх упавших прогоняются ещё раз; прошли — пуш идёт, а имена
+  # пишутся в журнал неустойчивых тестов для разбора. CI на GitHub гоняет всё заново без этого.
+  mapfile -t failed < <(grep -E '^FAILED ' "$log" | sed -E 's/^FAILED ([^ ]+).*/\1/' | sort -u)
+  if [ "${#failed[@]}" -eq 0 ] || [ "${#failed[@]}" -gt 3 ]; then
+    echo "pre-push: тесты не прошли"
+    exit 1
+  fi
+  echo "pre-push: перепрогон упавших: ${failed[*]}"
+  "${runner[@]}" uv run pytest -q -p no:cacheprovider "${failed[@]}"
+  flaky="$(git rev-parse --git-common-dir)/qa-flaky-tests.log"
+  printf '%s %s %s\n' "$(date -Iseconds)" "$(git branch --show-current)" "${failed[*]}" >> "$flaky"
+  echo "pre-push: неустойчивые тесты прошли со второго раза, записаны в $flaky"
+fi
 echo "pre-push: всё чисто"
