@@ -6,6 +6,8 @@ Authorization, адрес потока — на хосте камеры из с�
 Глубокий разбор потока (потери, частота кадров, битрейт) — модуль «Поток» этапа 4.
 """
 
+from xml.etree.ElementTree import Element
+
 from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
 from qa_tool.checks.onvif.replay import frames_problem, play, soap_evidence
 from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
@@ -32,8 +34,10 @@ def _local(tag: str) -> str:
     return tag.split("}")[-1]
 
 
-def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str]:
-    """Первый медиапрофиль и его адрес RTSP: Media2, если объявлен, иначе Media.
+def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str, str]:
+    """Первый медиапрофиль, его адрес RTSP и токен источника видео: Media2, если объявлен.
+
+    Токен источника нужен службе Imaging (этап 7); пусто — профиль источник не назвал.
 
     Raises:
         OnvifFault: нет службы медиа или медиапрофилей.
@@ -43,10 +47,21 @@ def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str]:
         raise OnvifFault("камера не объявляет службу медиа (Media или Media2)")
     url, prefix = (services["media2"], "tr2") if media2 else (services["media"], "trt")
     answer = soap.call(url, f"<{prefix}:GetProfiles/>")
-    profile = next((e.get("token", "") for e in answer.iter() if _local(e.tag) == "Profiles"), "")
+    first = next((e for e in answer.iter() if _local(e.tag) == "Profiles"), None)
+    profile = "" if first is None else first.get("token", "")
     if not profile:
         raise OnvifFault("GetProfiles не вернул ни одного медиапрофиля")
-    return profile, stream_uri(soap, url, media2, profile)
+    return profile, stream_uri(soap, url, media2, profile), _video_source(first)
+
+
+def _video_source(profile: Element) -> str:
+    """SourceToken источника видео: Media — VideoSourceConfiguration, Media2 — VideoSource."""
+    for element in profile.iter():
+        if _local(element.tag) in ("VideoSourceConfiguration", "VideoSource"):
+            token = next((c.text for c in element if _local(c.tag) == "SourceToken"), None)
+            if token and token.strip():
+                return token.strip()
+    return ""
 
 
 @REGISTRY.check(
@@ -68,7 +83,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
     minimum = ctx.thresholds.get(THRESHOLD_KEY, DEFAULT_MIN_S)
     expected = f"видео идёт ровно ≥ {minimum.value:g} {minimum.unit}, есть ключевой кадр"
     try:
-        profile, uri = first_stream(soap, service_urls(soap, ctx.camera))
+        profile, uri, _source = first_stream(soap, service_urls(soap, ctx.camera))
     except (CameraUnreachable, OnvifFault) as e:
         return CheckResult(
             Status.FAILED,

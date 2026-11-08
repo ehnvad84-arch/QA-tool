@@ -3,6 +3,7 @@ Media2, поиск и воспроизведение записей, задан�
 события PullPoint. Состояние — в памяти: включённое задание записи сразу даёт запись в поиске.
 """
 
+import copy
 import datetime
 import itertools
 import uuid
@@ -40,6 +41,54 @@ ENVELOPE_NS = (
     'xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"'
 )
 PROFILE_SCOPES = {"S": "Streaming", "G": "G", "M": "M", "T": "T"}
+_TT = "http://www.onvif.org/ver10/schema"
+ET.register_namespace("tt", _TT)  # состояние хранится текстом с префиксом tt, как шлёт камера
+
+# Полный блок ImagingSettings20 в порядке схемы — для проверки картинки (этап 7)
+IMAGING_FULL = (
+    "<tt:BacklightCompensation><tt:Mode>OFF</tt:Mode><tt:Level>50</tt:Level>"
+    "</tt:BacklightCompensation>"
+    "<tt:Brightness>50</tt:Brightness><tt:ColorSaturation>50</tt:ColorSaturation>"
+    "<tt:Contrast>50</tt:Contrast>"
+    "<tt:Exposure><tt:Mode>AUTO</tt:Mode><tt:MinExposureTime>10</tt:MinExposureTime></tt:Exposure>"
+    "<tt:Focus><tt:AutoFocusMode>MANUAL</tt:AutoFocusMode></tt:Focus>"
+    "<tt:IrCutFilter>AUTO</tt:IrCutFilter><tt:Sharpness>50</tt:Sharpness>"
+    "<tt:WideDynamicRange><tt:Mode>OFF</tt:Mode><tt:Level>50</tt:Level></tt:WideDynamicRange>"
+    "<tt:WhiteBalance><tt:Mode>AUTO</tt:Mode><tt:CrGain>50</tt:CrGain><tt:CbGain>50</tt:CbGain>"
+    "</tt:WhiteBalance>"
+    "<tt:Extension><tt:ImageStabilization><tt:Mode>OFF</tt:Mode></tt:ImageStabilization>"
+    "<tt:Extension><tt:Extension><tt:NoiseReduction><tt:Level>0.5</tt:Level></tt:NoiseReduction>"
+    "</tt:Extension></tt:Extension></tt:Extension>"
+)
+
+
+def _range(name: str, low: str = "0", high: str = "100") -> str:
+    return f"<tt:{name}><tt:Min>{low}</tt:Min><tt:Max>{high}</tt:Max></tt:{name}>"
+
+
+IMAGING_OPTIONS = (
+    f"<tt:BacklightCompensation><tt:Mode>OFF</tt:Mode><tt:Mode>ON</tt:Mode>{_range('Level')}"
+    "</tt:BacklightCompensation>"
+    f"{_range('Brightness')}{_range('ColorSaturation')}{_range('Contrast')}{_range('Sharpness')}"
+    f"<tt:WideDynamicRange><tt:Mode>OFF</tt:Mode><tt:Mode>ON</tt:Mode>{_range('Level')}"
+    "</tt:WideDynamicRange>"
+    "<tt:WhiteBalance><tt:Mode>AUTO</tt:Mode><tt:Mode>MANUAL</tt:Mode>"
+    f"{_range('YrGain')}{_range('YbGain')}</tt:WhiteBalance>"
+    "<tt:Extension><tt:Extension><tt:Extension><tt:NoiseReductionOptions><tt:Level>true</tt:Level>"
+    "</tt:NoiseReductionOptions></tt:Extension></tt:Extension></tt:Extension>"
+)
+
+
+def merge_imaging(current: ET.Element, sent: ET.Element) -> None:
+    """Слить присланные поля в текущие, как камера: чего не прислали — остаётся."""
+    for child in sent:
+        mine = next((c for c in current if c.tag == child.tag), None)
+        if mine is None:
+            current.append(copy.deepcopy(child))
+        elif len(child):
+            merge_imaging(mine, child)
+        else:
+            mine.text = child.text
 
 
 def _now() -> datetime.datetime:
@@ -118,6 +167,11 @@ class OnvifState:
     job_stuck_active: bool = False  # SetRecordingJobMode «OK», но из Active задание не выходит
     job_refuses_active: str = ""  # задание с этим токеном камера не включает
     imaging_without_settings: bool = False  # GetImagingSettings без ImagingSettings
+    imaging_options_xml: str = IMAGING_OPTIONS  # содержимое ImagingOptions в GetOptions
+    imaging_reject: set[str] = field(default_factory=set)  # поля, на запись которых — Fault
+    imaging_sticky: dict[str, str] = field(default_factory=dict)  # поле → что камера оставляет
+    imaging_needs_full_block: bool = False  # запись одним полем — Fault, нужен полный блок
+    imaging_writes: list[str] = field(default_factory=list)  # присланные блоки по порядку
     profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
     subscribe_fault: bool = False  # камера отказывает в Subscribe на любой адрес
@@ -240,6 +294,8 @@ class OnvifServices:
         if request.tag.startswith("{" + SERVICE_NS["media"] + "}"):
             items = "".join(
                 f'<trt:Profiles token={quoteattr(s.token)} fixed="true"><tt:Name>Основной</tt:Name>'
+                '<tt:VideoSourceConfiguration token="vsc-1"><tt:SourceToken>vs-1</tt:SourceToken>'
+                "</tt:VideoSourceConfiguration>"
                 f"{'' if self.state.media1_empty else self._encoder(s, False)}</trt:Profiles>"
                 for s in self._streams()
             )
@@ -252,6 +308,8 @@ class OnvifServices:
         )
         items = "".join(
             f'<tr2:Profiles token={quoteattr(s.token)} fixed="true"><tr2:Name>Основной</tr2:Name>'
+            '<tr2:Configurations><tr2:VideoSource token="vsc-1"><tt:SourceToken>vs-1</tt:SourceToken>'
+            "</tr2:VideoSource></tr2:Configurations>"
             f"{'' if self.state.media2_empty else self._encoder(s, True)}{metadata}</tr2:Profiles>"
             for s in self._streams()
         )
@@ -531,11 +589,29 @@ class OnvifServices:
             f"{self.state.imaging_xml}</timg:ImagingSettings></timg:GetImagingSettingsResponse>"
         )
 
+    def op_GetOptions(self, _request) -> str:  # noqa: N802
+        return (
+            "<timg:GetOptionsResponse><timg:ImagingOptions>"
+            f"{self.state.imaging_options_xml}</timg:ImagingOptions></timg:GetOptionsResponse>"
+        )
+
     def op_SetImagingSettings(self, request) -> str | None:  # noqa: N802
         if self._set_allowed() is None:
             return None
+        s = self.state
         settings = next(e for e in request if e.tag.endswith("ImagingSettings"))
-        self.state.imaging_xml = "".join(ET.tostring(c, encoding="unicode") for c in settings)
+        sent = "".join(ET.tostring(c, encoding="unicode") for c in settings)
+        s.imaging_writes.append(sent.replace(f' xmlns:tt="{_TT}"', ""))
+        names = {e.tag.split("}")[-1] for e in settings.iter()}
+        if names & s.imaging_reject or (s.imaging_needs_full_block and len(settings) < 5):
+            return None
+        current = ET.fromstring(f'<root xmlns:tt="{_TT}">{s.imaging_xml}</root>')
+        merge_imaging(current, settings)
+        for element in current.iter():
+            if element.tag.split("}")[-1] in s.imaging_sticky:
+                element.text = s.imaging_sticky[element.tag.split("}")[-1]]
+        merged = "".join(ET.tostring(c, encoding="unicode") for c in current)
+        s.imaging_xml = merged.replace(f' xmlns:tt="{_TT}"', "")
         return "<timg:SetImagingSettingsResponse/>"
 
     def op_GetStatus(self, request) -> str:  # noqa: N802
