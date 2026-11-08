@@ -148,6 +148,8 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
     table(wb.create_sheet("Задачи"), _TASK_HEADERS, _task_rows(p), _TASK_WIDTHS)
     if p.image is not None:
         _image_sheet(wb.create_sheet("Картинка"), p)
+    if p.codec is not None:
+        _codec_sheet(wb.create_sheet("Кодеки"), p)
     if p.profiles.get("matrix"):
         declared = set(p.profiles.get("declared", []))
         rows = [
@@ -228,6 +230,75 @@ def _image_sheet(ws: Worksheet, p: Protocol) -> None:
     table(ws, _IMAGE_HEADERS, rows, {2: 26, 3: 30, 16: 24, 19: 60})
     for index, line in enumerate(a.lines, start=3):  # строка 1 — заголовок, 2 — состояние
         for column, link in enumerate(line.links[:3], start=20):
+            cell = ws.cell(index, column)
+            cell.value = link.rsplit("/", 1)[-1]
+            cell.data_type = "s"
+            cell.hyperlink = link
+            cell.font = Font(color="1155CC", underline="single")
+
+
+_CODEC_HEADERS = [
+    "Проверка",
+    "Профиль",
+    "Имя профиля",
+    "Разрешение",
+    "Частота, к/с",
+    "Кодек",
+    "Ступень",
+    "Битрейт задан, кбит/с",
+    "Битрейт измерен, кбит/с",
+    "Отклонение, %",
+    "VMAF",
+    "SSIM",
+    "PSNR, дБ",
+    "Эталон",
+    "Порог VMAF",
+    "Источник порога",
+    "Итог ступени",
+    "Причина строки",
+    "Снимок ступени",
+    "Снимок эталона",
+]
+_CODEC_NUMBERS = {5: "0", 8: "0", 9: "0", 10: "0.0", 11: "0.0", 12: "0.000", 13: "0.0", 15: "0.0"}
+
+
+def _codec_sheet(ws: Worksheet, p: Protocol) -> None:
+    """Лист «Кодеки»: строки текущих настроек и строка на ступень; числа — числами с форматом
+    (Excel покажет десятичную запятую), снимки — ссылками на файлы папки прогона, без формул."""
+    c = p.codec
+    assert c is not None
+    rows = [["CODEC-STATE-1", "", line, *[""] * 17] for line in c.state_lines]
+    for line in c.lines:
+        rows.append(
+            [
+                line.check_id,
+                line.profile,
+                line.names,
+                line.size,
+                line.fps,
+                line.codec,
+                line.step,
+                line.target_kbps,
+                line.measured_kbps,
+                line.off_pct,
+                line.vmaf,
+                line.ssim,
+                line.psnr,
+                line.reference,
+                line.vmaf_min,
+                line.source,
+                line.status,
+                line.reason,
+                "",
+                "",
+            ]
+        )
+    table(ws, _CODEC_HEADERS, rows, {3: 24, 14: 18, 16: 30, 18: 60})
+    first = 2 + len(c.state_lines)
+    for index, line in enumerate(c.lines, start=first):
+        for column, number_format in _CODEC_NUMBERS.items():
+            ws.cell(index, column).number_format = number_format
+        for column, link in enumerate(line.links[:2], start=19):
             cell = ws.cell(index, column)
             cell.value = link.rsplit("/", 1)[-1]
             cell.data_type = "s"

@@ -85,11 +85,12 @@
 {% endif %}
 <p class="muted">«Ошибка стенда» и «пропущена» в задачи не входят: это не дефект камеры.</p>
 
-{% if p.image %}<p>Приложения: 1 — Картинка: снимки и замеры.</p>{% endif %}
+{% if p.appendices %}<p>Приложения: {% for n, title in p.appendices %}{{ n }} — {{ title }}{{ "; " if not loop.last else "." }}{% endfor %}</p>{% endif %}
 <h2>4. Подписи</h2>
 <table border="0" cellspacing="0" cellpadding="8">
   <tr><td width="50%">Испытания провёл: ____________________ / ____________ /</td><td>Дата: ____________</td></tr>
   <tr><td>Проверил (ОТК): ____________________ / ____________ /</td><td>Дата: ____________</td></tr>
 </table>
 {% if p.image %}{% include "_image.html" %}{% endif %}
+{% if p.codec %}{% include "_codec.html" %}{% endif %}
 </body></html>

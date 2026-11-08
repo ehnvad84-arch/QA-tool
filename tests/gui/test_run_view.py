@@ -234,6 +234,11 @@ def test_image_progress_line_and_sync_phase():
     assert not view.sync_phase
 
 
+def test_codec_step_counts_rows():
+    step = Step("09:40", "CODEC-QUALITY-1", "Кодеки: качество на битрейт", parts=["прошла"] * 4)
+    assert step.label == "Кодеки: качество на битрейт: 4 строки"
+
+
 def test_image_step_counts_rows():
     step = Step("09:12", "IMAGE-EFFECT-1", "Картинка: эффект настроек", parts=["прошла"] * 11)
     assert step.label == "Картинка: эффект настроек: 11 строк"

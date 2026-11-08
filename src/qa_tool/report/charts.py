@@ -1,4 +1,5 @@
-"""Графики отчёта сравнения картинки: величина настройки по камерам в положениях 0/50/100 %.
+"""Графики отчётов: величина настройки по камерам в положениях 0/50/100 % («Картинка») и
+кривые «качество — битрейт» на числовой оси («Кодеки»).
 
 Рисуются средствами Qt (QPainter в PNG), как и PDF: без внешних программ, одинаково на Windows и
 Linux. Отчёт печатают и в чёрно-белом виде, поэтому камеры различаются не только цветом, но и
@@ -6,6 +7,7 @@ Linux. Отчёт печатают и в чёрно-белом виде, поэ�
 Подписей у линий нет — только легенда справа столбцом, поэтому на 8 камерах они не налезают.
 """
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +32,7 @@ MARKERS = ("круг", "квадрат", "треугольник", "ромб", "
 WIDTH, HEIGHT = 900, 360
 PLOT = QRectF(70, 30, 600, 280)  # область графика; справа — легенда
 LEGEND_X, LEGEND_ROW = 700.0, 30.0
+THRESHOLD_COLOR = "#555555"  # 7,5:1 к белому: штрих порога виден и при печати
 
 
 def _channel(value: int) -> float:
@@ -158,27 +161,150 @@ def line_chart(
     for number, (line, rect) in enumerate(
         zip(series[:8], legend_rects(len(series[:8])), strict=False)
     ):
-        pen = QPen(QColor(PALETTE[number]), 2.2, DASHES[number])
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
         points = [point(i, v) for i, v in enumerate(line.values) if v is not None]
-        for a, b in zip(points, points[1:], strict=False):
-            painter.drawLine(a, b)
-        painter.setPen(QPen(QColor(PALETTE[number]), 1.6))
-        painter.setBrush(QColor("white"))
-        for p in points:
-            _marker(painter, MARKERS[number], p)
-        painter.setPen(pen)
-        y = rect.center().y()
-        painter.drawLine(QPointF(rect.left(), y), QPointF(rect.left() + 34, y))
-        painter.setPen(QPen(QColor(PALETTE[number]), 1.6))
-        _marker(painter, MARKERS[number], QPointF(rect.left() + 17, y))
+        _draw_line(painter, points, number, DASHES[number], rect, line.label)
+    painter.end()
+    image.save(str(path), "PNG")
+    return path
+
+
+def _draw_line(
+    painter: QPainter,
+    points: list[QPointF],
+    place: int,
+    dash: Qt.PenStyle,
+    rect: QRectF,
+    label: str,
+) -> None:
+    """Линия с метками и её строка легенды: цвет и метка места `place`, тип линии `dash`."""
+    pen = QPen(QColor(PALETTE[place]), 2.2, dash)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for a, b in zip(points, points[1:], strict=False):
+        painter.drawLine(a, b)
+    painter.setPen(QPen(QColor(PALETTE[place]), 1.6))
+    painter.setBrush(QColor("white"))
+    for p in points:
+        _marker(painter, MARKERS[place], p)
+    painter.setPen(pen)
+    y = rect.center().y()
+    painter.drawLine(QPointF(rect.left(), y), QPointF(rect.left() + 34, y))
+    painter.setPen(QPen(QColor(PALETTE[place]), 1.6))
+    _marker(painter, MARKERS[place], QPointF(rect.left() + 17, y))
+    painter.setPen(QPen(QColor("#111111"), 1))
+    painter.drawText(
+        QRectF(rect.left() + 42, rect.top(), rect.width() - 42, rect.height()),
+        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+        label,
+    )
+
+
+@dataclass(frozen=True)
+class XYSeries:
+    """Кривая на числовой оси: подпись, точки (x, y) и место в палитре.
+
+    `place` задаёт цвет и метку (`PALETTE`, `MARKERS`); `dash` — тип линии, по умолчанию — места.
+    Так H.264 и H.265 одной камеры различаются местом, а «эта / прошлая прошивка» — линией.
+    """
+
+    label: str
+    points: list[tuple[float, float]]
+    place: int = 0
+    dash: Qt.PenStyle | None = None
+
+
+def xy_chart(
+    path: Path,
+    title: str,
+    x_unit: str,
+    y_unit: str,
+    series: list[XYSeries],
+    x_ticks: list[tuple[float, str]],
+    y_range: tuple[float, float] = (0.0, 100.0),
+    threshold: tuple[float, str] | None = None,
+) -> Path:
+    """Нарисовать кривые на логарифмической оси X в PNG.
+
+    Ось Y — постоянная (`y_range`): графики разных профилей и камер сравниваются на глаз. Ось X —
+    логарифмическая: ступени битрейта отличаются примерно вдвое, на линейной нижние слипаются.
+
+    Args:
+        path: куда сохранить.
+        title: заголовок над графиком.
+        x_unit: подпись оси X.
+        y_unit: подпись оси Y.
+        series: кривые, не больше 8; точки вне диапазона осей прижимаются к краю.
+        x_ticks: деления оси X — (значение > 0, подпись), по возрастанию; крайние задают диапазон.
+        y_range: диапазон оси Y.
+        threshold: порог — штриховая линия `#555` по Y с подписью; None — без порога.
+
+    Returns:
+        Путь к файлу.
+    """
+    ensure_app()
+    image = QImage(WIDTH, HEIGHT, QImage.Format.Format_RGB32)
+    image.fill(QColor("white"))
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setFont(QFont("DejaVu Sans", 9))
+    x_low, x_high = math.log(x_ticks[0][0]), math.log(x_ticks[-1][0])
+    if x_high - x_low < 1e-9:
+        x_low, x_high = x_low - 1, x_high + 1
+    y_low, y_high = y_range
+
+    def point(x: float, y: float) -> QPointF:
+        share = (math.log(max(x, 1e-9)) - x_low) / (x_high - x_low)
+        height = (y - y_low) / (y_high - y_low)
+        share, height = min(1.0, max(0.0, share)), min(1.0, max(0.0, height))
+        return QPointF(PLOT.left() + share * PLOT.width(), PLOT.bottom() - height * PLOT.height())
+
+    painter.setPen(QPen(QColor("#111111"), 1))
+    painter.drawText(QRectF(0, 4, WIDTH, 20), Qt.AlignmentFlag.AlignCenter, title)
+    painter.drawRect(PLOT)
+    for value, label in x_ticks:
+        x = point(value, y_low).x()
+        painter.setPen(QPen(QColor("#cccccc"), 1, Qt.PenStyle.DotLine))
+        painter.drawLine(QPointF(x, PLOT.top()), QPointF(x, PLOT.bottom()))
         painter.setPen(QPen(QColor("#111111"), 1))
         painter.drawText(
-            QRectF(rect.left() + 42, rect.top(), rect.width() - 42, rect.height()),
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-            line.label,
+            QRectF(x - 30, PLOT.bottom() + 4, 60, 16), Qt.AlignmentFlag.AlignCenter, label
         )
+    painter.drawText(
+        QRectF(PLOT.left(), PLOT.bottom() + 22, PLOT.width(), 18),
+        Qt.AlignmentFlag.AlignCenter,
+        x_unit,
+    )
+    for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
+        value = y_low + fraction * (y_high - y_low)
+        y = point(x_ticks[0][0], value).y()
+        painter.setPen(QPen(QColor("#cccccc"), 1, Qt.PenStyle.DotLine))
+        painter.drawLine(QPointF(PLOT.left(), y), QPointF(PLOT.right(), y))
+        painter.setPen(QPen(QColor("#111111"), 1))
+        painter.drawText(
+            QRectF(0, y - 9, PLOT.left() - 6, 18),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"{value:g}".replace(".", ","),
+        )
+    painter.save()
+    painter.translate(14, PLOT.center().y())
+    painter.rotate(-90)
+    painter.drawText(QRectF(-120, -10, 240, 20), Qt.AlignmentFlag.AlignCenter, y_unit)
+    painter.restore()
+    if threshold is not None:
+        level, label = threshold
+        y = point(x_ticks[0][0], level).y()
+        painter.setPen(QPen(QColor(THRESHOLD_COLOR), 1.4, Qt.PenStyle.DashLine))
+        painter.drawLine(QPointF(PLOT.left(), y), QPointF(PLOT.right(), y))
+        painter.setPen(QPen(QColor(THRESHOLD_COLOR), 1))
+        painter.drawText(
+            QRectF(PLOT.left() + 6, y - 18, PLOT.width() - 12, 16),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            label,
+        )
+    for line, rect in zip(series[:8], legend_rects(len(series[:8])), strict=False):
+        place = line.place % len(PALETTE)
+        points = [point(x, y) for x, y in sorted(line.points)]
+        _draw_line(painter, points, place, line.dash or DASHES[place], rect, line.label)
     painter.end()
     image.save(str(path), "PNG")
     return path
