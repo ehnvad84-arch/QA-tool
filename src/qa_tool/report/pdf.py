@@ -14,8 +14,9 @@ from PySide6.QtGui import (
     QPdfWriter,
     QTextDocument,
 )
+from PySide6.QtWidgets import QApplication
 
-_app: QGuiApplication | None = None
+_app: QApplication | None = None
 
 
 def needs_offscreen() -> bool:
@@ -32,7 +33,9 @@ def ensure_app() -> None:
     if QGuiApplication.instance() is None:
         if needs_offscreen():
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        _app = QGuiApplication([])
+        # QApplication, а не QGuiApplication: в одном процессе с протоколом может потом
+        # открыться окно (тесты, окно программы), а заменить уже созданное приложение Qt нельзя
+        _app = QApplication([])
 
 
 _IMG_SRC = re.compile(r'<img[^>]*\bsrc="([^"]+)"')

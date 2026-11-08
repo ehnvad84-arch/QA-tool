@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
+from tests.mock_onvif import ENVELOPE_NS, IMAGING_FULL, OnvifServices, OnvifState
 from tests.mock_rtsp import MockRtspServer, imaging_video
 
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
@@ -301,7 +301,9 @@ class DiscoveryResponder:
         ).encode()
 
 
-def start_fleet(count: int, with_discovery: bool = False):
+def start_fleet(count: int, with_discovery: bool = False, imaging: bool = False):
+    """Запустить `count` виртуальных камер; `imaging` — с полными настройками картинки и видео,
+    которое от них зависит (проверка картинки, этап 7)."""
     cameras = [
         MockCamera(
             Passport(
@@ -309,7 +311,8 @@ def start_fleet(count: int, with_discovery: bool = False):
                 model=f"MOCK-{i + 1}",
                 firmware=f"0.{i + 1}.0",
                 serial=f"SN{i + 1:04d}",
-            )
+            ),
+            state=OnvifState(imaging_xml=IMAGING_FULL, imaging_video=True) if imaging else None,
         ).start()
         for i in range(count)
     ]
@@ -333,7 +336,7 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=8)
     parser.add_argument("--write-stand", type=Path, help="записать stand.yaml для первых 8 камер")
     args = parser.parse_args()
-    cameras, responder = start_fleet(args.count, with_discovery=True)
+    cameras, responder = start_fleet(args.count, with_discovery=True, imaging=True)
     for cam in cameras:
         p = cam.passport
         print(f"{p.manufacturer:<10} {p.model:<8} {cam.xaddr}  rtsp:{cam.rtsp_port}")
