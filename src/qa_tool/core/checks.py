@@ -124,6 +124,9 @@ class CheckContext:
     stress_minutes: int = 60
     # долгая составная проверка спрашивает здесь: остановка не снимает её посреди записи
     stop_requested: Callable[[], bool] = lambda: False
+    # ход долгой проверки для окна («Контраст · 50 % · 2 из 9»): строки протокола приходят
+    # только в конце, и без хода несколько минут выглядят зависанием
+    progress: Callable[[str], None] = lambda _text: None
 
 
 CheckFunc = Callable[[CheckContext], CheckResult]

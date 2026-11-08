@@ -251,6 +251,31 @@ def test_camera_lost_during_first_check_is_camera_defect(tmp_path, fleet):
     assert rows[1][0] == "не прошла"
 
 
+def test_composite_rows_survive_camera_lost_during_check(tmp_path, fleet):
+    # этап 7, S9: строки, полученные до пропажи, остаются, а пропажа — отдельной строкой
+    events = []
+
+    def on_event(event):
+        events.append(event)
+        if event.kind == "started" and event.check_id == "FAKE-COMPOSITE-LOST":
+            fleet[0].stop()
+
+    stand = make_stand(tmp_path, fleet[:1])
+    runner = Runner(
+        stand, Scenario(checks=["FAKE-COMPOSITE-LOST"]), registry_ref=REF, on_event=on_event
+    )
+    store = runner.run()
+    rows = {r["check_id"]: (r["status"], r["reason"]) for r in store.results()}
+    assert sorted(rows) == ["FAKE-COMPOSITE-LOST", "SUB-A", "SUB-B", "SUB-C"], rows
+    assert rows["SUB-A"][0] == rows["SUB-B"][0] == "прошла"
+    assert rows["SUB-C"] == ("ошибка стенда", "нет ответа")
+    assert rows["FAKE-COMPOSITE-LOST"] == ("не прошла", LOST_DURING_CHECK)
+    progress = [e for e in events if e.kind == "progress"]
+    assert [(e.slot, e.check_id) for e in progress] == [(1, "FAKE-COMPOSITE-LOST")]
+    assert progress[0].detail.startswith("Контраст · 50 % · 2 из 9")
+    assert "s3cret" not in progress[0].detail
+
+
 def test_composite_check_writes_child_rows_and_tasks(tmp_path, fleet):
     from qa_tool.report.model import build_protocol
 

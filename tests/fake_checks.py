@@ -114,6 +114,28 @@ def _composite(ctx):
 REGISTRY.check("FAKE-COMPOSITE-1", "fake", "составная", "что делаем")(_composite)
 
 
+def _composite_camera_vanishes(ctx):
+    """Составная проверка, во время которой камера пропадает (её останавливает тест)."""
+    from qa_tool.core.checks import ChildResult
+
+    ctx.progress("Контраст · 50 % · 2 из 9 · password=s3cret")
+    time.sleep(1.0)
+    ok = CheckResult(Status.PASSED, evidence=[Evidence("x.txt", "кадр")])
+    return CheckResult(
+        Status.PASSED,
+        children=[
+            ChildResult("SUB-A", "первая", ok),
+            ChildResult("SUB-B", "вторая", ok),
+            ChildResult("SUB-C", "третья", CheckResult(Status.STAND_ERROR, reason="нет ответа")),
+        ],
+    )
+
+
+REGISTRY.check("FAKE-COMPOSITE-LOST", "fake", "составная, камера пропадает", "")(
+    _composite_camera_vanishes
+)
+
+
 def _passport(ctx):
     passport = {"manufacturer": "Фейк", "model": "<b>FK-1</b>", "firmware": "1.0"}
     return CheckResult(

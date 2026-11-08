@@ -34,7 +34,7 @@ FREEZE_GAP_S = 2.0  # цикл координатора крутится каж�
 class Event:
     """Событие прогона для окна и командной строки: фаза, старт и итог проверки, потеря камеры."""
 
-    kind: str  # вид события: phase, passport, started, result, done, lost, finished
+    kind: str  # вид события: phase, passport, started, progress, result, done, lost, finished
     slot: int = 0
     check_id: str = ""
     title: str = ""
@@ -198,6 +198,11 @@ class Runner:
             spec = self.registry.get(check_id)
             c.running = (check_id, time.monotonic() + spec.time_limit_s(self.scenario))
             self.on_event(Event("started", slot, check_id, spec.title))
+        elif kind == "progress":
+            check_id = message[2]
+            spec = self.registry.get(check_id)
+            # текст собирает проверка, но в нём могут быть ответы камеры — вычищаем, как причины
+            self.on_event(Event("progress", slot, check_id, spec.title, detail=redact(message[3])))
         elif kind == "result":
             _, _, check_id, result, started = message
             self._record(c, check_id, result, started)
