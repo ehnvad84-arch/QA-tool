@@ -1,0 +1,94 @@
+<!doctype html>
+<!-- Макет приложения протокола камеры «Кодеки: качество на битрейт» (ui-designer, фича codec-quality).
+     Только таблицы и атрибуты width/height: этот HTML печатает в PDF QTextDocument, он не знает flex, grid и max-width.
+     Серые ячейки — заглушки графика и снимков. Данные выдуманы.
+
+     Геометрия PDF (A4 альбомная, поле 273 × 186 мм, как в write_pdf):
+       лист на профиль: заголовок ≈ 10 мм; график ≈ 165 × 66 мм (PNG 900 × 360) слева, итоги кодеков справа;
+       таблица ступеней 10 строк × 4,5 мм ≈ 50 мм; ряд из 4 снимков 64 × 36 мм с подписью ≈ 42 мм — итого ≈ 170 мм;
+       разрыв страницы перед каждым профилем — явно (page-break-before);
+       график «эта прошивка / прошлая» — по два на лист после всех профилей.
+     HTML-вариант (флаг media="html"): снимки — ссылки на полные кадры, таблица ступеней прокручивается в своей обёртке. -->
+<html lang="ru"><head><meta charset="utf-8">
+<title>Макет: протокол камеры, раздел «Кодеки»</title>
+<style>
+  body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #111; }
+  h2 { font-size: 12pt; margin: 14pt 0 4pt 0; }
+  h3 { font-size: 10pt; margin: 0 0 2pt 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #e8e8e8; text-align: left; }
+  td, th { vertical-align: top; }
+  .muted { color: #555; }
+  .st-прошла { color: #11632a; }
+  .st-не-прошла { color: #a11212; font-weight: bold; }
+  .st-ошибка-стенда { color: #8a5a00; }
+  .st-пропущена { color: #555; }
+  .bad { color: #a11212; font-weight: bold; }
+  .thumb { background: #2b2824; color: #b1a99d; text-align: center; vertical-align: middle; font-size: 8pt; }
+  .chart { background: #ffffff; border: 1px solid #555; color: #555; text-align: center; vertical-align: middle; font-size: 8pt; }
+  .note { background: #f6f6f6; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head><body>
+
+<p class="muted">… разделы 1–3 протокола; у строк CODEC-QUALITY-1 в «Доказательстве» — «кривая — Приложение 2, п. 3.N» …</p>
+<p>Приложения: 1 — Картинка: снимки и замеры; 2 — Кодеки: качество на битрейт.</p>
+
+<h2 class="pagebreak">Приложение 2. Кодеки: качество на битрейт</h2>
+<p>Сцена: обычная сцена цветового бокса. Изменяющие проверки разрешены. Менялись только кодек и битрейт; разрешение и частота кадров не менялись.
+Каждый профиль снимался на 5 ступенях битрейта при постоянном битрейте; эталон снят в начале и в конце профиля.</p>
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+<b>Как читать цифры.</b> <b>VMAF</b> — оценка от 0 до 100: насколько кадр ступени похож на эталон для глаза зрителя; 100 — не отличить, разница меньше 3 обычно незаметна, от 6 — заметна.
+<b>SSIM</b> — сходство очертаний и деталей, от 0 до 1. <b>PSNR</b> — отношение сигнал/шум в дБ, больше — лучше.
+<b>Эталон</b> — этот же профиль на максимальном битрейте лучшим кодеком: цифры показывают, сколько камера теряет при сжатии, а не качество её картинки вообще.
+</td></tr></table>
+
+<p>1. Возврат настроек · CODEC-RESTORE-1 · <span class="st-прошла">прошла</span>: все значения возвращены и сверены.</p>
+<p class="muted">При «не прошла» — красная рамка в самом верху раздела: профиль · параметр · было · осталось, «верните вручную в веб-интерфейсе камеры, раздел видео».</p>
+
+<h3>2. Текущие настройки до проверки · CODEC-STATE-1 · <span class="st-прошла">прошла</span></h3>
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>Профиль</th><th>Разрешение</th><th>Частота</th><th>Кодек</th><th>Битрейт</th><th>Режим</th><th>Объявленные кодеки</th><th>Диапазон битрейта</th></tr></thead>
+  <tr><td>1 · MainStream</td><td>1920×1080</td><td>25 к/с</td><td>H.265</td><td>4 Мбит/с</td><td>постоянный</td><td>H.264, H.265</td><td>0,25–8 Мбит/с</td></tr>
+  <tr><td>2 · SubStream</td><td>640×360</td><td>25 к/с</td><td>H.264</td><td>0,5 Мбит/с</td><td>переменный</td><td>H.264</td><td>0,06–2 Мбит/с</td></tr>
+</table>
+
+<h3 class="pagebreak">3.1. Профиль 1 · MainStream · 1920×1080 · 25 к/с · эталон H.265, 8 Мбит/с</h3>
+<table border="0" cellspacing="0" cellpadding="4"><tr>
+  <td width="62%"><table border="0" cellspacing="0" cellpadding="0"><tr><td class="chart" width="600" height="240">
+    график: Y — VMAF 0–100; X — измеренный битрейт, Мбит/с, логарифмическая шкала (0,25 · 0,5 · 1 · 2 · 4 · 8 · 16);<br>
+    H.264 — круг, сплошная; H.265 — квадрат, штрих; штриховая серая — «порог 1920×1080: 70»; легенда столбцом справа
+  </td></tr></table></td>
+  <td>
+    <p><b>H.264</b> · <span class="st-не-прошла">не прошла</span><br>качество ниже порога: на 0,5 Мбит/с VMAF 58,2 при пороге 70,0 для 1920×1080 (стартовый: уточнить по эталонным камерам)</p>
+    <p><b>H.265</b> · <span class="st-прошла">прошла</span><br>VMAF от 71,3 на 0,5 Мбит/с до 99,1 на 8 Мбит/с</p>
+    <p>При равном битрейте лучше H.265: на всех ступенях, в среднем на 8,6 VMAF.</p>
+  </td>
+</tr></table>
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>Кодек</th><th>Ступень</th><th>Битрейт задан</th><th>Измерен</th><th>VMAF</th><th>SSIM</th><th>PSNR, дБ</th><th>Итог ступени</th></tr></thead>
+  <tr><td>H.264</td><td>1 из 5</td><td>8 Мбит/с</td><td>7,9 (−1 %)</td><td>95,4</td><td>0,981</td><td>43,2</td><td class="st-прошла">прошла</td></tr>
+  <tr><td>H.264</td><td>2 из 5</td><td>4 Мбит/с</td><td>4,0 (0 %)</td><td>90,1</td><td>0,968</td><td>40,7</td><td class="st-прошла">прошла</td></tr>
+  <tr><td>H.264</td><td>3 из 5</td><td>2 Мбит/с</td><td>2,1 (+5 %)</td><td>79,4</td><td>0,941</td><td>37,9</td><td class="st-прошла">прошла</td></tr>
+  <tr><td>H.264</td><td>4 из 5</td><td>1 Мбит/с</td><td>1,0 (0 %)</td><td>70,3</td><td>0,912</td><td>35,1</td><td class="st-прошла">прошла</td></tr>
+  <tr><td>H.264</td><td>5 из 5</td><td>0,5 Мбит/с</td><td>0,5 (0 %)</td><td class="bad">! 58,2</td><td>0,874</td><td>32,6</td><td class="st-не-прошла">не прошла</td></tr>
+  <tr><td>H.265</td><td>1 из 5</td><td>8 Мбит/с</td><td>8,0 (0 %)</td><td>99,1</td><td>0,993</td><td>46,8</td><td class="st-прошла">прошла · эталон</td></tr>
+  <tr><td>H.265</td><td colspan="7" class="muted">… ступени 2–5 …</td></tr>
+</table>
+<table border="0" cellspacing="0" cellpadding="3"><tr>
+  <td class="thumb" width="240" height="135">эталон H.265 · 8 Мбит/с</td>
+  <td class="thumb" width="240" height="135">худшая ступень H.264 · 0,5 Мбит/с</td>
+  <td class="thumb" width="240" height="135">эталон, центр 1:1</td>
+  <td class="thumb" width="240" height="135">худшая ступень, центр 1:1</td>
+</tr><tr>
+  <td class="muted">H.265 · 8 Мбит/с · эталон</td><td class="muted">H.264 · 0,5 Мбит/с · VMAF 58,2</td>
+  <td class="muted">центр кадра без увеличения</td><td class="muted">центр кадра без увеличения</td>
+</tr></table>
+
+<h3 class="pagebreak">4. Эта прошивка и прошлая · профиль 1</h3>
+<table border="0" cellspacing="0" cellpadding="0"><tr><td class="chart" width="600" height="240">
+  график, оси как выше: «H.265 · эта 1.4.2 (прогон 0412)» — сплошная; «H.265 · прошлая 1.3.9 (прогон 0398)» — точечная, та же метка; так же для H.264
+</td></tr></table>
+<p class="muted">Каждый прогон считается к своему эталону. Если прошлого прогона нет: «Прогонов этой модели с другой прошивкой нет».</p>
+
+</body></html>
