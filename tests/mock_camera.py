@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
-from tests.mock_rtsp import MockRtspServer
+from tests.mock_rtsp import MockRtspServer, imaging_video
 
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
@@ -94,8 +94,12 @@ class MockCamera:
             udp=self.state.rtsp_udp,
             udp_blackhole=self.state.rtsp_udp_blackhole,
             range_silent=self.state.replay_range_silent,
+            picture=self._picture if self.state.imaging_video else None,
         )
         self._threads: list[threading.Thread] = []
+
+    def _picture(self) -> bytes | None:
+        return imaging_video(self.state.picture())
 
     @property
     def port(self) -> int:

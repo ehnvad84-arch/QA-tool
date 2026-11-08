@@ -121,10 +121,12 @@ class Sampler:
     Args:
         path: файл выборки.
         track: видеодорожка.
+        limit: наибольший размер выборки, байт; кадр сверх него не пишется и выборка кончается.
     """
 
-    def __init__(self, path: Path, track: Track):
+    def __init__(self, path: Path, track: Track, limit: int = SAMPLE_LIMIT):
         self.path = path
+        self.limit = limit
         self.encoding = track.encoding
         self._depacketizer = Depacketizer(track.encoding, parameter_sets(track.fmtp))
         self._file = path.open("wb")
@@ -146,7 +148,7 @@ class Sampler:
         self._frame += self._depacketizer.push(packet.payload)
         self._frame_key = self._frame_key or is_keyframe(self.encoding, packet.payload)
         # выборка кончается целиком: кадры после пропущенного декодер счёл бы ошибками камеры
-        self._full = self._written + len(self._frame) > SAMPLE_LIMIT
+        self._full = self._written + len(self._frame) > self.limit
 
     def _flush(self) -> None:
         self._started = self._started or self._frame_key
@@ -155,6 +157,16 @@ class Sampler:
             self._written += len(self._frame)
         self._frame.clear()
         self._frame_key = False
+
+    @property
+    def started(self) -> bool:
+        """Ключевой кадр уже был: дальше в файл идут целые кадры."""
+        return self._started or self._frame_key
+
+    @property
+    def full(self) -> bool:
+        """Предел байтов достигнут: дальше пакеты не пишутся."""
+        return self._full
 
     def close(self) -> bool:
         """Закрыть файл; True — в нём есть хотя бы один целый кадр от ключевого."""

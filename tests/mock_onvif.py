@@ -172,6 +172,8 @@ class OnvifState:
     imaging_sticky: dict[str, str] = field(default_factory=dict)  # поле → что камера оставляет
     imaging_needs_full_block: bool = False  # запись одним полем — Fault, нужен полный блок
     imaging_writes: list[str] = field(default_factory=list)  # присланные блоки по порядку
+    imaging_video: bool = False  # RTSP отдаёт картинку по настройкам (проверка картинки)
+    imaging_effects: dict[str, str] = field(default_factory=dict)  # ключ → «none» или «reverse»
     profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
     subscribe_fault: bool = False  # камера отказывает в Subscribe на любой адрес
@@ -198,6 +200,42 @@ class OnvifState:
     rtsp_udp: bool = True  # камера отдаёт поток и по UDP
     rtsp_udp_blackhole: bool = False  # SETUP принят, но до стенда UDP не доходит
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
+
+    def picture(self) -> dict[str, float]:
+        """Доли 0…1 для видео по настройкам: что сейчас «видит» камера (mock_rtsp)."""
+        root = ET.fromstring(f'<root xmlns:tt="{_TT}">{self.imaging_xml}</root>')
+
+        def share(path: str, scale: float = 100.0) -> float:
+            found = root.find("/".join(f"tt:{name}" for name in path.split("/")), {"tt": _TT})
+            try:
+                return min(1.0, max(0.0, float(found.text) / scale))
+            except (AttributeError, TypeError, ValueError):
+                return 0.5
+
+        manual = (root.findtext("tt:WhiteBalance/tt:Mode", "", {"tt": _TT}) or "").upper()
+        values = {
+            "brightness": share("Brightness"),
+            "contrast": share("Contrast"),
+            "saturation": share("ColorSaturation"),
+            "sharpness": share("Sharpness"),
+            "wb_red": share("WhiteBalance/CrGain") if manual == "MANUAL" else 0.5,
+            "wb_blue": share("WhiteBalance/CbGain") if manual == "MANUAL" else 0.5,
+            "nr": share("Extension/Extension/Extension/NoiseReduction/Level", 1.0),
+        }
+        for key, effect in self.imaging_effects.items():
+            if effect == "none":
+                values[key] = 0.5
+            elif effect == "reverse":
+                values[key] = 1.0 - values[key]
+        return {
+            "brightness": values["brightness"],
+            "contrast": values["contrast"],
+            "saturation": values["saturation"],
+            "sharpness": values["sharpness"],
+            "red": values["wb_red"],
+            "blue": values["wb_blue"],
+            "noise": 1.0 - values["nr"],
+        }
 
 
 class OnvifServices:
