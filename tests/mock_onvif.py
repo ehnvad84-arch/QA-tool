@@ -131,6 +131,14 @@ class MockStream:
     gop: int = 10
 
 
+def encoder_now(state: "OnvifState", stream: MockStream) -> dict:
+    """Настройки кодировщика потока сейчас: заявленные плюс то, что записала проверка."""
+    now = {"encoding": stream.encoding, "kbps": stream.kbps, "constant": stream.constant}
+    now["profile"] = "Main"
+    now.update(state.encoder_now.get(stream.token, {}))
+    return now
+
+
 @dataclass
 class OnvifState:
     """Что «умеет» и что «хранит» виртуальная камера."""
@@ -211,6 +219,11 @@ class OnvifState:
     encoder_persist: list[str] = field(default_factory=list)  # ForcePersistence Media1
     encoder_now: dict[str, dict] = field(default_factory=dict)  # токен профиля → что изменено
     stream_restarts: int = 0  # сколько раз смена кодека перезапускала поток
+    encoder_video: bool = False  # RTSP отдаёт поток по текущим настройкам кодировщика
+    encoder_kbps_factor: float = 1.0  # «битрейт мимо»: поток в столько раз больше заданного
+    encoder_flat_quality: bool = False  # «качество не растёт»: картинка сжата на минимуме
+    # «поток не вернулся»: после смены на этот кодек RTSP отдаёт старый поток H.264
+    encoder_dead_codecs: tuple[str, ...] = ()
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
     def picture(self) -> dict[str, float]:
@@ -314,10 +327,7 @@ class OnvifServices:
 
     def _current(self, stream: MockStream) -> dict:
         """Настройки кодировщика сейчас: заявленные потоком плюс то, что записала проверка."""
-        now = {"encoding": stream.encoding, "kbps": stream.kbps, "constant": stream.constant}
-        now["profile"] = "Main"
-        now.update(self.state.encoder_now.get(stream.token, {}))
-        return now
+        return encoder_now(self.state, stream)
 
     def _encoder_parts(self, stream: MockStream, media2: bool) -> tuple[str, str]:
         """Атрибуты и содержимое конфигурации кодировщика в порядке схемы ONVIF."""

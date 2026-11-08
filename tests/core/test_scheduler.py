@@ -7,7 +7,13 @@ import pytest
 
 from qa_tool.core.models import Camera, Place, Scenario, Stand
 from qa_tool.core.scheduler import Runner
-from qa_tool.core.tempfiles import IMAGE_PREFIX, STALE_AFTER_S, TEMP_PREFIX, remove_stale_temp_files
+from qa_tool.core.tempfiles import (
+    CODEC_PREFIX,
+    IMAGE_PREFIX,
+    STALE_AFTER_S,
+    TEMP_PREFIX,
+    remove_stale_temp_files,
+)
 from qa_tool.core.worker import LOST_DURING_CHECK
 from qa_tool.core.write_journal import IMAGE, WEB, load
 from qa_tool.report.model import build_protocol
@@ -362,17 +368,19 @@ def test_typo_in_password_on_html_401_camera_costs_one_login(tmp_path, fleet, mo
 def test_runner_removes_browser_files_of_killed_process(tmp_path, fleet, monkeypatch):
     stale = tmp_path / f"{TEMP_PREFIX}1-old"
     stale_image = tmp_path / f"{IMAGE_PREFIX}1-old"
+    stale_codec = tmp_path / f"{CODEC_PREFIX}1-old"
     fresh = tmp_path / f"{TEMP_PREFIX}2-now"
-    for folder in (stale, stale_image, fresh):
+    for folder in (stale, stale_image, stale_codec, fresh):
         folder.mkdir()
     (stale / "Cookies").write_text("сессия", encoding="utf-8")
     (stale_image / "sample").write_bytes(b"\0" * 16)
     hour_ago = time.time() - STALE_AFTER_S - 60
-    os.utime(stale, (hour_ago, hour_ago))
-    os.utime(stale_image, (hour_ago, hour_ago))
+    for folder in (stale, stale_image, stale_codec):
+        os.utime(folder, (hour_ago, hour_ago))
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-    assert remove_stale_temp_files() == 2
-    assert not stale.exists() and not stale_image.exists() and fresh.exists()
+    assert remove_stale_temp_files() == 3
+    assert not stale.exists() and not stale_image.exists() and not stale_codec.exists()
+    assert fresh.exists()
 
 
 def test_write_left_by_killed_process_is_a_blocker_in_protocol(tmp_path, fleet):

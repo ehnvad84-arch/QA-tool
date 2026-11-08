@@ -4,8 +4,9 @@
 Порядок на настройку: 0 % → 50 % → 100 % (запись, чтение назад, пауза, стабильный кадр,
 величина), затем возврат исходного блока и контрольный кадр, затем `verdict()`. Перед каждой
 записью — журнал (`core/write_journal.py`, вид `IMAGE`): если процесс камеры снимут посреди
-записи, планировщик и следующий прогон узнают, что вернуть. Возврат — в `finally`: камера не
-уходит со стенда изменённой ни при каком исходе (AD-3, never.md).
+записи, планировщик и следующий прогон узнают, что вернуть; журнал, обрыв и строку возврата
+ведёт общий проход `checks/write_pass.py`. Возврат — в `finally`: камера не уходит со стенда
+изменённой ни при каком исходе (AD-3, never.md).
 
 Без галочки «изменяющие» настройки не меняются: строки настроек «пропущена», а кадр и текущие
 значения всё равно идут в протокол (S7, строка `IMAGE-STATE-1`).
@@ -14,7 +15,6 @@
 import json
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from qa_tool.checks.image.frames import (
     Capture,
@@ -31,6 +31,15 @@ from qa_tool.checks.onvif.replay import soap_evidence
 from qa_tool.checks.onvif.stream import first_stream
 from qa_tool.checks.rtsp_refusal import refused_password
 from qa_tool.checks.stream.common import DecoderFailed, ToolMissing
+from qa_tool.checks.write_pass import (
+    LOST,
+    STOPPED,
+    Abort,
+    WritePass,
+    lost_abort,
+    restore_row,
+    total,
+)
 from qa_tool.core.checks import (
     CheckContext,
     CheckResult,
@@ -41,17 +50,7 @@ from qa_tool.core.checks import (
 )
 from qa_tool.core.secrets import redact
 from qa_tool.core.taboo import TabooViolation
-from qa_tool.core.worker import camera_alive
-from qa_tool.core.write_journal import (
-    IMAGE,
-    RUN_ID_KEY,
-    UNREADABLE,
-    PendingWrite,
-    clear,
-    load,
-    lost_write_result,
-    save,
-)
+from qa_tool.core.write_journal import IMAGE, PendingWrite
 from qa_tool.drivers.camera.imaging import (
     BadRange,
     Declared,
@@ -78,22 +77,6 @@ NOTHING_CHANGED = "ничего не менялось: галочка «изме
 SHARES = (0.0, 0.5, 1.0)
 SETTINGS_KEY = "image_settings"  # ключи настроек для прогона; нет — все 9 (тесты сокращают)
 FRAMES_ERRORS = (StreamRefused, StreamUnavailable, FrameTooLarge, ToolMissing, DecoderFailed)
-LOST = "камера перестала отвечать во время проверки (сбой камеры или прошивки)"
-INTERRUPTED = "проверка прервана"
-STOPPED = "прогон остановлен"
-POLL_S = 5.0  # как часто спрашивать пропавшую камеру, вернулась ли она
-
-
-class Abort(RuntimeError):
-    """Дальше настройки этой камеры не проверить: камера пропала, отвергла пароль или поток.
-
-    `current` — итог настройки, на которой случилось; остальные получают «ошибка стенда».
-    """
-
-    def __init__(self, current: CheckResult, rest: str):
-        super().__init__(current.reason)
-        self.current = current
-        self.rest = rest
 
 
 @dataclass
@@ -166,10 +149,8 @@ class Engine:
         self.state: ImagingState | None = None
         self.out = Outcome()
         self._last_written = 0.0  # для журнала на стадии возврата: что могло остаться
-        self._lost = False  # камера пропадала: перед возвратом ждём её
         self.ranges: dict = {}
-        folder = ctx.extra.get(IMAGE.folder_key)
-        self.journal = None if folder is None else Path(folder)
+        self.writes = WritePass(ctx, IMAGE)
 
     # --- проход --------------------------------------------------------------------------------
 
@@ -198,7 +179,8 @@ class Engine:
         if not uri.startswith("rtsp://"):
             return CheckResult.stand_error(f"камера не сообщила адрес RTSP: {uri!r}")
         try:
-            self._settle_old_write()
+            self.writes.settle_old(self._now_of, self._put_back, (ImageWriteRefused,))
+            self.out.rows.extend(self.writes.rows)
         except (CameraUnreachable, OnvifFault) as e:
             return CheckResult.stand_error(
                 f"ONVIF: журнал прошлого прогона не разобран: {e}",
@@ -237,15 +219,8 @@ class Engine:
                     self._one(setting, ranges[setting.key], before, masks, number)
                 except (Abort, CameraUnreachable) as e:
                     # камера могла пропасть и во время возврата после сбоя — это тоже обрыв
-                    stop = (
-                        e
-                        if isinstance(e, Abort)
-                        else Abort(
-                            CheckResult(Status.FAILED, reason=LOST, actual=str(e)),
-                            f"{INTERRUPTED}: {LOST}",
-                        )
-                    )
-                    self._lost = self._lost or stop.current.reason == LOST
+                    stop = e if isinstance(e, Abort) else lost_abort(e)
+                    self.writes.lost = self.writes.lost or stop.current.reason == LOST
                     self._row(setting, stop.current, before)
                     for rest in self.settings[number:]:
                         self._row(rest, CheckResult.stand_error(stop.rest), before)
@@ -307,8 +282,7 @@ class Engine:
             problem = CheckResult.stand_error(f"ONVIF: {e}")
             back = self._restore_after_error(setting)
         except CameraUnreachable as e:
-            failed = CheckResult(Status.FAILED, reason=LOST, actual=str(e), expected=rule.expected)
-            raise Abort(failed, f"{INTERRUPTED}: {LOST}") from e
+            raise lost_abort(e, rule.expected) from e
         evidence = self._evidence(setting, before, positions, after, exchanges_from, rule)
         if back:
             # итог по положениям верен, а то, что камера осталась изменённой, скажет строка
@@ -403,121 +377,51 @@ class Engine:
         self._journal(setting, self._last_written, "restoring")
         report = self.writer.restore(self.state, [setting.key])
         if report.restored:
-            self._clear_journal()
+            self.writes.close()
         return "; ".join(f"{name}: было {was}, стало {now}" for name, was, now in report.left)
 
     def _restore_all(self) -> tuple[RestoreReport | None, str]:
         """Полный возврат в конце; ошибки не выбрасываются — их итог в строке возврата."""
         if self.writer is None or self.state is None or not self.out.touched:
             return None, ""
-        if self._lost and not self._wait_for_camera():
-            wait = limit(self.ctx, "image.reconnect_wait_s").value
-            return None, f"камера не вернулась за {wait:g} с — журнал записи сохранён"
+        absent = self.writes.camera_back(limit(self.ctx, "image.reconnect_wait_s").value)
+        if absent:
+            return None, absent
         try:
             report = self.writer.restore(self.state, self.out.touched)
         except (CameraUnreachable, OnvifFault, ImageWriteRefused) as e:
             return None, f"возврат не выполнен: {e}"
         if report.restored:
-            self._clear_journal()
+            self.writes.close()
         return report, ""
-
-    def _wait_for_camera(self) -> bool:
-        """Ждать пропавшую камеру до `image.reconnect_wait_s` (перезагрузка): True — вернулась."""
-        deadline = time.monotonic() + limit(self.ctx, "image.reconnect_wait_s").value
-        while True:
-            if camera_alive(self.ctx.camera):
-                return True
-            if time.monotonic() >= deadline or self.ctx.stop_requested():
-                return False
-            time.sleep(min(POLL_S, max(0.0, deadline - time.monotonic())))
 
     # --- журнал --------------------------------------------------------------------------------
 
-    def _settle_old_write(self) -> None:
-        """Запись прошлого прогона не закрыта: вернуть её, если значение всё ещё наше, иначе —
-        блокер (AD-3). Без галочки «изменяющие» вернуть нельзя — тоже блокер."""
-        assert self.writer is not None and self.state is not None
-        if self.journal is None:
-            return
-        camera = self.ctx.camera
-        entry = load(self.journal, camera.address, camera.port)
-        if entry is None or entry.run_id == self.ctx.extra.get(RUN_ID_KEY, ""):
-            return
-        note = self._settle_note(entry)
-        if not note:
-            return
-        lost = lost_write_result(entry, IMAGE.where)
-        lost.reason = f"{lost.reason}; журнал прошлого прогона: {note}"
-        spec = IMAGE.lost_spec
-        self.out.rows.append(
-            ChildResult(spec.id, spec.title, lost, spec.description, Severity.BLOCKER)
-        )
-        self._clear_journal()  # блокер записан в протокол; следующий прогон его не повторит
+    def _now_of(self, entry: PendingWrite) -> str:
+        """Текущее значение настройки из журнала прошлого прогона — в виде журнала."""
+        assert self.state is not None
+        return _shown(self.state.values.get(entry.kind))
 
-    def _settle_note(self, entry: PendingWrite) -> str:
-        """Вернуть запись из журнала; пусто — вернулась (строка «прошла» уже добавлена)."""
-        assert self.writer is not None and self.state is not None
-        if not self.ctx.allow_writes:
-            return "галочки «изменяющие» нет — вернуть нельзя, проверьте настройку вручную"
-        if entry.stage == UNREADABLE or not entry.restore.get("xml"):
-            return "журнал повреждён — вернуть нечем, проверьте настройку вручную"
-        now = _shown(self.state.values.get(entry.kind))
-        if now == entry.old:
-            self._old_row(entry, f"значение «{entry.label}» уже исходное ({now})")
-            return ""
-        if now != entry.new:
-            return (
-                f"значение уже не наше: было {entry.old}, записывали {entry.new}, сейчас {now} — "
-                "его поменял кто-то другой, проверьте вручную"
-            )
-        try:
-            self.writer.restore_xml(entry.restore["xml"])
-        except (ImageWriteRefused, TabooViolation, ValueError) as e:
-            return f"возврат не отправлен: {e}"
+    def _put_back(self, entry: PendingWrite) -> str:
+        """Вернуть блок из журнала прошлого прогона и прочитать значение заново."""
+        assert self.writer is not None
+        self.writer.restore_xml(entry.restore["xml"])
         self.writer.baseline = None  # снимок — теперь уже возвращённые настройки
         self.state = self.writer.read()
-        back = _shown(self.state.values.get(entry.kind))
-        if back != entry.old:
-            return f"возврат не подтвердился: ждали {entry.old}, читается {back}"
-        self._old_row(entry, f"«{entry.label}» возвращена: {entry.new} → {back}")
-        return ""
-
-    def _old_row(self, entry: PendingWrite, text: str) -> None:
-        result = CheckResult(
-            Status.PASSED,
-            reason=f"журнал прошлого прогона закрыт: {text}",
-            expected="настройка, оставленная прошлым прогоном, возвращена",
-            evidence=[
-                Evidence("journal.txt", f"{entry.label}: было {entry.old}, записывали {entry.new}")
-            ],
-        )
-        spec = IMAGE.lost_spec
-        self.out.rows.append(ChildResult(spec.id, spec.title, result, spec.description))
-        self._clear_journal()
+        return self._now_of(entry)
 
     def _journal(self, setting: Setting, value: float, stage: str) -> None:
-        if self.journal is None or self.state is None or self.writer is None:
+        if self.state is None or self.writer is None:
             return
-        camera = self.ctx.camera
-        entry = PendingWrite(
-            self.ctx.extra.get(RUN_ID_KEY, ""),
-            camera.slot,
-            camera.address,
-            camera.port,
-            camera.vendor,
+        self.writes.note(
             self.writer.url,
             setting.title,
             setting.key,
             _shown(self.state.values.get(setting.key)),
             _shown(value),
             stage,
-            restore={"token": self.writer.source, "xml": self.state.xml},
+            {"token": self.writer.source, "xml": self.state.xml},
         )
-        save(self.journal, entry)
-
-    def _clear_journal(self) -> None:
-        if self.journal is not None:
-            clear(self.journal, self.ctx.camera.address, self.ctx.camera.port)
 
     # --- строки --------------------------------------------------------------------------------
 
@@ -622,37 +526,14 @@ class Engine:
         )
 
     def _restore_row(self, report: RestoreReport | None, problem: str) -> ChildResult:
-        title, description = (
+        return restore_row(
+            RESTORE_ID,
             "Картинка: возврат настроек",
-            "Возвращаем настройки, как были до проверки, и сверяем.",
+            self.out.touched,
+            report,
+            problem,
+            NOTHING_CHANGED,
         )
-        if not self.out.touched:
-            result = CheckResult.skipped(problem or NOTHING_CHANGED)
-        elif report is None:
-            result = CheckResult(
-                Status.FAILED,
-                reason=problem or "возврат не выполнен",
-                expected="настройки возвращены и сверены",
-            )
-        elif report.left:
-            left = "; ".join(
-                f"«{name}»: было {was}, осталось {now}" for name, was, now in report.left
-            )
-            result = CheckResult(
-                Status.FAILED,
-                reason=f"настройки не вернулись: {left}",
-                expected="настройки возвращены и сверены",
-                evidence=[Evidence("restore.txt", "\n".join(report.other) or left)],
-            )
-        else:
-            text = "\n".join(report.other) or "все изменённые настройки вернулись"
-            result = CheckResult(
-                Status.PASSED,
-                reason=f"возвращены и сверены: {', '.join(self.out.touched)}",
-                expected="настройки возвращены и сверены",
-                evidence=[Evidence("restore.txt", text)],
-            )
-        return ChildResult(RESTORE_ID, title, result, description, Severity.BLOCKER)
 
     def _read_only_rows(self, ranges: dict) -> None:
         for setting in self.settings:
@@ -681,9 +562,7 @@ class Engine:
         return CheckResult.stand_error(reason, evidence=evidence)
 
     def _result(self) -> CheckResult:
-        bad = [r for r in self.out.rows if r.result.status is Status.FAILED]
-        status = Status.FAILED if bad else Status.PASSED
-        return CheckResult(status, reason=f"строк: {len(self.out.rows)}", children=self.out.rows)
+        return total(self.out.rows)
 
     def _progress(self, text: str) -> None:
         self.ctx.progress(text)
