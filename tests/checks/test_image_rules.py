@@ -10,7 +10,9 @@ from qa_tool.core.models import Camera, Place, Threshold
 
 def ctx(**overrides) -> CheckContext:
     thresholds = {k.replace("__", "."): Threshold(v, "", "тест") for k, v in overrides.items()}
-    return CheckContext(Camera(slot=1, address="10.0.0.1", username="admin"), "", Place.COLOR_BOX, thresholds)
+    return CheckContext(
+        Camera(slot=1, address="10.0.0.1", username="admin"), "", Place.COLOR_BOX, thresholds
+    )
 
 
 NO_CLIP = [0.0, 0.0, 0.0]
