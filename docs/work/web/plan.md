@@ -63,7 +63,7 @@
 - [x] T18 — Сбои записи: значение не вернулось, камера пропала, вход для возврата, «Стоп» во время записи, следующий обход · сценарий: S14, S15, S20 · проверка: auto · исполнитель: main
   Файлы: src/qa_tool/checks/web/write.py, src/qa_tool/checks/web/login.py, src/qa_tool/checks/web/walk.py, src/qa_tool/drivers/camera/browser.py, tests/checks/test_web_write.py.
   Готово, когда: при S14 запись на камере прекращена; камера перезапустилась — один вход, значение возвращено, `login_attempts` не больше 2; без принятого первого входа второго нет; следующий обход без галочки запрещает запись; возврат только если поле найдено по отпечатку и показывает записанное значение.
-- [ ] T19 — Браузер в сборках, `qa-tool doctor`, smoke веб-обхода, CI · сценарий: S23 · проверка: auto · исполнитель: main
+- [x] T19 — Браузер в сборках, `qa-tool doctor`, smoke веб-обхода, CI · сценарий: S23 · проверка: auto · исполнитель: main
   Файлы: packaging/qa-tool.spec, packaging/linux/build.sh, packaging/windows/build.ps1, src/qa_tool/tools.py, src/qa_tool/cli.py, .github/workflows/ci.yml; новый packaging/smoke_web.py.
   Готово, когда: CI обе сборки зелёные; smoke в собранной программе проходит обход mock без скачиваний; размер установщиков записан в progress.md; без браузера — «ошибка стенда».
 - [x] T20 — Справка F1, security.md, ROADMAP, версия · сценарий: S4, S9, S10, S24 · проверка: auto · исполнитель: main
