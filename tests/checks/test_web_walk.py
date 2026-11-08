@@ -3,7 +3,6 @@
 import contextlib
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from qa_tool.checks import registry
 from qa_tool.checks.web import walk as walk_module
@@ -174,10 +173,11 @@ def test_stop_is_not_passed_and_ends_the_login():
     assert camera.sessions == 0
 
 
-def test_browser_files_are_removed_after_stop():
-    before = set(Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*"))
+def test_browser_files_are_removed_after_stop(tmp_path, monkeypatch):
+    # своя временная папка: в общей /tmp свои qa-web-* создают параллельные прогоны других веток
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     walk_with({"/": HOME}, None, lambda: True, auth="form")
-    assert set(Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*")) == before
+    assert not list(tmp_path.glob(f"{TEMP_PREFIX}*"))
 
 
 def test_eight_cameras_at_once_do_not_share_anything():
