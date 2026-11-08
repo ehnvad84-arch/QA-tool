@@ -399,3 +399,17 @@ def test_proxy_address_before_at_sign_is_not_the_proxy(answering):
 def test_camera_address_next_to_punctuation_is_rewritten(answering, text):
     proxy, _ = answering(b"")
     assert f"{proxy.base_url}/_port/8080/x" in proxy.rewrite(text)
+
+
+def test_multicast_change_from_onvif_tt_is_refused_by_proxy(proxy, mock):
+    # onvif-tt ходит только через посредника, а он — через http.py: мультикаст закрыт и для него
+    body = (
+        b'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+        b'xmlns:tr2="http://www.onvif.org/ver20/media/wsdl" '
+        b'xmlns:tt="http://www.onvif.org/ver10/schema"><s:Body><tr2:SetVideoEncoderConfiguration>'
+        b'<tr2:Configuration token="ve-main"><tt:Multicast><tt:Port>6000</tt:Port></tt:Multicast>'
+        b"</tr2:Configuration></tr2:SetVideoEncoderConfiguration></s:Body></s:Envelope>"
+    )
+    r = post(proxy, body, "/onvif/media2_service")
+    assert r.status_code == 400 and "QAToolTaboo" in r.text
+    assert "SetVideoEncoderConfiguration" not in mock.requests

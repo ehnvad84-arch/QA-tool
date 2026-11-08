@@ -239,7 +239,9 @@ def test_single_http_exit_blocks_before_network(monkeypatch):
     from qa_tool.drivers.camera import http
 
     sent = []
-    monkeypatch.setattr(httpx, "request", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr(
+        httpx, "request", lambda *a, **k: sent.append(a) or httpx.Response(200, text="{}")
+    )
     with pytest.raises(TabooViolation):
         http.request("POST", "http://cam/api/users/set_password", content=b'{"p": "x"}')
     with pytest.raises(TabooViolation):
