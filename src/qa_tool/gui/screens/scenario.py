@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QLabel,
     QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -25,12 +26,15 @@ GENERAL_HELP = "scenario-checks"
 
 
 def check_tooltip(spec: CheckSpec) -> str:
-    """Подсказка строки проверки: «что делаем, что ожидаем» и какие функции профилей ONVIF
-    она подтверждает (та же матрица, что в разделе протокола «Профили ONVIF»)."""
+    """Подсказка строки проверки: «что делаем, что ожидаем», что она делает без галочки
+    «изменяющие» и какие функции профилей ONVIF подтверждает (матрица «Профили ONVIF»)."""
+    text = spec.description
+    if spec.read_only_note:
+        text += f"\n\n{spec.read_only_note}"
     profiles = confirms(spec.id)
-    if not profiles:
-        return spec.description
-    return f"{spec.description}\n\nПодтверждает профили ONVIF — {'; '.join(profiles)}."
+    if profiles:
+        text += f"\n\nПодтверждает профили ONVIF — {'; '.join(profiles)}."
+    return text
 
 
 def stress_label(minutes: int) -> str:
@@ -65,9 +69,17 @@ class ScenarioScreen(Screen):
             QCheckBox("Разрешить изменяющие проверки"),
             "Проверки, которые меняют "
             "настройки камеры. Настройки сохраняются до проверки и "
-            "восстанавливаются после.",
+            "восстанавливаются после. Без галочки часть проверок работает только на чтение: "
+            "например, «Картинка» снимает текущий кадр и читает значения настроек.",
             "scenario-permissions",
         )
+        self.writes_note = helped(
+            QLabel(),
+            "Что проверки, идущие и без галочки, сделают с ней и без неё.",
+            "scenario-permissions",
+        )
+        self.writes_note.setProperty("role", "muted")
+        self.writes_note.setWordWrap(True)
         self.allow_destructive = helped(
             QCheckBox("Разрешить разрушающие проверки"),
             "Обновление прошивки и "
@@ -92,11 +104,13 @@ class ScenarioScreen(Screen):
         self.stress.setMaximumWidth(160)
         self.stress.setEnabled(False)
         self.allow_writes.toggled.connect(self._changed)
+        self.allow_writes.toggled.connect(lambda _on: self._update_note())
         self.allow_destructive.toggled.connect(self._confirm_destructive)
         self.allow_stress.toggled.connect(self.stress.setEnabled)
         self.allow_stress.toggled.connect(self._changed)
         self.stress.currentIndexChanged.connect(self._changed)
         form.addRow(self.allow_writes)
+        form.addRow(self.writes_note)
         form.addRow(self.allow_destructive)
         form.addRow(self.allow_stress)
         form.addRow("Длительность стресс-теста", self.stress)
@@ -160,6 +174,24 @@ class ScenarioScreen(Screen):
         scenario.allow_stress = self.allow_stress.isChecked()
         scenario.stress_minutes = int(self.stress.currentData())
         self.state.save()
+        self._update_note()
+
+    def _update_note(self) -> None:
+        """Подпись под «изменяющими»: что сделают отмеченные проверки, которые идут и без неё."""
+        selected = {
+            i.data(0, Qt.ItemDataRole.UserRole)
+            for i in self._check_items()
+            if i.checkState(0) == Qt.CheckState.Checked
+        }
+        registry = self.state.registry()
+        on = self.allow_writes.isChecked()
+        notes = [
+            spec.writes_note if on else spec.read_only_note
+            for spec in registry.all()
+            if spec.id in selected and (spec.writes_note if on else spec.read_only_note)
+        ]
+        self.writes_note.setText("\n".join(notes))
+        self.writes_note.setVisible(bool(notes))
 
     def refresh(self) -> None:
         self._loading = True
@@ -208,3 +240,4 @@ class ScenarioScreen(Screen):
             index = self.stress.count() - 1
         self.stress.setCurrentIndex(index)
         self._loading = False
+        self._update_note()

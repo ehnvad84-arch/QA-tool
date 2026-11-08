@@ -18,6 +18,7 @@ MODULES = [
     "qa_tool.checks.stream.network",
     "qa_tool.checks.stream.stress",
     "qa_tool.checks.web.walk",
+    "qa_tool.checks.image",
 ]
 
 

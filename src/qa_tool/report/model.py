@@ -8,6 +8,7 @@ from qa_tool.core.checks import Status
 from qa_tool.core.models import Place
 from qa_tool.core.secrets import redact
 from qa_tool.core.store import RunStore
+from qa_tool.report.image import ImageAppendix, build_image_appendix
 
 MODULE_TITLES = {
     "core": "Связь",
@@ -82,6 +83,7 @@ class Protocol:
     verdict_kind: str  # вид заключения: ok, fail, incomplete
     camera_name: str = field(default="")
     profiles: dict = field(default_factory=dict)  # матрица RUV-PROFILES-1: declared, matrix
+    image: ImageAppendix | None = None  # Приложение 1 «Картинка»; None — строк IMAGE-* нет
 
 
 def _threshold(row) -> str:
@@ -148,6 +150,7 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         )
         rows.append(row)
     place = Place(run["place"]).title
+    scenario = json.loads(run["scenario"] or "{}")
     model = (
         " ".join(v for v in (passport["manufacturer"], passport["model"]) if v) or cam["address"]
     )
@@ -190,7 +193,7 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         address=cam["address"],
         vendor=cam["vendor"],
         passport=passport,
-        scenario=json.loads(run["scenario"] or "{}"),
+        scenario=scenario,
         version=__version__,
         rows=rows,
         tasks=tasks,
@@ -200,6 +203,7 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         verdict_kind=kind,
         camera_name=model,
         profiles=_profiles_matrix(store, rows),
+        image=build_image_appendix(rows, store.run_dir, bool(scenario.get("allow_writes"))),
     )
 
 
@@ -227,6 +231,7 @@ class Summary:
     protocols: list[Protocol]
     checks: list[tuple[str, str]]  # (check_id, название) — строки матрицы
     matrix: dict[str, dict[int, str]]  # check_id → место → статус
+    image_compare: bool = False  # выпущено «Сравнение картинки» — в сводке ссылка на него
 
 
 def build_summary(store: RunStore) -> Summary:

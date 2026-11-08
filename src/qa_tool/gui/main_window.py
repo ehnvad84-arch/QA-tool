@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from qa_tool import __version__
+from qa_tool.core.checks import Phase
 from qa_tool.core.models import MAX_SLOTS
 from qa_tool.gui.help import help_id_of, helped
 from qa_tool.gui.help_window import HelpWindow
@@ -156,6 +157,8 @@ class RunBlock(QFrame):
             text = f"Прогон идёт\n{format_elapsed(c.elapsed_s())}"
             if self.phase:
                 text += f" · {self.phase}"
+                if self.phase == Phase.SYNC.title:
+                    text += " · не заходите в бокс"
         else:
             text = self.result or "Прогон не запущен"
         self.status.setText(text)

@@ -19,6 +19,11 @@ def render_summary(summary: Summary) -> str:
     return _ENV.get_template("summary.html").render(s=summary)
 
 
+def render_template(name: str, **context) -> str:
+    """HTML по шаблону из `templates/` с автоэкранированием."""
+    return _ENV.get_template(name).render(**context)
+
+
 def write_html(path: Path, html: str) -> Path:
     """Записать HTML в UTF-8."""
     path.write_text(html, encoding="utf-8")

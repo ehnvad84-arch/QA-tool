@@ -153,6 +153,10 @@ class CheckSpec:
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
     group: str = ""  # подгруппа внутри модуля на экране «Сценарий»; пусто — прямо в модуле
     help_id: str = ""  # раздел справки F1 для строки проверки; пусто — общий раздел «Проверки»
+    # что проверка делает без галочки «изменяющие» и с ней, если идёт и без неё (writes=False):
+    # подпись под галочкой на экране «Сценарий»; пусто — проверка не зависит от галочки
+    read_only_note: str = ""
+    writes_note: str = ""
 
     def time_limit_s(self, scenario: Scenario) -> float:
         """Срок, после которого проверка считается зависшей, с учётом длительности стресс-теста."""
@@ -178,7 +182,8 @@ class Registry:
             title: название для экрана и протокола.
             description: «что делаем, что ожидаем» — уходит в протокол и шаги задачи.
             **options: поля CheckSpec (phase, resources, vendors, places, writes,
-                destructive, severity, order, timeout_s, group, help_id).
+                destructive, severity, order, timeout_s, group, help_id, read_only_note,
+                writes_note).
 
         Raises:
             ValueError: проверка с таким id уже зарегистрирована.

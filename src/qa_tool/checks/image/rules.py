@@ -44,6 +44,8 @@ for _key, (_direction, _step, _stability) in _START_RULES.items():
     DEFAULTS[f"image.{_key}.stability"] = Threshold(_stability, _unit, START)
 
 RELATIVE_UNIT = "% от исходного"
+# начало причины «пропущена» из-за автоэкспозиции: по нему протокол собирает пояснение А
+AE_SKIPPED = "эффект погашен автоэкспозицией камеры"
 
 
 def limit(ctx: CheckContext, key: str) -> Threshold:
@@ -110,8 +112,9 @@ class Verdict:
     severity: Severity | None = None
 
 
-def _fmt(value: float) -> str:
-    return f"{value:.3g}"
+def _num(value: float, signed: bool = False) -> str:
+    """Число для протокола ОТК: одна цифра после запятой, десятичная запятая."""
+    return (f"{value:+.1f}" if signed else f"{value:.1f}").replace(".", ",")
 
 
 def verdict(
@@ -156,40 +159,65 @@ def verdict(
             )
         values = [v / values[0] * 100 for v in values]
     s, step = rule.direction, rule.step.value
-    shown = " → ".join(_fmt(v) for v in values)
-    total = s * (values[-1] - values[0])
-    if abs(values[-1] - values[0]) < step:
+    limit_text = f"при пороге {_num(step)}"
+    grows = "рост" if s > 0 else "уменьшение"
+    whole = values[-1] - values[0]
+    if abs(whole) < step:
         if rule.exposure is Exposure.DAMPED and exposure_mode != "MANUAL":
             return Verdict(
                 "skipped_ae",
                 Status.SKIPPED,
-                f"эффекта нет ({shown}), но включена автоэкспозиция или камера не сообщила режим: "
-                "она могла погасить эффект сама",
+                f"{AE_SKIPPED} — см. Приложение 1, пояснение А (изменение {_num(abs(whole))})",
             )
-        return Verdict("none", Status.FAILED, f"настройка не даёт эффекта: {shown}")
-    if total <= -step:
-        return Verdict("reverse", Status.FAILED, f"эффект обратный ожидаемому: {shown}")
-    if len(values) == 2:
-        return Verdict("effect", Status.PASSED, f"эффект есть: {shown}")
-    first, second = s * (values[1] - values[0]), s * (values[2] - values[1])
-    if first <= -step or second <= -step:
-        half = "первой" if first <= -step else "второй"
+        span = "выкл → вкл" if len(values) == 2 else "от 0 до 100 %"
         return Verdict(
-            "uneven", Status.FAILED, f"эффект неровный: на {half} половине диапазона назад, {shown}"
+            "none",
+            Status.FAILED,
+            f"эффекта нет: настройка не меняет изображение, {span} изменение "
+            f"{_num(abs(whole))} {limit_text}",
         )
-    if first >= step and second >= step:
-        return Verdict("effect", Status.PASSED, f"эффект есть: {shown}")
-    weak = (0, 1) if first < step else (1, 2)
+    if s * whole <= -step:
+        moved = "уменьшилась" if whole < 0 else "выросла"
+        return Verdict(
+            "reverse",
+            Status.FAILED,
+            f"эффект обратный: величина {moved} на {_num(abs(whole))}, ожидалось {grows}",
+        )
+    if len(values) == 2:
+        return Verdict(
+            "effect", Status.PASSED, f"эффект есть: выкл → вкл {_num(whole, True)} {limit_text}"
+        )
+    d1, d2 = values[1] - values[0], values[2] - values[1]
+    steps = (("0 → 50 %", d1), ("50 → 100 %", d2))
+    for name, delta in steps:
+        if s * delta <= -step:
+            moved = "уменьшилась" if delta < 0 else "выросла"
+            return Verdict(
+                "uneven",
+                Status.FAILED,
+                f"эффект неровный: на шаге {name} величина {moved} на {_num(abs(delta))}, "
+                f"ожидалось {grows}",
+            )
+    if s * d1 >= step and s * d2 >= step:
+        return Verdict(
+            "effect",
+            Status.PASSED,
+            f"эффект есть: на шагах 0 → 50 % и 50 → 100 % {_num(d1, True)} и {_num(d2, True)} "
+            f"{limit_text}",
+        )
+    weak_index = 0 if s * d1 < step else 1
+    name, delta = steps[weak_index]
+    weak = (0, 1) if weak_index == 0 else (1, 2)
     if any(clipped[i] >= rule.clip_pct for i in weak):
         return Verdict(
             "effect",
             Status.PASSED,
-            f"эффект есть: {shown}; на части диапазона кадр упёрся в пересвет или черноту",
+            f"эффект есть: на шаге {name} изменение {_num(abs(delta))} {limit_text} — "
+            "упор в пределы сцены (пересвет или чернота)",
         )
-    half = "первой" if first < step else "второй"
     return Verdict(
         "partial",
         Status.FAILED,
-        f"эффект только на части диапазона: на {half} половине меньше шага, {shown}",
+        f"эффект на части диапазона: на шаге {name} изменение {_num(abs(delta))} {limit_text}",
         Severity.MINOR,
     )

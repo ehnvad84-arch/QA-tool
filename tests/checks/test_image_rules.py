@@ -50,7 +50,7 @@ def test_partial_effect_is_minor_and_clipping_excuses_it():
     partial = verdict(rule, [100, 140, 142], NO_CLIP, "MANUAL")
     assert partial.severity is Severity.MINOR
     clipped = verdict(rule, [100, 140, 142], [0, 0, 40], "MANUAL")
-    assert clipped.status is Status.PASSED and "пересвет" in clipped.reason
+    assert clipped.status is Status.PASSED and "упор в пределы сцены" in clipped.reason
 
 
 def test_two_positions_off_on():

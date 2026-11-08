@@ -18,6 +18,8 @@ from typing import Protocol
 from xml.etree.ElementTree import Element, register_namespace, tostring
 from xml.sax.saxutils import escape
 
+from defusedxml import ElementTree
+
 from qa_tool.drivers.camera.soap import OnvifFault, SoapClient, credentials_rejected
 
 TT = "http://www.onvif.org/ver10/schema"
@@ -440,6 +442,27 @@ class ImagingWriter:
                 raise ImageWriteRefused(f"поле {name} не относится к «{self.fields[key].title}»")
 
     # --- возврат -------------------------------------------------------------------------------
+
+    def restore_xml(self, xml: str) -> None:
+        """Отправить сохранённый блок ImagingSettings (журнал прошлого прогона) с ForcePersistence.
+
+        Блок — ответ камеры из журнала, недоверенный: разбирается defusedxml, защищённые блоки
+        сверяются со снимком, табу проверяет `SoapClient`.
+
+        Raises:
+            ImageWriteRefused: блок трогает защищённое или снимка ещё нет — не отправлен.
+            ValueError: блок не XML.
+            CameraUnreachable, OnvifFault: нет связи или отказ.
+        """
+        if self.baseline is None:
+            raise ImageWriteRefused("нет снимка настроек: запись до чтения запрещена")
+        try:
+            root = ElementTree.fromstring(
+                f'<ImagingSettings xmlns:tt="{TT}">{xml}</ImagingSettings>'
+            )
+        except ElementTree.ParseError as e:
+            raise ValueError(f"блок из журнала не XML: {e}") from e
+        self._send(root, None, persist=True)
 
     def restore(self, state: ImagingState, touched: list[str]) -> RestoreReport:
         """Вернуть блок `state` целиком с ForcePersistence и сверить.

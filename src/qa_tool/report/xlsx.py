@@ -44,9 +44,10 @@ _TASK_HEADERS = [
 ]
 
 
-def _table(
+def table(
     ws: Worksheet, headers: list[str], rows: list[list], widths: dict[int, int] | None = None
 ):
+    """Лист-таблица: заголовок, строки текстом (без формул), заливка итогов, ширины столбцов."""
     ws.append(headers)
     for cell in ws[1]:
         cell.data_type = "s"
@@ -142,9 +143,11 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "Сводка"
-    _table(ws, _SUMMARY_HEADERS, _summary_rows([p]), {2: 20, 3: 28, 11: 40})
-    _table(wb.create_sheet("Проверки"), _CHECK_HEADERS, _check_rows(p), _CHECK_WIDTHS)
-    _table(wb.create_sheet("Задачи"), _TASK_HEADERS, _task_rows(p), _TASK_WIDTHS)
+    table(ws, _SUMMARY_HEADERS, _summary_rows([p]), {2: 20, 3: 28, 11: 40})
+    table(wb.create_sheet("Проверки"), _CHECK_HEADERS, _check_rows(p), _CHECK_WIDTHS)
+    table(wb.create_sheet("Задачи"), _TASK_HEADERS, _task_rows(p), _TASK_WIDTHS)
+    if p.image is not None:
+        _image_sheet(wb.create_sheet("Картинка"), p)
     if p.profiles.get("matrix"):
         declared = set(p.profiles.get("declared", []))
         rows = [
@@ -158,7 +161,7 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
             ]
             for v in p.profiles["matrix"]
         ]
-        _table(
+        table(
             wb.create_sheet("Профили ONVIF"),
             ["Профиль", "Объявлен", "Обязательная функция", "Итог", "Основание", "Примечание"],
             rows,
@@ -168,19 +171,83 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
     return path
 
 
+_IMAGE_HEADERS = [
+    "Проверка",
+    "Настройка",
+    "Поле ONVIF",
+    "Диапазон",
+    "Исходное значение",
+    "Режим экспозиции",
+    "Записано / прочитано 0 %",
+    "Записано / прочитано 50 %",
+    "Записано / прочитано 100 %",
+    "Величина",
+    "Единица",
+    "Величина 0 %",
+    "Величина 50 %",
+    "Величина 100 %",
+    "Сторона",
+    "Порог (источник)",
+    "Результат",
+    "Эффект",
+    "Причина",
+    "Снимок 0 %",
+    "Снимок 50 %",
+    "Снимок 100 %",
+]
+
+
+def _image_sheet(ws: Worksheet, p: Protocol) -> None:
+    """Лист «Картинка»: строка состояния и строка на настройку; снимки — ссылками на файлы
+    папки прогона (относительный путь: папку можно переносить целиком), без формул."""
+    a = p.image
+    assert a is not None
+    rows = [["IMAGE-STATE-1", "Текущее состояние", "", "", "", a.exposure, *[""] * 16]]
+    for line in a.lines:
+        pairs = [f"{w} / {r}" for w, r in zip(line.written, line.read, strict=False)]
+        rows.append(
+            [
+                line.check_id,
+                line.title,
+                line.onvif_field,
+                line.span,
+                line.original,
+                a.exposure,
+                *(pairs + [""] * 3)[:3],
+                line.metric,
+                line.unit,
+                *(line.values + [""] * 3)[:3],
+                line.side,
+                line.threshold,
+                line.status,
+                line.effect,
+                line.reason,
+                *[""] * 3,
+            ]
+        )
+    table(ws, _IMAGE_HEADERS, rows, {2: 26, 3: 30, 16: 24, 19: 60})
+    for index, line in enumerate(a.lines, start=3):  # строка 1 — заголовок, 2 — состояние
+        for column, link in enumerate(line.links[:3], start=20):
+            cell = ws.cell(index, column)
+            cell.value = link.rsplit("/", 1)[-1]
+            cell.data_type = "s"
+            cell.hyperlink = link
+            cell.font = Font(color="1155CC", underline="single")
+
+
 def write_summary_xlsx(path: Path, s: Summary) -> Path:
     """Сводный Excel прогона: те же листы по всем камерам и «Сравнение»."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Сводка"
-    _table(ws, _SUMMARY_HEADERS, _summary_rows(s.protocols), {2: 20, 3: 28, 11: 40})
-    _table(
+    table(ws, _SUMMARY_HEADERS, _summary_rows(s.protocols), {2: 20, 3: 28, 11: 40})
+    table(
         wb.create_sheet("Проверки"),
         _CHECK_HEADERS,
         [row for p in s.protocols for row in _check_rows(p)],
         _CHECK_WIDTHS,
     )
-    _table(
+    table(
         wb.create_sheet("Задачи"),
         _TASK_HEADERS,
         [row for p in s.protocols for row in _task_rows(p)],
@@ -191,6 +258,6 @@ def write_summary_xlsx(path: Path, s: Summary) -> Path:
         [check_id, title, *(s.matrix[check_id].get(p.slot, "—") for p in s.protocols)]
         for check_id, title in s.checks
     ]
-    _table(wb.create_sheet("Сравнение"), headers, matrix, {1: 18, 2: 30})
+    table(wb.create_sheet("Сравнение"), headers, matrix, {1: 18, 2: 30})
     wb.save(path)
     return path
