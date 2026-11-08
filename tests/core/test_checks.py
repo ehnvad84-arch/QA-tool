@@ -4,11 +4,13 @@ from qa_tool.core.checks import (
     CheckContext,
     CheckResult,
     CheckSpec,
+    ChildResult,
     Evidence,
     Phase,
     Registry,
     Status,
     run_check,
+    scrub,
     skip_reason,
 )
 from qa_tool.core.models import Camera, Place, Scenario
@@ -127,3 +129,22 @@ def test_stress_time_limit_adds_chosen_duration():
     scenario = Scenario(stress_minutes=30)
     assert stress.time_limit_s(scenario) == 300 + 1800
     assert plain.time_limit_s(scenario) == 300
+
+
+def test_password_repeated_by_camera_is_removed_from_everything():
+    secret = "S3cret-pw"
+    child = CheckResult(
+        Status.FAILED, reason=f"пароль {secret}", evidence=[Evidence("a.txt", f"тело {secret}")]
+    )
+    result = CheckResult(
+        Status.PASSED,
+        actual=f"ответ {secret}",
+        expected=f"ждали {secret}",
+        evidence=[Evidence("b.txt", secret), Evidence("c.png", secret.encode(), kind="image")],
+        children=[ChildResult("X-1", f"строка {secret}", child)],
+    )
+    scrub(result, [secret, ""])
+    texts = [result.actual, result.expected, child.reason, child.evidence[0].content]
+    texts += [result.evidence[0].content, result.children[0].title]
+    assert not any(secret in text for text in texts)
+    assert result.evidence[1].content == secret.encode()  # двоичные доказательства не трогаем

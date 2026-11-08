@@ -54,11 +54,12 @@ def _envelope(body: str) -> bytes:
     ).encode()
 
 
-def _fault(reason: str, subcode: str = "ter:NotAuthorized") -> bytes:
+def _fault(reason: str, subcode: str = "ter:NotAuthorized", detail: str = "") -> bytes:
     return _envelope(
         "<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode>"
         f"<s:Value>{subcode}</s:Value></s:Subcode></s:Code>"
-        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason></s:Fault>'
+        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason>'
+        f"{f'<s:Detail>{detail}</s:Detail>' if detail else ''}</s:Fault>"
     )
 
 
@@ -92,6 +93,7 @@ class MockCamera:
             require_unsupported=self.state.replay_require_unsupported,
             udp=self.state.rtsp_udp,
             udp_blackhole=self.state.rtsp_udp_blackhole,
+            range_silent=self.state.replay_range_silent,
         )
         self._threads: list[threading.Thread] = []
 
@@ -198,10 +200,13 @@ class MockCamera:
         services = OnvifServices(
             self.state, f"http://127.0.0.1:{self.port}/onvif", f"rtsp://127.0.0.1:{self.rtsp_port}"
         )
+        services.envelope = root
         answer = services.handle(operation, body[0])
         if answer is not None:
             return 200, _envelope(answer)
-        return 400, _fault(f"Action not supported: {operation}")
+        if services.fault:
+            return 500, _fault(services.fault, services.fault, services.fault_detail)
+        return 400, _fault(f"Action not supported: {operation}", "ter:ActionNotSupported")
 
     def _handler(self):
         camera = self

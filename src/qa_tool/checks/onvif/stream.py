@@ -6,8 +6,8 @@ Authorization, адрес потока — на хосте камеры из с�
 Глубокий разбор потока (потери, частота кадров, битрейт) — модуль «Поток» этапа 4.
 """
 
-from qa_tool.checks.onvif.metadata import to_stand_address
-from qa_tool.checks.onvif.replay import play, soap_evidence
+from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
+from qa_tool.checks.onvif.replay import frames_problem, play, soap_evidence
 from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
     REGISTRY,
@@ -66,7 +66,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
     """Поток первого медиапрофиля открывается, кадры и ключевые кадры идут."""
     soap = SoapClient(ctx.camera.username, ctx.password, timeout=10)
     minimum = ctx.thresholds.get(THRESHOLD_KEY, DEFAULT_MIN_S)
-    expected = f"видео идёт ≥ {minimum.value:g} {minimum.unit}, есть ключевой кадр"
+    expected = f"видео идёт ровно ≥ {minimum.value:g} {minimum.unit}, есть ключевой кадр"
     try:
         profile, uri = first_stream(soap, service_urls(soap, ctx.camera))
     except (CameraUnreachable, OnvifFault) as e:
@@ -78,7 +78,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
     evidence = soap_evidence(soap)
-    if not uri.startswith("rtsp://"):
+    if not uri.startswith("rtsp://") or not well_formed(uri):
         return CheckResult(
             Status.FAILED,
             reason=f"GetStreamUri профиля {profile} вернул не RTSP-адрес: {uri!r}",
@@ -111,12 +111,14 @@ def video_stream(ctx: CheckContext) -> CheckResult:
         f"профиль {profile}: {stats['seconds']:g} с, кадров {stats['frames']}, "
         f"ключевых {stats['keyframes']}, {stats['codec']}"
     )
-    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"]:
-        reason = (
-            f"поток открылся, но видео шло {stats['seconds']:g} с"
-            if stats["keyframes"]
-            else "в потоке нет ключевых кадров — изображение не собрать"
-        )
+    uneven = frames_problem(ctx, stats)
+    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or uneven:
+        if not stats["keyframes"]:
+            reason = "в потоке нет ключевых кадров — изображение не собрать"
+        elif stats["seconds"] + 0.5 < minimum.value:
+            reason = f"поток открылся, но видео шло {stats['seconds']:g} с"
+        else:
+            reason = uneven
         return CheckResult(
             Status.FAILED,
             reason=reason,

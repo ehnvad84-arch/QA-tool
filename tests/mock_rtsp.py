@@ -284,6 +284,7 @@ class MockRtspServer:
         basic_auth: bool = False,
         both_auth: bool = False,
         first_frame_delay_s: float = 0.0,
+        range_silent: bool = False,
     ):
         self.metadata = metadata
         self.reject_password = reject_password  # 401 на любой пароль
@@ -310,6 +311,7 @@ class MockRtspServer:
         self.udp_socket.settimeout(0.05)
         self.play_lock = threading.Lock()
         self.require_unsupported = require_unsupported
+        self.range_silent = range_silent  # PLAY с Range: 200 OK и ни одного кадра (как Dahua)
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
@@ -498,7 +500,8 @@ class MockRtspServer:
                             )
                         elif method == "PLAY":
                             dead = fault.no_frames_after_break and after_break
-                            frames = [] if server.silent or dead else server.frames
+                            silent_range = server.range_silent and "range" in headers  # как Dahua
+                            frames = [] if server.silent or dead or silent_range else server.frames
                             with server.play_lock:
                                 full = server.max_plays and server.playing >= server.max_plays
                                 server.playing += 0 if full else 1

@@ -17,13 +17,14 @@
 по признаку ключевого кадра в расширении заголовка RTP архива ONVIF.
 """
 
+import contextlib
 import datetime
 import json
 import time
 from collections.abc import Iterator
 from xml.sax.saxutils import escape
 
-from qa_tool.checks.onvif.metadata import to_stand_address
+from qa_tool.checks.onvif.metadata import to_stand_address, well_formed
 from qa_tool.checks.onvif.storage import parse_time
 from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
@@ -41,8 +42,14 @@ from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError, Track
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
 CHECK_ID = "RUV-G-REPLAY-1"
+SEARCH_CHECK_ID = "RUV-G-SEARCH-1"
 THRESHOLD_KEY = "onvif.replay_min_s"
 DEFAULT_MIN_S = Threshold(10.0, "с", "стартовое значение (спека этапа 2)")
+MIN_RATE_KEY = "onvif.min_frame_rate"
+MAX_GAP_KEY = "onvif.max_frame_gap_s"
+# Время берётся из меток RTP, поэтому без них два кадра дают любую длительность (замечание QA-01)
+DEFAULT_MIN_RATE = Threshold(1.0, "кадр/с", "стартовое значение")
+DEFAULT_MAX_GAP = Threshold(2.0, "с", "стартовое значение")
 DEFAULT_RECORD_S = 120.0
 REPLAY_HEADERS = {"Require": "onvif-replay"}
 OPTION_NOT_SUPPORTED = 551  # RFC 2326 §11.3.14: камера не знает заголовка Require
@@ -57,7 +64,12 @@ def _texts(element, name: str) -> list[str]:
 
 
 def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
-    """Записи камеры: токен, начало и конец (ONVIF Recording Search).
+    """Записи камеры: токен, начало и конец (ONVIF Recording Search)."""
+    return search_recordings(soap, search_url)[0]
+
+
+def search_recordings(soap: SoapClient, search_url: str) -> tuple[list[dict], bool]:
+    """Записи камеры и признак, что камера завершила поиск (SearchState Completed).
 
     Raises:
         OnvifFault: камера не начала поиск (нет SearchToken) — это её ошибка, а не стенда.
@@ -74,6 +86,7 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
         raise OnvifFault("FindRecordings не вернул SearchToken")
     token = tokens[0]
     found: list[dict] = []
+    completed = False
     try:
         for _ in range(5):  # поиск на камере асинхронный: ждём «Completed» не дольше ~25 с
             answer = soap.call(
@@ -91,13 +104,27 @@ def find_recordings(soap: SoapClient, search_url: str) -> list[dict]:
                     }
                 )
             if "Completed" in _texts(answer, "SearchState"):
+                completed = True
                 break
     finally:
-        soap.call(
-            search_url,
-            f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
-        )
-    return [r for r in found if r["token"]]
+        # Завершение поиска — только уборка: Dahua закрывает его сама после Completed и отвечает
+        # ter:InvalidToken. Отказ здесь не должен отменять уже найденные записи.
+        with contextlib.suppress(CameraUnreachable, OnvifFault):
+            soap.call(
+                search_url,
+                f"<tse:EndSearch><tse:SearchToken>{escape(token)}</tse:SearchToken></tse:EndSearch>",
+            )
+    return [r for r in found if r["token"] and has_data(r)], completed
+
+
+def has_data(recording: dict) -> bool:
+    """Есть ли в записи данные. Без неизвестных границ судить нельзя — считаем, что есть.
+
+    Камеры без карты отдают пустую запись-заглушку: начало и конец равны (Hikvision, Beward —
+    текущее время, Tiandy и второстепенные потоки Dahua — 1970 год).
+    """
+    begin, end = parse_time(recording["start"]), parse_time(recording["end"])
+    return not (begin and end and end == begin)
 
 
 def _job_modes(soap: SoapClient, recording_url: str) -> list[tuple[str, str]]:
@@ -156,6 +183,9 @@ def record_for_a_while(soap: SoapClient, recording_url: str, seconds: float) -> 
                 for job, mode in original
                 if job in now and now[job] != mode
             ]
+            before = dict(original)
+            problems += [f"задание {job} исчезло" for job in before if job not in now]
+            problems += [f"задание {job} появилось" for job in now if job not in before]
     if refused is not None:
         if not problems:
             raise refused
@@ -222,31 +252,58 @@ def onvif_frame_info(extension: bytes) -> tuple[datetime.datetime, bool] | None:
 def summarize(packets: list[RtpPacket], track: Track, channel: int) -> dict:
     """Итог проигрывания дорожки: длительность по меткам RTP, кадры, ключевые, время архива."""
     video = [p for p in packets if p.channel == channel]
-    elapsed, previous = 0, None
+    # Длительность — размах меток, а не сумма шагов: метки, качающиеся туда-обратно, иначе дали бы
+    # любое время. Кадры — разные метки, а не биты маркера: маркер ставит сама камера.
+    position, lowest, highest, previous, longest = 0, 0, 0, None, 0
     for packet in video:
         if previous is not None:
             step = (packet.timestamp - previous) % 2**32
-            if step < 2**31:  # метки идут вперёд; «назад» — переупорядоченный пакет
-                elapsed += step
+            if step >= 2**31:  # «назад» — кадр B или переупорядоченный пакет
+                step -= 2**32
+            position += step
+            lowest, highest = min(lowest, position), max(highest, position)
+            longest = max(longest, step)
         previous = packet.timestamp
-    keyframes = 0
+    keyframes = set()  # по меткам RTP: кадр делится на пакеты, а признак может стоять на каждом
     moments = []
     for packet in video:
         info = onvif_frame_info(packet.extension)
         if info:
             moments.append(info[0])
         if (info and info[1]) or is_keyframe(track.encoding, packet.payload):
-            keyframes += 1
+            keyframes.add(packet.timestamp)
     stats = {
-        "seconds": round(elapsed / track.clock_rate, 2),
-        "frames": sum(p.marker for p in video),
-        "keyframes": keyframes,
+        "seconds": round((highest - lowest) / track.clock_rate, 2),
+        "max_gap_s": round(longest / track.clock_rate, 2),
+        "frames": len({p.timestamp for p in video}),
+        "keyframes": len(keyframes),
         "codec": track.encoding.lower(),
     }
     if moments:
         stats["archive"] = f"{min(moments):%Y-%m-%d %H:%M:%S} — {max(moments):%H:%M:%S} UTC"
         stats["first_utc"], stats["last_utc"] = min(moments).isoformat(), max(moments).isoformat()
     return stats
+
+
+def frames_problem(ctx: CheckContext, stats: dict) -> str:
+    """Почему длительность по меткам RTP нельзя считать видео; пусто — кадры идут ровно.
+
+    Args:
+        ctx: контекст проверки; пороги `onvif.min_frame_rate` и `onvif.max_frame_gap_s`.
+        stats: итог `summarize`.
+    """
+    rate = ctx.thresholds.get(MIN_RATE_KEY, DEFAULT_MIN_RATE).value
+    gap = ctx.thresholds.get(MAX_GAP_KEY, DEFAULT_MAX_GAP).value
+    if stats["frames"] < stats["seconds"] * rate:
+        return f"кадров {stats['frames']} за {stats['seconds']:g} с: меньше {rate:g} кадр/с"
+    if stats["max_gap_s"] > gap:
+        return f"разрыв между кадрами {stats['max_gap_s']:g} с при пределе {gap:g} с"
+    return ""
+
+
+def bounds_known(recording: dict) -> bool:
+    """Прочитаны ли обе границы записи: без них время кадров сверить не с чем."""
+    return bool(parse_time(recording["start"]) and parse_time(recording["end"]))
 
 
 def outside_recording(stats: dict, recording: dict) -> str:
@@ -292,8 +349,12 @@ def play(client: RtspClient, seconds: float, start: datetime.datetime | None) ->
     if track is None:
         raise ValueError("в описании архива (SDP) нет видеодорожки")
     client.setup(track, channel=0)
-    # время в Range — абсолютное (clock), как требует ONVIF для архива; без него — с начала
-    client.play({"Range": f"clock={start:%Y%m%dT%H%M%SZ}-"} if start else None)
+    # время в Range — абсолютное (clock), как требует ONVIF для архива
+    if start:
+        client.play({"Range": f"clock={start:%Y%m%dT%H%M%SZ}-"})
+    else:
+        # именно без Range: Dahua на любой Range, даже npt=0-, отвечает 200 и не шлёт кадров
+        client.request("PLAY", client.url)
     goal = (seconds + 0.5) * track.clock_rate
     clock = {"elapsed": 0, "last": None}
 
@@ -317,6 +378,54 @@ def start_point(recording: dict, seconds: float) -> datetime.datetime | None:
         return begin
     point = end - datetime.timedelta(seconds=seconds + 10)
     return max(point, begin) if begin else point
+
+
+@REGISTRY.check(
+    SEARCH_CHECK_ID,
+    module="onvif",
+    title="Поиск записей по ONVIF (Profile G)",
+    description="Запускаем поиск записей (FindRecordings) и читаем его результат. Ожидаем: камера "
+    "выдаёт токен поиска и завершает поиск. Пустой список — не ошибка: карта может быть пуста.",
+    phase=Phase.NETWORK,
+    order=19,
+    severity=Severity.MAJOR,
+    timeout_s=60.0,
+    group="Профиль G: накопитель и архив",
+    help_id="onvif-archive",
+)
+def search(ctx: CheckContext) -> CheckResult:
+    """Выполнить поиск записей: своя строка, чтобы сбой проигрывания не приписали поиску."""
+    soap = SoapClient(ctx.camera.username, ctx.password, timeout=10)
+    expected = "камера выдаёт токен поиска и завершает поиск"
+    try:
+        foreign: list[str] = []
+        services = service_urls(soap, ctx.camera, foreign)
+        if "search" not in services:
+            reason = "камера не объявляет поиск записей (Profile G)"
+            if "search" in foreign:
+                reason = "служба поиска на чужом хосте отброшена"
+            return CheckResult.skipped(reason)
+        found, completed = search_recordings(soap, services["search"])
+    except (CameraUnreachable, OnvifFault) as e:
+        return CheckResult(
+            Status.FAILED,
+            reason=f"поиск записей не выполнен: {e}",
+            expected=expected,
+            evidence=soap_evidence(soap),
+        )
+    if not completed:
+        return CheckResult(
+            Status.FAILED,
+            reason="камера не завершила поиск: нет состояния Completed",
+            expected=expected,
+            evidence=soap_evidence(soap),
+        )
+    return CheckResult(
+        Status.PASSED,
+        expected=expected,
+        actual=f"поиск завершён, записей: {len(found)}",
+        evidence=soap_evidence(soap),
+    )
 
 
 @REGISTRY.check(
@@ -394,7 +503,7 @@ def replay(ctx: CheckContext) -> CheckResult:
             threshold=minimum,
         )
     evidence = soap_evidence(soap)
-    if not uri.startswith("rtsp://"):
+    if not uri.startswith("rtsp://") or not well_formed(uri):
         return CheckResult(
             Status.FAILED,
             reason=f"GetReplayUri вернул не RTSP-адрес: {uri!r}",
@@ -404,27 +513,42 @@ def replay(ctx: CheckContext) -> CheckResult:
         )
     if refused_password(ctx):
         return CheckResult.skipped(refused_password(ctx))
-    client = RtspClient(
-        to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
-        ctx.camera.username,
-        ctx.password,
-        timeout=10,
-        extra_headers=dict(REPLAY_HEADERS),
-    )
+
+    def new_client() -> RtspClient:
+        return RtspClient(
+            to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
+            ctx.camera.username,
+            ctx.password,
+            timeout=10,
+            extra_headers=dict(REPLAY_HEADERS),
+        )
+
+    client = new_client()
+    exchanges = client.exchanges
+    start = start_point(latest, minimum.value)
     try:
         with client:
-            sdp, stats = play(client, minimum.value, start_point(latest, minimum.value))
+            sdp, stats = play(client, minimum.value, start)
         evidence.append(Evidence("sdp.txt", sdp))
     except (OSError, RtspError, ValueError) as e:
         return refusal_result(ctx, e) or CheckResult(
             Status.FAILED,
             reason=f"архив не открывается: {e}",
             expected=expected,
-            evidence=[*evidence, Evidence("rtsp.txt", "\n".join(client.exchanges))],
+            evidence=[*evidence, Evidence("rtsp.txt", "\n".join(exchanges))],
             threshold=minimum,
         )
+    seek_broken = False
+    if start and not stats["frames"]:
+        # Отделяем «нет архива» от «нет перехода по времени»: это разные задачи программистам.
+        retry = new_client()
+        with contextlib.suppress(OSError, RtspError, ValueError), retry:
+            _, from_start = play(retry, minimum.value, None)
+            if from_start["frames"]:
+                stats, seek_broken = from_start, True
+        exchanges = [*exchanges, *retry.exchanges]
     evidence += [
-        Evidence("rtsp.txt", "\n".join(client.exchanges)),
+        Evidence("rtsp.txt", "\n".join(exchanges)),
         Evidence("replay.json", json.dumps(stats, ensure_ascii=False)),
     ]
     actual = (
@@ -434,16 +558,29 @@ def replay(ctx: CheckContext) -> CheckResult:
     if "archive" in stats:
         actual += f"; время кадров архива {stats['archive']}"
     mismatch = outside_recording(stats, latest)
-    if stats["seconds"] + 0.5 < minimum.value or not stats["keyframes"] or mismatch:
-        if not stats["keyframes"]:
+    uneven = frames_problem(ctx, stats)
+    short = stats["seconds"] + 0.5 < minimum.value
+    if seek_broken or short or not stats["keyframes"] or uneven or mismatch:
+        if seek_broken:
+            reason = "переход по времени не работает: на PLAY с Range кадров нет, с начала идут"
+        elif not stats["keyframes"]:
             reason = "в архиве нет ключевых кадров — изображение не собрать"
-        elif stats["seconds"] + 0.5 < minimum.value:
+        elif short:
             reason = f"архив отдан, но проиграно {stats['seconds']:g} с"
         else:
-            reason = mismatch
+            reason = uneven or mismatch
         return CheckResult(
             Status.FAILED,
             reason=reason,
+            expected=expected,
+            actual=actual,
+            evidence=evidence,
+            threshold=minimum,
+        )
+    if not bounds_known(latest):
+        return CheckResult(
+            Status.STAND_ERROR,
+            reason="границы записи не прочитаны: время кадров сверить не с чем",
             expected=expected,
             actual=actual,
             evidence=evidence,

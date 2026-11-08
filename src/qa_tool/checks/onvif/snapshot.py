@@ -46,6 +46,9 @@ def _inner(element: Element) -> str:
     return "".join(tostring(child, encoding="unicode") for child in element)
 
 
+RELAY_STATES = ("active", "inactive")
+
+
 @dataclass
 class Item:
     """Одна сохранённая настройка: как вернуть и как сверить."""
@@ -55,6 +58,7 @@ class Item:
     read: tuple[str, str]  # (адрес службы, тело запроса) для сверки
     expected: object  # сравнимое значение до прогона
     compare: str = "canonical"  # способ сверки: canonical, datetime или position
+    note: str = ""  # что сверка не подтверждает: печатается в строке восстановления
 
 
 @dataclass
@@ -149,6 +153,12 @@ class SnapshotTaker:
             if not token or properties is None:
                 continue
             safe = escape(token)
+            # Прочитать состояние реле по ONVIF нельзя: в tt:RelayOutput его нет, а команды чтения
+            # в стандарте нет. Некоторые камеры добавляют поле сами: его значение и возвращаем.
+            # Иначе — состояние покоя (решение директора 2026-11-06), но сверить его нечем.
+            reported = _text(relay, "LogicalState")
+            state = reported if reported in RELAY_STATES else "inactive"
+            note = "" if reported in RELAY_STATES else f"состояние реле {token} не подтверждено"
             restore = [
                 (
                     services["device"],
@@ -159,7 +169,7 @@ class SnapshotTaker:
                 (
                     services["device"],
                     f"<tds:SetRelayOutputState><tds:RelayOutputToken>{safe}</tds:RelayOutputToken>"
-                    "<tds:LogicalState>inactive</tds:LogicalState></tds:SetRelayOutputState>",
+                    f"<tds:LogicalState>{state}</tds:LogicalState></tds:SetRelayOutputState>",
                 ),
             ]
             items.append(
@@ -168,6 +178,7 @@ class SnapshotTaker:
                     restore,
                     (services["device"], "<tds:GetRelayOutputs/>"),
                     canonical(relay),
+                    note=note,
                 )
             )
         return items

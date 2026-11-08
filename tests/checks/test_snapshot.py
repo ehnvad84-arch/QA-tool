@@ -113,3 +113,43 @@ def test_imaging_answer_without_settings_is_skipped_not_a_crash(mock):
     mock.state.imaging_without_settings = True
     snap = taker(mock).take()
     assert any("без ImagingSettings" in line for line in snap.skipped), snap.skipped
+
+
+class RelaySoap:
+    """Камера с одним реле; `state` — нестандартное поле состояния в ответе."""
+
+    def __init__(self, state=""):
+        self.state = state
+
+    def call(self, _url, _body):
+        extra = f"<LogicalState>{self.state}</LogicalState>" if self.state else ""
+        return fromstring(
+            f'<a><RelayOutputs token="r1"><Properties><Mode>Bistable</Mode></Properties>{extra}'
+            "</RelayOutputs></a>"
+        )
+
+
+def relay_item(state):
+    camera = Camera(slot=1, address="127.0.0.1", port=80, username="admin")
+    return SnapshotTaker(camera, RelaySoap(state))._relays({"device": "u"})[0]
+
+
+def test_relay_reported_active_goes_back_to_active():
+    item = relay_item("active")
+    assert "<tds:LogicalState>active<" in item.restore[1][1]
+    assert not item.note
+
+
+def test_relay_reported_inactive_goes_back_to_inactive():
+    assert "<tds:LogicalState>inactive<" in relay_item("inactive").restore[1][1]
+
+
+def test_relay_without_state_stays_inactive_and_it_is_not_called_confirmed():
+    item = relay_item("")
+    assert "<tds:LogicalState>inactive<" in item.restore[1][1]
+    assert "не подтверждено" in item.note
+
+
+def test_garbage_relay_state_never_reaches_the_request():
+    item = relay_item("broken")
+    assert "<tds:LogicalState>inactive<" in item.restore[1][1]

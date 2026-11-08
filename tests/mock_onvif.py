@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from xml.sax.saxutils import quoteattr
 
+_SOAP = {"s": "http://www.w3.org/2003/05/soap-envelope"}
 SERVICE_NS = {
     "ptz": "http://www.onvif.org/ver20/ptz/wsdl",
     "deviceio": "http://www.onvif.org/ver10/deviceIO/wsdl",
@@ -113,11 +114,21 @@ class OnvifState:
     relay_state: str = "inactive"
     reject_set: bool = False  # камера отказывает в Set* — восстановление не удаётся
     replay_fault: bool = False  # камера объявляет Profile G, но GetReplayUri отказывает
+    end_search_fault: bool = False  # камера сама закрывает завершённый поиск: токен уже неверен
     job_stuck_active: bool = False  # SetRecordingJobMode «OK», но из Active задание не выходит
     job_refuses_active: str = ""  # задание с этим токеном камера не включает
     imaging_without_settings: bool = False  # GetImagingSettings без ImagingSettings
     profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
+    subscribe_fault: bool = False  # камера отказывает в Subscribe на любой адрес
+    subscribe_needs_addressing: bool = False  # без заголовков WS-Addressing — отказ (Рувер)
+    subscribe_reference: bool = False  # подписку надо называть параметрами из её ссылки
+    subscribe_address: str = ""  # адрес подписки в ответе, если не на хосте камеры
+    renew_keeps_time: bool = False  # Renew отвечает успехом, но срок не продлевает
+    unsubscribe_ignored: bool = False  # Unsubscribe отвечает успехом, подписка живёт
+    notify_until: datetime.datetime | None = None
+    unsubscribed: int = 0
+    replay_range_silent: bool = False  # архив идёт только с начала: на Range кадров нет
     replay_host: str = ""  # GetReplayUri отдаёт этот, внутренний адрес камеры (NAT)
     recording_stalled: bool = False  # задание Active, но архив не пополняется (карта сбоит)
     clock_offset_s: float = 0.0  # часы камеры отличаются от часов стенда
@@ -142,6 +153,9 @@ class OnvifServices:
         self.state = state
         self.base_url = base_url  # http://127.0.0.1:<порт>/onvif
         self.rtsp_url = rtsp_url  # rtsp://127.0.0.1:<порт>
+        self.envelope: ET.Element | None = None  # весь запрос: заголовки нужны службе событий
+        self.fault = ""  # подкод отказа вместо «операция не поддержана»
+        self.fault_detail = ""
 
     def handle(self, operation: str, request: ET.Element) -> str | None:
         """Тело ответа без конверта или None, если операция не поддержана."""
@@ -310,6 +324,8 @@ class OnvifServices:
             if job["token"] == token:
                 if self.state.job_stuck_active and job["mode"] == "Active":
                     continue
+                if job["mode"] == "Active" and mode != "Active" and self.state.recordings:
+                    self.state.recordings[-1]["end"] = _now()  # запись кончается при выключении
                 job["mode"] = mode
                 if mode == "Active":  # виртуальная камера «записывает» мгновенно
                     start = _now() - datetime.timedelta(seconds=60)
@@ -367,7 +383,9 @@ class OnvifServices:
             "</tse:ResultList></tse:GetRecordingSearchResultsResponse>"
         )
 
-    def op_EndSearch(self, request) -> str:  # noqa: N802
+    def op_EndSearch(self, request) -> str | None:  # noqa: N802
+        if self.state.end_search_fault:
+            return None
         self.state.searches.pop(_text(request, "SearchToken"), None)
         return (
             "<tse:EndSearchResponse><tse:Endpoint>1970-01-01T00:00:00Z</tse:Endpoint>"
@@ -404,7 +422,56 @@ class OnvifServices:
             "</tev:TerminationTime></tev:PullMessagesResponse>"
         )
 
+    def _addressed(self) -> bool:
+        """Есть ли в заголовке запроса Action и То: без них Рувер отвечает отказом."""
+        header = self.envelope.find("s:Header", _SOAP) if self.envelope is not None else None
+        names = {e.tag.split("}")[-1] for e in header} if header is not None else set()
+        return {"Action", "To"} <= names
+
+    def _reference_echoed(self) -> bool:
+        return b"SubscriptionId" in ET.tostring(self.envelope.find("s:Header", _SOAP))
+
+    def op_Subscribe(self, request) -> str | None:  # noqa: N802
+        s = self.state
+        consumer = "".join(e.text or "" for e in request.iter() if e.tag.endswith("}Address"))
+        # Hikvision так и делает: адрес 127.* отвергает, обычный принимает
+        if s.subscribe_fault or consumer.startswith("http://127."):
+            return None
+        if s.subscribe_needs_addressing and not self._addressed():
+            return None
+        s.notify_until = _now() + datetime.timedelta(seconds=60)
+        reference = (
+            '<wsa:ReferenceParameters><x:SubscriptionId xmlns:x="urn:x">7</x:SubscriptionId>'
+            "</wsa:ReferenceParameters>"
+            if s.subscribe_reference
+            else ""
+        )
+        host = s.subscribe_address or f"{self.base_url}/events_service/notify/1"
+        return (
+            f"<wsnt:SubscribeResponse><wsnt:SubscriptionReference><wsa:Address>{host}</wsa:Address>"
+            f"{reference}</wsnt:SubscriptionReference><wsnt:CurrentTime>{_iso(_now())}"
+            f"</wsnt:CurrentTime><wsnt:TerminationTime>{_iso(s.notify_until)}"
+            "</wsnt:TerminationTime></wsnt:SubscribeResponse>"
+        )
+
+    def op_Renew(self, _request) -> str | None:  # noqa: N802
+        s = self.state
+        if s.notify_until is None or (s.subscribe_reference and not self._reference_echoed()):
+            self.fault = "wsrf-r:ResourceUnknownFault"  # так отвечает Hikvision
+            self.fault_detail = '<r:ResourceUnknownFault xmlns:r="urn:r"/>'
+            return None
+        if not s.renew_keeps_time:
+            s.notify_until += datetime.timedelta(seconds=60)
+        return (
+            f"<wsnt:RenewResponse><wsnt:TerminationTime>{_iso(s.notify_until)}"
+            f"</wsnt:TerminationTime><wsnt:CurrentTime>{_iso(_now())}</wsnt:CurrentTime>"
+            "</wsnt:RenewResponse>"
+        )
+
     def op_Unsubscribe(self, _request) -> str:  # noqa: N802
+        self.state.unsubscribed += 1
+        if not self.state.unsubscribe_ignored:
+            self.state.notify_until = None
         return "<wsnt:UnsubscribeResponse/>"
 
     # --- настройки, которые меняют изменяющие тесты (T7) ----------------------------------------
