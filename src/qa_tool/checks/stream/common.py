@@ -122,11 +122,12 @@ class Sampler:
         path: файл выборки.
         track: видеодорожка.
         limit: наибольший размер выборки, байт; кадр сверх него не пишется и выборка кончается.
+            None — `SAMPLE_LIMIT` модуля на момент создания.
     """
 
-    def __init__(self, path: Path, track: Track, limit: int = SAMPLE_LIMIT):
+    def __init__(self, path: Path, track: Track, limit: int | None = None):
         self.path = path
-        self.limit = limit
+        self.limit = SAMPLE_LIMIT if limit is None else limit
         self.encoding = track.encoding
         self._depacketizer = Depacketizer(track.encoding, parameter_sets(track.fmtp))
         self._file = path.open("wb")
