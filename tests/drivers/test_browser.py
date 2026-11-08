@@ -300,7 +300,12 @@ def test_confirm_with_danger_word_is_refused_in_write_window():
 
 
 def test_stop_works_on_hung_page_and_cleans_up():
-    page = "<script>setTimeout(() => { while (true) {} }, 50)</script><img src='/slow.png'>"
+    # страница зависает после загрузки: цикл до события load на нагруженном стенде иногда
+    # опережал ответ на картинку, и load не наступал вовсе — тест падал не по своей причине
+    page = (
+        "<script>addEventListener('load', () => setTimeout(() => { while (true) {} }, 50))"
+        "</script><img src='/slow.png'>"
+    )
     flag = {"stop": False}
     with MockWebCamera({"/": page}) as camera:
         session = BrowserSession(camera.url, stop_requested=lambda: flag["stop"], temp_tag="t")
