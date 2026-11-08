@@ -1,11 +1,12 @@
 """Журнал записи: атомарность, чтение, повреждение, очистка адреса."""
 
+import json
 import os
 
 import pytest
 
 from qa_tool.core.checks import Status
-from qa_tool.core.web_journal import (
+from qa_tool.core.write_journal import (
     UNREADABLE,
     PendingWrite,
     clear,
@@ -89,3 +90,21 @@ def test_blocker_row_names_values(tmp_path):
     assert result.status is Status.FAILED
     assert "Яркость" in result.reason and "возврат" in result.reason
     assert "было 50, записывалось 60" in result.actual
+
+
+def test_old_journal_without_restore_field_still_loads(tmp_path):
+    # журналы версии 0.5.0 писались без поля restore: камера с ними не должна стать «чистой»
+    save(tmp_path, entry())
+    path = journal_file(tmp_path, "10.0.0.5", 80)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["restore"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    read = load(tmp_path, "10.0.0.5", 80)
+    assert read.stage == "intent" and read.restore == {}
+
+
+def test_blocker_names_the_place_by_journal_kind():
+    from qa_tool.core.write_journal import IMAGE
+
+    result = lost_write_result(entry(page="http://cam/onvif/imaging"), IMAGE.where)
+    assert "служба http://cam/onvif/imaging" in result.actual

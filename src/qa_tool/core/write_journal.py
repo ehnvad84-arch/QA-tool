@@ -1,9 +1,11 @@
-"""Журнал незавершённой записи веб-обхода: что менялось на камере и было ли возвращено.
+"""Журнал незавершённой записи: что менялось на камере и было ли возвращено.
 
-Обход пишет сюда до первого изменения поля и закрывает журнал, только сверив возврат. Файл нужен
-потому, что процесс камеры могут снять в любой момент: тогда в протоколе всё равно должна быть
-строка «блокер» с настройкой и значениями (S14, S15), а следующий обход этой камеры должен знать,
-что её настройка осталась изменённой.
+Общий для изменяющих проверок — веб-обхода (этап 5) и картинки (этап 7); у каждой свой вид
+журнала (`Journal`) и своя папка. Проверка пишет сюда до первого изменения настройки и закрывает
+журнал, только сверив возврат. Файл нужен потому, что процесс камеры могут снять в любой момент:
+тогда в протоколе всё равно должна быть строка «блокер» с настройкой и значениями (S14, S15
+этапа 5; S8, S9 этапа 7), а следующая проверка этой камеры должна знать, что её настройка
+осталась изменённой.
 
 Файл лежит рядом с папками прогонов и переживает их: один файл на адрес и порт. Запись атомарная:
 сбой питания оставляет либо старый журнал, либо новый, но не обрывок. Значения — ответ камеры,
@@ -23,10 +25,7 @@ from urllib.parse import urlsplit, urlunsplit
 from qa_tool.core.checks import CheckResult, CheckSpec, Severity, Status
 from qa_tool.core.secrets import redact
 
-FOLDER_KEY = "web_journal_dir"
 RUN_ID_KEY = "run_id"
-FOLDER_NAME = "pending-web"
-LOST_WRITE_ID = "WEB-WRITE-LOST"
 STAGES = ("intent", "sent", "verified", "restoring")
 UNREADABLE = "не прочитан"
 _STAGE_TITLES = {
@@ -57,6 +56,8 @@ class PendingWrite:
     fingerprint: str = ""
     time: str = ""
     reported: bool = False  # строка «блокер» уже в протоколе этого прогона
+    # как вернуть, если в page и old этого мало: картинке — токен источника и исходный XML
+    restore: dict[str, str] = field(default_factory=dict)
 
 
 def journal_file(folder: Path, address: str, port: int) -> Path:
@@ -133,24 +134,64 @@ def clear(folder: Path, address: str, port: int) -> None:
     _sync_folder(folder)
 
 
-def lost_write_result(entry: PendingWrite) -> CheckResult:
-    """Строка протокола «блокер»: какая настройка, какое было значение, какое могло остаться."""
+def lost_write_result(entry: PendingWrite, where: str = "страница") -> CheckResult:
+    """Строка протокола «блокер»: какая настройка, какое было значение, какое могло остаться.
+
+    Args:
+        entry: запись журнала.
+        where: чем назвать `entry.page` в протоколе — `Journal.where` вида журнала.
+    """
     stage = _STAGE_TITLES.get(entry.stage, entry.stage)
     reason = f"настройка «{entry.label}» могла остаться изменённой: {stage}"
     return CheckResult(
         Status.FAILED,
         reason=redact(reason),
         expected=f"значение возвращено: {redact(entry.old)}",
-        actual=f"было {redact(entry.old)}, записывалось {redact(entry.new)}; страница {entry.page}",
+        actual=f"было {redact(entry.old)}, записывалось {redact(entry.new)}; {where} {entry.page}",
     )
 
 
-LOST_WRITE_SPEC = CheckSpec(
-    LOST_WRITE_ID,
-    "web",
-    "Запись веб-интерфейса не завершена",
-    "Программа меняла настройку через веб-интерфейс и не успела вернуть её: процесс проверки "
-    "камеры был снят. Настройку нужно проверить на камере вручную.",
-    lambda _ctx: CheckResult.skipped("строка журнала, отдельно не запускается"),
-    severity=Severity.BLOCKER,
+@dataclass(frozen=True)
+class Journal:
+    """Вид журнала записи: папка рядом с прогонами, ключ папки в `CheckContext.extra`, строка
+    «блокер» для снятого процесса и чем в протоколе назван адрес из `PendingWrite.page`."""
+
+    folder_name: str
+    folder_key: str
+    lost_spec: CheckSpec
+    where: str
+
+    def folder(self, runs_dir: Path) -> Path:
+        """Папка журналов этого вида."""
+        return runs_dir / self.folder_name
+
+
+def _lost_spec(check_id: str, module: str, title: str, how: str) -> CheckSpec:
+    return CheckSpec(
+        check_id,
+        module,
+        title,
+        f"Программа меняла настройку {how} и не успела вернуть её: процесс проверки камеры был "
+        "снят. Настройку нужно проверить на камере вручную.",
+        lambda _ctx: CheckResult.skipped("строка журнала, отдельно не запускается"),
+        severity=Severity.BLOCKER,
+    )
+
+
+WEB = Journal(
+    "pending-web",
+    "web_journal_dir",
+    _lost_spec(
+        "WEB-WRITE-LOST", "web", "Запись веб-интерфейса не завершена", "через веб-интерфейс"
+    ),
+    "страница",
 )
+IMAGE = Journal(
+    "pending-image",
+    "image_journal_dir",
+    _lost_spec(
+        "IMAGE-WRITE-LOST", "image", "Запись настроек картинки не завершена", "картинки по ONVIF"
+    ),
+    "служба",
+)
+JOURNALS = (WEB, IMAGE)  # планировщик ищет строки «блокер» в каждом

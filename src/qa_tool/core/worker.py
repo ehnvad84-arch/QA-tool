@@ -202,12 +202,7 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 rejected_from_start = check_id == FIRST_CHECK and bool(
                     result.data.get(CREDENTIALS_REJECTED)
                 )
-            if (
-                was_reachable
-                and troubled(result)
-                and liveness
-                and not camera_alive(args.camera)
-            ):
+            if was_reachable and troubled(result) and liveness and not camera_alive(args.camera):
                 # Решение директора 2026-11-03: камера, переставшая отвечать во время проверки, —
                 # сбой камеры или прошивки, задача программистам. Остальные её проверки после
                 # этого провести нельзя — они получают «ошибка стенда: нет связи».

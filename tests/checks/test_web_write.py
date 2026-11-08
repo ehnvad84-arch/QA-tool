@@ -7,7 +7,7 @@ from qa_tool.checks.web.walk import CHECK_ID, SUMMARY_ID
 from qa_tool.checks.web.write import Writer
 from qa_tool.core.checks import CheckContext, Severity, Status, run_check
 from qa_tool.core.models import Camera, Place, Threshold
-from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, PendingWrite, load, save
+from qa_tool.core.write_journal import RUN_ID_KEY, WEB, PendingWrite, load, save
 from qa_tool.drivers.camera.browser import BrowserSession, CameraSilent
 from tests.mock_web import MockWebCamera
 
@@ -32,7 +32,7 @@ PASSPORT = {"manufacturer": "Hikvision"}
 def context(camera, tmp_path, allow_writes=True, passport=PASSPORT, thresholds=None):
     port = int(camera.url.rsplit(":", 1)[1].strip("/"))
     target = Camera(slot=1, address="127.0.0.1", port=port, username="admin")
-    extra = {FOLDER_KEY: str(tmp_path / "journal"), RUN_ID_KEY: "QA-1"}
+    extra = {WEB.folder_key: str(tmp_path / "journal"), RUN_ID_KEY: "QA-1"}
     if passport is not None:
         extra["passport"] = passport
     return CheckContext(

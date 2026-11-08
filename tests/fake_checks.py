@@ -6,7 +6,7 @@ from pathlib import Path
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Severity, Status
-from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, PendingWrite, save
+from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, WEB, PendingWrite, save
 
 REGISTRY = Registry()
 
@@ -68,7 +68,36 @@ def write_and_hang(ctx):
         "60",
         "sent",
     )
-    save(Path(ctx.extra[FOLDER_KEY]), entry)
+    save(Path(ctx.extra[WEB.folder_key]), entry)
+    time.sleep(30)
+    return CheckResult.skipped("сюда процесс не дойдёт")
+
+
+@REGISTRY.check(
+    "FAKE-WRITE-HANG-BOTH",
+    module="image",
+    title="Две записи и зависание",
+    description="",
+    phase=Phase.NETWORK,
+    timeout_s=1,
+)
+def write_both_and_hang(ctx):
+    """Оставить журнал веба и журнал картинки и зависнуть: у камеры две незакрытые записи."""
+    camera = ctx.camera
+    common = (ctx.extra[RUN_ID_KEY], camera.slot, camera.address, camera.port, "generic")
+    web = PendingWrite(*common, "http://cam/image", "Яркость", "range", "50", "60", "sent")
+    image = PendingWrite(
+        *common,
+        "http://cam/onvif/imaging",
+        "Контраст",
+        "range",
+        "40",
+        "100",
+        "sent",
+        restore={"token": "src1", "xml": "<tt:Contrast>40</tt:Contrast>"},
+    )
+    save(Path(ctx.extra[WEB.folder_key]), web)
+    save(Path(ctx.extra[IMAGE.folder_key]), image)
     time.sleep(30)
     return CheckResult.skipped("сюда процесс не дойдёт")
 
