@@ -11,9 +11,11 @@ VMAF считает фильтр libvmaf (модель vmaf_v0.6.1; он же д
 «ошибка стенда». Лог ffmpeg — недоверенные данные: размер ограничен, числа проверяются.
 """
 
+import contextlib
 import functools
 import json
 import math
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +28,7 @@ FRAMES = 60  # кадров в расчёте: 2–6 с потока, меньш
 MIN_FRAMES = 10
 MAX_SIZE = (1920, 1080)
 LOG_LIMIT = 4 << 20  # лог libvmaf на 60 кадров — десятки КБ; больше — что-то не то
+NICE = 10  # ниже обычного (0), но не самый низкий: расчёт всё же в сроке фазы
 QUALITY_TIMEOUT_S = 180.0  # 60 кадров 4K двумя нитями на медленном стенде
 # PSNR одинаковых кадров бесконечен; фильтр `psnr` пишет «inf», а libvmaf обрезает по 8-битному
 # пределу. Берём верх допустимого диапазона, чтобы одинаковые кадры не стали «ошибкой стенда».
@@ -157,17 +160,7 @@ def compare(
         outputs = ["-map", "[o1]", "-f", "null", "-", "-map", "[o2]", "-f", "null", "-"]
     command = [ffmpeg, "-hide_banner", "-v", "error", "-nostdin", *_inputs(dist), *_inputs(ref)]
     command += ["-filter_complex", graph, *outputs]
-    try:
-        done = subprocess.run(
-            command,
-            cwd=folder,
-            capture_output=True,
-            timeout=QUALITY_TIMEOUT_S,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except subprocess.TimeoutExpired as e:
-        raise DecoderFailed(f"расчёт качества не уложился в {QUALITY_TIMEOUT_S:g} с") from e
+    done = _run_lowered(command, folder)
     if done.returncode:
         tail = done.stderr.decode("utf-8", "replace").strip()[-300:]
         raise DecoderFailed(f"ffmpeg не посчитал качество (код {done.returncode}): {tail}")
@@ -192,6 +185,36 @@ def compare(
         size=size,
         model=VMAF_MODEL if vmaf else "",
     )
+
+
+def _run_lowered(command: list[str], folder: Path) -> subprocess.CompletedProcess:
+    """ffmpeg расчёта с пониженным приоритетом: на 8 камерах разом он не должен отнимать
+    процессор у приёма RTSP соседних камер (спека, «Время и ресурсы»).
+
+    Raises:
+        DecoderFailed: не уложился в `QUALITY_TIMEOUT_S`.
+    """
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    flags |= getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+    process = subprocess.Popen(
+        command,
+        cwd=folder,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=flags,
+    )
+    if hasattr(os, "setpriority"):
+        # preexec_fn в процессе с нитями может зависнуть: приоритет — сразу после запуска
+        # ffmpeg уже завершился или прав нет — посчитаем с обычным приоритетом
+        with contextlib.suppress(OSError):
+            os.setpriority(os.PRIO_PROCESS, process.pid, NICE)
+    try:
+        stdout, stderr = process.communicate(timeout=QUALITY_TIMEOUT_S)
+    except subprocess.TimeoutExpired as e:
+        process.kill()
+        process.communicate()
+        raise DecoderFailed(f"расчёт качества не уложился в {QUALITY_TIMEOUT_S:g} с") from e
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def _read_log(path: Path) -> str:

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -81,20 +82,36 @@ def test_without_libvmaf_ssim_and_psnr_are_still_counted(tmp_path, work, monkeyp
 @needs_ffmpeg
 def test_ffmpeg_gets_only_files_and_writes_log_by_relative_path(tmp_path, work, monkeypatch):
     calls = []
-    real = subprocess.run
+    real = subprocess.Popen
 
     def spy(command, **kwargs):
         calls.append((command, kwargs))
         return real(command, **kwargs)
 
-    monkeypatch.setattr(quality.subprocess, "run", spy)
+    monkeypatch.setattr(quality.subprocess, "Popen", spy)
     ref = clip(tmp_path, 512, "ref")
     compare(ref, ref, work)
     command, kwargs = calls[-1]
     assert kwargs["cwd"] == work
-    assert not any("rtsp" in arg or "admin" in arg for arg in command)
+    # домашняя папка раннера Windows — runneradmin: «admin» из неё — не пароль камеры
+    args = [str(arg).replace(str(Path.home()), "~") for arg in command]
+    assert not any("rtsp" in arg or "admin" in arg for arg in args)
     graph = command[command.index("-filter_complex") + 1]
     assert str(work) not in graph and str(tmp_path) not in graph
+
+
+@needs_ffmpeg
+def test_ffmpeg_runs_below_normal_priority(tmp_path, work, monkeypatch):
+    lowered = []
+    monkeypatch.setattr(
+        quality.os, "setpriority", lambda *args: lowered.append(args), raising=False
+    )
+    ref = clip(tmp_path, 512, "ref")
+    compare(ref, ref, work)
+    if sys.platform == "win32":
+        assert subprocess.BELOW_NORMAL_PRIORITY_CLASS  # флаг процесса, setpriority нет
+    else:
+        assert lowered and lowered[-1][2] == quality.NICE > 0
 
 
 @needs_ffmpeg
