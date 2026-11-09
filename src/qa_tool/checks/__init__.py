@@ -20,6 +20,7 @@ MODULES = [
     "qa_tool.checks.web.walk",
     "qa_tool.checks.image",
     "qa_tool.checks.codec",
+    "qa_tool.checks.api.discovery",
 ]
 
 
