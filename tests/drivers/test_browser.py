@@ -312,6 +312,10 @@ def test_stop_works_on_hung_page_and_cleans_up():
         with session:
             session.open(camera.url + "/")
             temp = session._temp_dir
+            # цикл стартует через 50 мс после load: чтение, начатое раньше, встаёт в очередь
+            # за ним, и предел Playwright (он только на поиск элемента) его уже не прерывает —
+            # тест висел в CI; ждём, пока страница точно зависнет
+            time.sleep(0.5)
             assert session.elements() == []
             flag["stop"] = True
             with pytest.raises(Stopped):
