@@ -142,7 +142,9 @@ def test_quality_not_growing_with_bitrate_fails(camera_with):
     cam = camera_with(
         encoder_flat_quality=True, encoder_codecs=("H264",), encoder_kbps_range=(32, 8192)
     )
-    row = rows(run(cam))["CODEC-H264-1"].result
+    # OpenH264 (ffmpeg Windows) держит VMAF ~87 даже на 32 кбит/с: порог выше «плоской» кривой,
+    # но ниже эталона
+    row = rows(run(cam, **{"codec.h264.sd.vmaf_min": 95.0}))["CODEC-H264-1"].result
     assert row.status is Status.FAILED
     assert "качество ниже порога" in row.reason or "не растёт" in row.reason, row.reason
 

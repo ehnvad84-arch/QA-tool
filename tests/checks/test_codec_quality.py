@@ -1,6 +1,7 @@
 """Качество к эталону (этап 8, T7): VMAF, SSIM, PSNR одним вызовом ffmpeg, проверка лога."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -106,9 +107,8 @@ def test_ffmpeg_gets_only_files_and_writes_log_by_relative_path(tmp_path, work, 
 @needs_ffmpeg
 def test_ffmpeg_runs_below_normal_priority(tmp_path, work, monkeypatch):
     lowered = []
-    monkeypatch.setattr(
-        quality.os, "setpriority", lambda *args: lowered.append(args), raising=False
-    )
+    if hasattr(os, "setpriority"):  # на Windows её нет: там приоритет — флагом процесса
+        monkeypatch.setattr(quality.os, "setpriority", lambda *args: lowered.append(args))
     ref = clip(tmp_path, 512, "ref")
     compare(ref, ref, work)
     if sys.platform == "win32":

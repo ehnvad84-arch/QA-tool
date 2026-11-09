@@ -107,4 +107,4 @@ def test_eight_cameras_measure_codecs_with_image_in_sync_phase(tmp_path, fleet):
     sheet = load_workbook(run_dir / "codec_compare.xlsx")["Точки"]
     rows = list(sheet.iter_rows(min_row=2, values_only=True))
     assert {r[0] for r in rows} == {f"М{slot}" for slot in range(1, 9)}
-    assert all(isinstance(r[7], float) for r in rows)  # VMAF — числом
+    assert all(isinstance(r[7], int | float) for r in rows)  # VMAF — числом

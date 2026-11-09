@@ -111,7 +111,8 @@ def test_excel_sheet_has_numbers_and_links_without_formulas(stored):
     assert rows[1][0] == "CODEC-STATE-1"
     steps = [r for r in rows if r[0] == "CODEC-H264-1"]
     assert len(steps) == 2 and steps[0][6] == "1 из 2" and steps[0][7] == 2048
-    assert all(isinstance(r[10], float) and isinstance(r[8], float) for r in steps)
+    # число без дробной части openpyxl читает как int — важно, что это число, а не текст
+    assert all(isinstance(r[10], int | float) and isinstance(r[8], int | float) for r in steps)
     assert any(r[16] == "не прошла" for r in steps)  # битрейт вдвое больше заданного
     first = next(i for i, r in enumerate(rows, start=1) if r[0] == "CODEC-H264-1")
     assert ws.cell(first, 11).number_format == "0.0"
