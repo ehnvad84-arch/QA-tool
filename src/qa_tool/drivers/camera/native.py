@@ -37,8 +37,9 @@ _SAFE_QUERY = re.compile(r"^[\w\-.\[\]=&,*%]{0,512}$")
 class ReadTemplate:
     """Один запрос чтения сборщика.
 
-    `describe_path` — парный запрос описания (ISAPI `…/capabilities`): допустимые значения
-    раздела; его ответ сборщик получает в `parse` вместе с основным.
+    `describe_path` — парный запрос описания (ISAPI `…/capabilities`, Dahua
+    `encode.cgi?action=getConfigCaps&channel=1`), путь с запросом: допустимые значения раздела;
+    его ответ сборщик получает в `parse` вместе с основным.
     """
 
     path: str
@@ -48,6 +49,9 @@ class ReadTemplate:
     describe_path: str = ""
     sensitivity: Sensitivity = Sensitivity.NORMAL
     method: str = "GET"
+    # только описание: запроса нет, раздел строится из схемы сборщика (чувствительные операции
+    # «Рувер» — у них схема есть в карте, а значения читать незачем)
+    offline: bool = False
 
     def target(self) -> str:
         """Путь с запросом, как в строке запроса HTTP."""
@@ -66,6 +70,10 @@ class NativeWrite:
 
 class ParseRefused(ValueError):
     """Ответ не разобран: в «ошибки» карты с причиной, остальные разделы читаются дальше."""
+
+
+class NotSent(RuntimeError):
+    """Запрос отказан до отправки своим клиентом бренда (операции нет в карте «Рувер» и т. п.)."""
 
 
 class NativeUnreachable(RuntimeError):
@@ -188,6 +196,9 @@ class NativeReader:
     timeout_s: float = 5.0
     budget_s: float = 120.0
     clock: Callable[[], float] = time.monotonic
+    # своя отправка бренда вместо `http.request` с `login` («Рувер» — сеанс `RuverClient`);
+    # табу и проверка шаблона стоят до неё так же
+    fetch: Callable[[str], http.Response] | None = None
     exchanges: list[Exchange] = field(default_factory=list)
     sent: int = 0
     lost: int = 0
@@ -203,6 +214,8 @@ class NativeReader:
         self.sent += 1
         for attempt in (1, 2):
             try:
+                if self.fetch is not None:
+                    return self.fetch(target)
                 return http.request(
                     "GET",
                     url,
@@ -219,10 +232,11 @@ class NativeReader:
         """Причина, по которой шаблон сборщика не отправляется; пусто — можно."""
         if template.method != "GET":
             return f"метод {template.method}: родной API только читается"
-        for path in filter(None, (template.path, template.describe_path)):
+        describe, _, describe_query = template.describe_path.partition("?")
+        for path in filter(None, (template.path, describe)):
             if not _SAFE_PATH.match(path) or ".." in path or "//" in path:
                 return "адрес шаблона не годится"
-        if not _SAFE_QUERY.match(template.query):
+        if not _SAFE_QUERY.match(template.query) or not _SAFE_QUERY.match(describe_query):
             return "запрос шаблона не годится"
         return ""
 
@@ -257,8 +271,10 @@ class NativeReader:
 
     def _limit(self, meta: NativeMap, started: float) -> str:
         """Причина остановки по пределам; пусто — читать дальше."""
-        if self.sent >= MAX_REQUESTS:
-            return f"запросов больше {MAX_REQUESTS} — остальные разделы не читались"
+        # у «Рувера» операций чтения в карте больше, чем разделов ISAPI: свой предел у сборщика
+        limit = getattr(self.collector, "max_requests", MAX_REQUESTS)
+        if self.sent >= limit:
+            return f"запросов больше {limit} — остальные разделы не читались"
         if self.clock() - started > self.budget_s:
             return f"карта не уложилась в {self.budget_s:g} с — остальные разделы не читались"
         if meta.param_count() >= MAX_PARAMS:
@@ -274,6 +290,9 @@ class NativeReader:
         if problem:
             meta.errors.append(MapError(request, None, f"не отправлен: {problem}"))
             return
+        if template.offline:
+            self._describe_only(meta, template, request)
+            return
         try:
             response = self._get(template.target())
             describe = None
@@ -281,7 +300,7 @@ class NativeReader:
                 extra = self._get(template.describe_path)
                 if extra is not None and extra.status_code == 200:
                     describe = extra.content
-        except TabooViolation as error:
+        except (TabooViolation, NotSent) as error:
             meta.errors.append(MapError(request, None, f"не отправлен: {error}"))
             return
         except ResponseTooLarge:
@@ -307,6 +326,20 @@ class NativeReader:
             section.describe = f"GET {template.describe_path}"
         meta.sections.append(section)
         self.exchanges.append(self._exchange(request, code, response.content, section))
+
+    def _describe_only(self, meta: NativeMap, template: ReadTemplate, request: str) -> None:
+        """Раздел без запроса — только из схемы сборщика; значений в нём нет."""
+        try:
+            section = self.collector.parse(template, b"", "", None)
+        except ParseRefused as error:
+            meta.errors.append(MapError(request, None, f"описание не разобрано: {error}"))
+            return
+        section.read, section.code, section.size = (
+            f"{request} (не читается: только описание)",
+            None,
+            0,
+        )
+        meta.sections.append(section)
 
     @staticmethod
     def _exchange(request: str, code: int, body: bytes, section: Section) -> Exchange:

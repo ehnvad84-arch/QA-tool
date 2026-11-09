@@ -29,7 +29,14 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 import httpx
 
-from tests.mock_onvif import _TT, IMAGING_FULL, MockStream, OnvifState, encoder_now
+from tests.mock_onvif import (
+    _TT,
+    IMAGING_FULL,
+    MockStream,
+    OnvifServices,
+    OnvifState,
+    encoder_now,
+)
 
 HIK_NS = "http://www.hikvision.com/ver20/XMLSchema"
 REALM = "IP Camera"
@@ -148,6 +155,7 @@ class NativeApi:
     refusals: int = 0
     locked: bool = False
     status_reads: int = 0
+    stream_ids: tuple[str, ...] = ("101", "102")  # в списке потоков; читается только 101
     nonce: str = field(default_factory=lambda: secrets.token_hex(8))
 
     # --- вход ------------------------------------------------------------------------------
@@ -372,6 +380,17 @@ class NativeApi:
                 f"<id>1</id><enabled>true</enabled>{self._tree(image, HIK_IMAGE, caps)}",
             )
         stream = "Streaming/channels/101"
+        if path == "Streaming/channels":
+            # список потоков: в Transport — мультикаст и способ входа, как у .114 09.11
+            channel = (
+                "<StreamingChannel><id>{0}</id><channelName>Camera 01</channelName>"
+                "<enabled>true</enabled><Transport><Multicast><enabled>false</enabled>"
+                "<destIPAddress>239.0.0.1</destIPAddress></Multicast><Security>"
+                "<certificateType>digest</certificateType></Security></Transport>"
+                "<Video><videoCodecType>H.264</videoCodecType></Video></StreamingChannel>"
+            )
+            listing = "".join(channel.format(i) for i in self.stream_ids)
+            return self._xml("StreamingChannelList", listing)
         if path in (stream, stream + "/capabilities"):
             caps = path.endswith("capabilities")
             return self._xml(
@@ -506,8 +525,8 @@ class NativeApi:
             )
             return self._text(
                 [
-                    f"caps[0].MainFormat[0].Video.BitRateOptions[0]={low}",
-                    f"caps[0].MainFormat[0].Video.BitRateOptions[1]={high}",
+                    # одной строкой через запятую — как у .108 09.11
+                    f"caps[0].MainFormat[0].Video.BitRateOptions={low},{high}",
                     f"caps[0].MainFormat[0].Video.CompressionTypes={codecs}",
                     "caps[0].MainFormat[0].Video.FPSMax=25",
                 ]
@@ -614,3 +633,15 @@ def dahua(**kwargs) -> NativeApi:
     api = NativeApi("dahua", state, **(defaults | kwargs))
     with_max_gain(api.state, "50")
     return api
+
+
+def onvif_set_imaging(api: NativeApi, inner: str) -> None:
+    """Запись картинки по ONVIF тем же обработчиком, что у виртуальной ONVIF-камеры."""
+    services = OnvifServices(api.state, "http://127.0.0.1", "rtsp://127.0.0.1/live")
+    request = ET.fromstring(
+        '<timg:SetImagingSettings xmlns:timg="http://www.onvif.org/ver20/imaging/wsdl" '
+        'xmlns:tt="http://www.onvif.org/ver10/schema"><timg:VideoSourceToken>vs-1'
+        f"</timg:VideoSourceToken><timg:ImagingSettings>{inner}</timg:ImagingSettings>"
+        "</timg:SetImagingSettings>"
+    )
+    assert services.op_SetImagingSettings(request) is not None

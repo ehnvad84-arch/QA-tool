@@ -242,6 +242,7 @@ class Section:
         *,
         volatile: bool = False,
         writable: bool | None = None,
+        at_least: Sensitivity = Sensitivity.NORMAL,
     ) -> Param | None:
         """Добавить параметр из разобранного ответа камеры.
 
@@ -252,6 +253,8 @@ class Section:
             value: значение как у камеры; у чувствительных и секретов отбрасывается здесь же.
             volatile: сборщик знает, что параметр меняется сам (состояние, счётчик, время).
             writable: False — камера объявила «только чтение»; None — неизвестно.
+            at_least: нижняя граница чувствительности от сборщика — для блоков, которые
+                по словам не узнать (`Transport` у потока Hikvision); понизить нельзя.
 
         Returns:
             Добавленный параметр или None, если id пустой или длиннее `MAX_ID_LEN` — сборщик
@@ -259,7 +262,8 @@ class Section:
         """
         if not param_id or len(param_id) > MAX_ID_LEN:
             return None
-        level = classify(param_id, self.cls, self.sensitivity)
+        floor = at_least if _RANK[at_least] > _RANK[self.sensitivity] else self.sensitivity
+        level = classify(param_id, self.cls, floor)
         text = None
         if level is Sensitivity.NORMAL and value is not None and type_ != "объект":
             text = _clip(str(value), MAX_VALUE_LEN)

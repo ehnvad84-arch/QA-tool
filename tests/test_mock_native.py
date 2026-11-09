@@ -15,6 +15,7 @@ from tests.mock_native import (
     bitrate_edge_like_108,
     dahua,
     hikvision,
+    onvif_set_imaging,
     side_effect_like_111,
     sticky_like_tiandy,
 )
@@ -44,18 +45,6 @@ def leaf(response: httpx.Response, path: str) -> str:
 
 def kv(response: httpx.Response) -> dict[str, str]:
     return dict(line.split("=", 1) for line in response.text.splitlines() if "=" in line)
-
-
-def onvif_set_imaging(api, inner: str) -> None:
-    """Запись картинки по ONVIF тем же обработчиком, что у виртуальной ONVIF-камеры."""
-    services = OnvifServices(api.state, BASE, "rtsp://127.0.0.1/live")
-    request = ET.fromstring(
-        '<timg:SetImagingSettings xmlns:timg="http://www.onvif.org/ver20/imaging/wsdl" '
-        'xmlns:tt="http://www.onvif.org/ver10/schema"><timg:VideoSourceToken>vs-1'
-        f"</timg:VideoSourceToken><timg:ImagingSettings>{inner}</timg:ImagingSettings>"
-        "</timg:SetImagingSettings>"
-    )
-    assert services.op_SetImagingSettings(request) is not None
 
 
 def test_digest_login_with_our_client_and_counter(install):
@@ -190,7 +179,7 @@ def test_dahua_device_and_caps(install):
         get("/cgi-bin/magicBox.cgi?action=getDeviceType").text.strip() == "type=IPC-HFW2431S-S-S2"
     )
     caps = kv(get("/cgi-bin/encode.cgi?action=getConfigCaps&channel=1"))
-    assert caps["caps[0].MainFormat[0].Video.BitRateOptions[1]"] == "5632"
+    assert caps["caps[0].MainFormat[0].Video.BitRateOptions"] == "512,5632"
     assert caps["caps[0].MainFormat[0].Video.CompressionTypes"] == "H.264,H.265"
     bad = get("/cgi-bin/configManager.cgi?action=getConfig&name=NoSuchTable")
     assert bad.status_code == 400
