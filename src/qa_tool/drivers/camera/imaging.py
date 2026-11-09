@@ -464,6 +464,32 @@ class ImagingWriter:
             raise ValueError(f"блок из журнала не XML: {e}") from e
         self._send(root, None, persist=True)
 
+    def protected_drift(self, state: ImagingState | None = None) -> list[tuple[str, str, str]]:
+        """Защищённые блоки (экспозиция, ИК-фильтр, фокус), которые камера изменила сама.
+
+        Программа их не пишет, но камера может поменять их как побочный эффект чужой записи:
+        Hikvision .111 09.11 после записи настроек картинки сбросил MaxGain экспозиции со 100
+        на 0 и вернуть его не дал. Поэтому их сверка — после каждой записи и при возврате.
+
+        Args:
+            state: что сейчас у камеры; None — прочитать.
+
+        Returns:
+            (блок, было, стало) по каждому изменившемуся блоку; пусто — всё как в снимке.
+
+        Raises:
+            CameraUnreachable, OnvifFault: камера не ответила.
+        """
+        assert self.baseline is not None
+        now = state or self.read()
+        found = []
+        for name in PROTECTED:
+            was = next((e for e in self.baseline.element.iter() if _local(e.tag) == name), None)
+            got = next((e for e in now.element.iter() if _local(e.tag) == name), None)
+            if canonical(was) != canonical(got):
+                found.append((name, _brief(was), _brief(got)))
+        return found
+
     def restore(self, state: ImagingState, touched: list[str]) -> RestoreReport:
         """Вернуть блок `state` целиком с ForcePersistence и сверить.
 
@@ -494,11 +520,31 @@ class ImagingWriter:
                     title = f"{self.fields[key].title} — режим"
                     report.left.append((title, was_mode or "нет", now_mode or "нет"))
         moved = {self.fields[key].path[0] for key in touched}
+        for name, was_block, now_block in self.protected_drift(now):
+            # блок, который программа не пишет, изменился — камера ушла не такой, как пришла
+            title = f"{name} (камера изменила сама, программа его не пишет)"
+            report.left.append((title, was_block, now_block))
         for child in state.element:
             name = _local(child.tag)
+            if name in PROTECTED:
+                continue
             if name not in moved and canonical(child) != canonical(_child(now.element, name)):
                 report.other.append(f"{name}: после возврата не совпадает со снимком")
         return report
+
+
+def _brief(element: Element | None) -> str:
+    """Блок для строки «было / осталось»: «Mode AUTO, MinGain 0, MaxGain 100»."""
+    if element is None:
+        return "нет"
+    parts = [
+        f"{_local(e.tag)} {(e.text or '').strip()}"
+        for e in element.iter()
+        if e is not element and len(e) == 0 and (e.text or "").strip()
+    ]
+    if not parts and (element.text or "").strip():
+        return (element.text or "").strip()[:200]
+    return ", ".join(parts)[:200] or "пусто"
 
 
 def _text_at(element: Element, path: tuple[str, ...]) -> str:

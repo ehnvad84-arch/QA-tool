@@ -219,4 +219,5 @@ def test_white_balance_mode_left_manual_is_not_restored(camera_with):
     cam.state.imaging_sticky = {"Mode": "MANUAL"}  # камера не выходит из ручных режимов
     report = writer.restore(snapshot, ["wb_red"])
     assert ("Баланс белого: красный — режим", "AUTO", "MANUAL") in report.left
-    assert any(line.startswith("Exposure") for line in report.other)
+    # экспозицию программа не пишет: если камера её изменила — это «не вернулось», а не сведения
+    assert any(title.startswith("Exposure") for title, _was, _now in report.left)
