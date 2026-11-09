@@ -160,6 +160,21 @@ def test_dampened_effect_under_auto_exposure_is_skipped_with_explanation(camera_
     assert row.status is Status.SKIPPED and "автоэкспозицией" in row.reason
 
 
+@needs_video
+def test_scene_moved_after_restore_is_stand_error_with_expectation(camera_with, monkeypatch):
+    # живая камера 09.11: сцена сдвинулась после возврата — проверка падала с TypeError
+    calls = []
+
+    def moved(*_args):
+        calls.append(1)
+        return "" if len(calls) == 1 else "средняя яркость ушла на 12 уровней"
+
+    monkeypatch.setattr(engine, "moved", moved)
+    row = rows(run(camera_with(), ["brightness"]))["IMAGE-BRIGHT-1"]
+    assert row.status is Status.STAND_ERROR and row.reason.startswith("после возврата")
+    assert row.expected
+
+
 # --- T11: возврат, журнал, пропажа камеры ------------------------------------------------------
 
 
