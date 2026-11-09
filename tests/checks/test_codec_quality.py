@@ -93,8 +93,11 @@ def test_ffmpeg_gets_only_files_and_writes_log_by_relative_path(tmp_path, work, 
     compare(ref, ref, work)
     command, kwargs = calls[-1]
     assert kwargs["cwd"] == work
-    # домашняя папка раннера Windows — runneradmin: «admin» из неё — не пароль камеры
-    args = [str(arg).replace(str(Path.home()), "~") for arg in command]
+    # пользователь раннера Windows — runneradmin: «admin» в домашней и временной папке
+    # (pytest-of-runneradmin) — не пароль камеры
+    args = [
+        str(arg).replace(str(tmp_path), "<tmp>").replace(str(Path.home()), "~") for arg in command
+    ]
     assert not any("rtsp" in arg or "admin" in arg for arg in args)
     graph = command[command.index("-filter_complex") + 1]
     assert str(work) not in graph and str(tmp_path) not in graph
