@@ -175,6 +175,22 @@ def test_scene_moved_after_restore_is_stand_error_with_expectation(camera_with, 
     assert row.expected
 
 
+@needs_video
+def test_camera_changing_exposure_after_write_stops_check_and_blocks(camera_with):
+    # Hikvision .111, 09.11: после записи настроек картинки камера сама сбросила MaxGain
+    # экспозиции и вернуть его не дала, а возврат показал «прошла»
+    cam = camera_with(imaging_sticky={"MinExposureTime": "33"})
+    found = rows(run(cam, ["brightness", "saturation"]))
+    first = found["IMAGE-BRIGHT-1"]
+    assert first.status is Status.FAILED and "камера сама изменила" in first.reason
+    assert "MinExposureTime 10" in first.reason and "MinExposureTime 33" in first.reason
+    assert found["IMAGE-SAT-1"].status is Status.STAND_ERROR
+    restore = found[RESTORE_ID]
+    assert restore.status is Status.FAILED and "Exposure" in restore.reason
+    writes = [w for w in cam.state.imaging_writes if "<tt:ColorSaturation>" in w]
+    assert all("<tt:ColorSaturation>50<" in w for w in writes)  # насыщенность не писалась
+
+
 # --- T11: возврат, журнал, пропажа камеры ------------------------------------------------------
 
 

@@ -287,6 +287,7 @@ class Engine:
                 if rejected:
                     problem = CheckResult(Status.FAILED, reason=rejected, expected=rule.expected)
                     break
+                self._stop_on_protected_drift(setting, position)
                 time.sleep(limit(self.ctx, "image.apply_delay_s").value)
                 position.capture = self._capture()
                 position.measurement = measure(setting.metric, position.capture, masks)
@@ -341,6 +342,32 @@ class Engine:
             threshold=rule.step,
         )
         self._row(setting, result, before, evidence, found.severity)
+
+    def _stop_on_protected_drift(self, setting: Setting, position: Position) -> None:
+        """Камера сама изменила экспозицию, ИК-фильтр или фокус после записи — дальше не писать.
+
+        Такой побочный эффект может не вернуться (Hikvision .111, 09.11: MaxGain 100 → 0), и
+        каждая следующая запись множила бы риск. Текущая настройка — «не прошла», остальные —
+        «ошибка стенда»; общий возврат и строка возврата (блокер) — как при обрыве.
+
+        Raises:
+            Abort: защищённый блок изменился.
+        """
+        assert self.writer is not None
+        drift = self.writer.protected_drift()
+        if not drift:
+            return
+        changes = "; ".join(f"{name}: было {was}, стало {now}" for name, was, now in drift)
+        reason = (
+            f"камера сама изменила то, что программа не пишет, после записи «{setting.title}» "
+            f"{round(position.share * 100)} %: {changes}"
+        )
+        failed = CheckResult(
+            Status.FAILED,
+            reason=reason,
+            expected="запись настройки не меняет экспозицию, ИК-фильтр и фокус",
+        )
+        raise Abort(failed, "проверка остановлена: камера меняет защищённые настройки")
 
     def _skip_reason(self, setting: Setting, declared, before: Capture) -> CheckResult | None:
         """Итог без записи: настройки нет, диапазон негоден, сцена или экспозиция не те."""
