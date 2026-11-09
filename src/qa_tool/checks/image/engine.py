@@ -295,7 +295,9 @@ class Engine:
         if drift:
             self._row(
                 setting,
-                CheckResult.stand_error(f"после возврата {drift}", expected=rule.expected),
+                CheckResult(
+                    Status.STAND_ERROR, reason=f"после возврата {drift}", expected=rule.expected
+                ),
                 before,
                 evidence,
             )
