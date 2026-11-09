@@ -8,6 +8,7 @@ import datetime
 import itertools
 import uuid
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from xml.sax.saxutils import quoteattr
 
@@ -182,6 +183,9 @@ class OnvifState:
     imaging_writes: list[str] = field(default_factory=list)  # присланные блоки по порядку
     imaging_video: bool = False  # RTSP отдаёт картинку по настройкам (проверка картинки)
     imaging_effects: dict[str, str] = field(default_factory=dict)  # ключ → «none» или «reverse»
+    # после принятой записи картинки: (состояние, имена присланных полей) — побочный эффект
+    # камеры, как у Hikvision .111 09.11 (яркость сдвигает MaxGain); см. tests/mock_native.py
+    imaging_hooks: list[Callable[["OnvifState", set[str]], None]] = field(default_factory=list)
     profile_token: str = "main"
     replay_require_unsupported: bool = False  # RTSP не знает «Require: onvif-replay» (551)
     subscribe_fault: bool = False  # камера отказывает в Subscribe на любой адрес
@@ -215,6 +219,8 @@ class OnvifState:
     encoder_options_xml: str = ""  # своё содержимое Options вместо собранного (негодный ответ)
     encoder_reject: bool = False  # SetVideoEncoderConfiguration — Fault
     encoder_sticky_kbps: int | None = None  # камера «принимает», но оставляет этот битрейт
+    # кодек → потолок битрейта: объявлено больше, а держит не выше (Dahua .108 09.11, H.264 1792)
+    encoder_kbps_cap: dict[str, int] = field(default_factory=dict)
     encoder_writes: list[str] = field(default_factory=list)  # присланные блоки по порядку
     encoder_persist: list[str] = field(default_factory=list)  # ForcePersistence Media1
     encoder_now: dict[str, dict] = field(default_factory=dict)  # токен профиля → что изменено
@@ -458,6 +464,9 @@ class OnvifServices:
         now = dict(s.encoder_now.get(stream.token, {}))
         now["encoding"] = _text(config, "Encoding", before["encoding"])
         now["kbps"] = s.encoder_sticky_kbps or int(float(_text(config, "BitrateLimit", "0")))
+        cap = s.encoder_kbps_cap.get(str(now["encoding"]).upper())
+        if cap is not None:
+            now["kbps"] = min(now["kbps"], cap)
         rate = next((e for e in config.iter() if e.tag.endswith("}RateControl")), None)
         if rate is not None and rate.get("ConstantBitRate"):
             now["constant"] = rate.get("ConstantBitRate") == "true"
@@ -791,6 +800,8 @@ class OnvifServices:
                 element.text = s.imaging_sticky[element.tag.split("}")[-1]]
         merged = "".join(ET.tostring(c, encoding="unicode") for c in current)
         s.imaging_xml = merged.replace(f' xmlns:tt="{_TT}"', "")
+        for hook in s.imaging_hooks:
+            hook(s, names)
         return "<timg:SetImagingSettingsResponse/>"
 
     def op_GetStatus(self, request) -> str:  # noqa: N802
