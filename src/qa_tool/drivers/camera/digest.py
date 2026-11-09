@@ -54,3 +54,37 @@ def digest_header(
     if "opaque" in challenge:
         header += f', opaque="{challenge["opaque"]}"'
     return f'{header}, response="{_md5(digest)}"'
+
+
+MAX_PARAM = 256  # параметры запроса входа камеры — короткие строки; длиннее — не наш случай
+_BAD_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]')
+
+
+class LoginUnsupported(RuntimeError):
+    """Способ входа камеры не поддержан или её запрос входа негоден — пароль не отправлен."""
+
+
+def check_challenge(challenge: dict[str, str], user: str) -> None:
+    """Проверить недоверенный запрос входа камеры до расчёта по паролю (родной API, AD-7).
+
+    Только Digest MD5, `qop=auth` или без него; значения не длиннее `MAX_PARAM`, без кавычек и
+    управляющих символов: иначе подпись разошлась бы с тем, что камера посчитает, а неверный ответ
+    стоит попытки на её счётчике.
+
+    Raises:
+        LoginUnsupported: схема, алгоритм или режим не поддержаны, параметр или логин негоден.
+    """
+    if challenge.get("scheme") != "digest":
+        raise LoginUnsupported(f"способ входа {challenge.get('scheme', '?')} не поддержан")
+    for name, value in challenge.items():
+        if len(value) > MAX_PARAM or _BAD_CHARS.search(value):
+            raise LoginUnsupported(f"запрос входа камеры негоден: параметр {name[:32]}")
+    algorithm = challenge.get("algorithm", "MD5")
+    if algorithm.upper() != "MD5":
+        raise LoginUnsupported(f"алгоритм входа {algorithm[:32]} не поддержан (только MD5)")
+    if challenge.get("qop") and not uses_qop(challenge):
+        raise LoginUnsupported(f"режим входа {challenge['qop'][:32]} не поддержан (только auth)")
+    if not challenge.get("nonce"):
+        raise LoginUnsupported("в запросе входа камеры нет nonce")
+    if _BAD_CHARS.search(user) or len(user) > MAX_PARAM:
+        raise LoginUnsupported("логин с кавычками или управляющими символами в Digest не передать")
