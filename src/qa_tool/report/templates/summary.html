@@ -32,6 +32,9 @@
 {% if s.image_compare %}
 <p><b>Сравнение картинки:</b> снимки всех камер рядом в положениях 0, 50 и 100 % и график по каждой настройке — <a href="image_compare.html">image_compare.html</a> (а также .pdf и .xlsx).</p>
 {% endif %}
+{% if s.codec_compare %}
+<p><b>Сравнение кодеков:</b> кривые качества всех камер на одном графике по каждому разрешению и кодеку — <a href="codec_compare.html">codec_compare.html</a> (а также .pdf и .xlsx).</p>
+{% endif %}
 
 <h2>3. Задачи программистам по камерам</h2>
 <table border="1" cellspacing="0" cellpadding="4">

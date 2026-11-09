@@ -7,7 +7,7 @@ from qa_tool.checks.codec.quality import has_libvmaf
 from qa_tool.core.checks import CheckContext, run_check
 from qa_tool.core.models import Camera, Place, Scenario, Stand, Threshold
 from qa_tool.core.store import RunStore
-from qa_tool.report.codec import _better, _mbit, _ticks
+from qa_tool.report.codec import _better, mbit, rate_ticks
 from qa_tool.report.html import render_protocol
 from qa_tool.report.model import build_protocol
 from qa_tool.report.pdf import write_pdf
@@ -48,8 +48,8 @@ def stored(tmp_path_factory):
 
 
 def test_mbit_and_ticks_cover_points():
-    assert (_mbit(512), _mbit(2048), _mbit(64)) == ("0,5", "2", "0,06")
-    ticks = _ticks([(600.0, 70.0), (4100.0, 95.0)])
+    assert (mbit(512), mbit(2048), mbit(64)) == ("0,5", "2", "0,06")
+    ticks = rate_ticks([(600.0, 70.0), (4100.0, 95.0)])
     assert ticks[0][0] <= 600 and ticks[-1][0] >= 4100 and len(ticks) >= 3
 
 

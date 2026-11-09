@@ -110,12 +110,13 @@ def _finite(value) -> float | None:
     return float(value) if isinstance(value, int | float) and math.isfinite(value) else None
 
 
-def _num(value, digits: int = 1) -> str:
+def num(value, digits: int = 1) -> str:
+    """Число для протокола с десятичной запятой; не число или бесконечность — «—»."""
     found = _finite(value)
     return "—" if found is None else f"{found:.{digits}f}".replace(".", ",")
 
 
-def _mbit(kbps) -> str:
+def mbit(kbps) -> str:
     """Битрейт в Мбит/с для таблиц и делений: «0,5», «2», «0,06»."""
     found = _finite(kbps)
     if found is None:
@@ -178,16 +179,16 @@ def _step_lines(codec: str, measure: dict) -> list[StepLine]:
             status = f"{status}: {problem}"
         elif step.get("качество") is None:
             status = "нет замера"
-        measured = "—" if off is None else f"{_mbit(got)} ({off:+.0f} %)".replace("-", "−")
+        measured = "—" if off is None else f"{mbit(got)} ({off:+.0f} %)".replace("-", "−")
         lines.append(
             StepLine(
                 CODEC_TITLES.get(codec, codec),
                 f"{index} из {len(steps)}",
-                f"{_mbit(target)} Мбит/с",
+                f"{mbit(target)} Мбит/с",
                 measured,
-                _num(vmaf),
-                _num(_quality(step, "ssim"), 3),
-                _num(_quality(step, "psnr")),
+                num(vmaf),
+                num(_quality(step, "ssim"), 3),
+                num(_quality(step, "psnr")),
                 status,
                 bad_rate,
                 bad_vmaf,
@@ -209,7 +210,7 @@ def _points(measure: dict) -> list[tuple[float, float]]:
     return points
 
 
-def _ticks(points: list[tuple[float, float]]) -> list[tuple[float, str]]:
+def rate_ticks(points: list[tuple[float, float]]) -> list[tuple[float, str]]:
     """Деления оси битрейта — степени двойки вокруг точек, не меньше трёх."""
     low = min(x for x, _y in points)
     high = max(x for x, _y in points)
@@ -217,7 +218,7 @@ def _ticks(points: list[tuple[float, float]]) -> list[tuple[float, str]]:
     while len(chosen) < 3:
         smaller = [t for t in TICKS_KBPS if t < chosen[0]] if chosen else []
         chosen = ([smaller[-1]] if smaller else []) + chosen + [chosen[-1] * 2 if chosen else 1024]
-    return [(t, _mbit(t)) for t in chosen]
+    return [(t, mbit(t)) for t in chosen]
 
 
 def _better(measures: dict[str, dict], spread: float) -> str:
@@ -239,13 +240,13 @@ def _better(measures: dict[str, dict], spread: float) -> str:
     diffs = [vb[k] - va[k] for k in common]
     mean = sum(diffs) / len(diffs)
     if abs(mean) <= spread:
-        return f"При равном битрейте кодеки равны в пределах разброса {_num(spread)} VMAF."
+        return f"При равном битрейте кодеки равны в пределах разброса {num(spread)} VMAF."
     winner = b if mean > 0 else a
     wins = sum(1 for d in diffs if (d > 0) == (mean > 0) and abs(d) > 0)
     where = "на всех ступенях" if wins == len(diffs) else f"на {wins} из {len(diffs)} ступеней"
     return (
         f"При равном битрейте лучше {CODEC_TITLES.get(winner, winner)}: {where}, в среднем на "
-        f"{_num(abs(mean))} VMAF."
+        f"{num(abs(mean))} VMAF."
     )
 
 
@@ -276,11 +277,11 @@ def _sheet(number: int, rows: list, run_dir: Path) -> EncoderSheet:
     if width and height:
         heading += f" · {width}×{height}"
     if _finite(first.get("частота")):
-        heading += f" · {_num(first.get('частота'), 0)} к/с"
+        heading += f" · {num(first.get('частота'), 0)} к/с"
     if ref_codec:
         heading += (
             f" · эталон {CODEC_TITLES.get(ref_codec, ref_codec)}, "
-            f"{_mbit(reference.get('битрейт'))} Мбит/с"
+            f"{mbit(reference.get('битрейт'))} Мбит/с"
         )
     steps = [line for codec, m in measures.items() for line in _step_lines(codec, m)]
     chart, note = _chart(number, measures, folders, run_dir, width, height)
@@ -316,7 +317,7 @@ def _chart(
     first = next(iter(measures.values()))
     level = _rule(first, ".vmaf_min")
     size = f"{width}×{height}" if width and height else ""
-    threshold = (level, f"порог {size}: {_num(level, 0)}") if level is not None else None
+    threshold = (level, f"порог {size}: {num(level, 0)}") if level is not None else None
     target = Path(next(iter(folders.values()))).parent / f"codec-curve-{number}.png"
     (run_dir / target).parent.mkdir(parents=True, exist_ok=True)
     xy_chart(
@@ -325,7 +326,7 @@ def _chart(
         "Битрейт, Мбит/с (логарифмическая шкала)",
         "VMAF",
         series,
-        _ticks([p for s in series for p in s.points]),
+        rate_ticks([p for s in series for p in s.points]),
         threshold=threshold,
     )
     missing = [c for c in measures if not _points(measures[c])]
@@ -358,8 +359,8 @@ def _shots(
             name = f"s{index}"
             if (run_dir / folders[codec] / f"{name}_t.jpg").exists():
                 caption = (
-                    f"{CODEC_TITLES.get(codec, codec)} · {_mbit(step.get('задано'))} Мбит/с · "
-                    f"VMAF {_num(vmaf)}"
+                    f"{CODEC_TITLES.get(codec, codec)} · {mbit(step.get('задано'))} Мбит/с · "
+                    f"VMAF {num(vmaf)}"
                 )
                 worst = (vmaf, folders[codec], name, caption)
     if worst is not None:
@@ -441,7 +442,7 @@ def _lines(number: int, row, run_dir: Path) -> list[CodecLine]:
     reference = measure.get("эталон") or {}
     ref_codec = str(reference.get("кодек", ""))
     ref_text = (
-        f"{CODEC_TITLES.get(ref_codec, ref_codec)}, {_mbit(reference.get('битрейт'))} Мбит/с"
+        f"{CODEC_TITLES.get(ref_codec, ref_codec)}, {mbit(reference.get('битрейт'))} Мбит/с"
         if ref_codec
         else ""
     )

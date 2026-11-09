@@ -247,6 +247,7 @@ class Summary:
     checks: list[tuple[str, str]]  # (check_id, название) — строки матрицы
     matrix: dict[str, dict[int, str]]  # check_id → место → статус
     image_compare: bool = False  # выпущено «Сравнение картинки» — в сводке ссылка на него
+    codec_compare: bool = False  # выпущено «Сравнение кодеков» — в сводке ссылка на него
 
 
 def build_summary(store: RunStore) -> Summary:

@@ -229,6 +229,26 @@ def test_codec_note_follows_writes_checkbox_and_sits_in_its_group(qtbot, tmp_pat
     assert item.data(1, Qt.ItemDataRole.UserRole) == "codec"
 
 
+def test_protocols_screen_lists_codec_comparison(qtbot, tmp_path, fleet):
+    from qa_tool.gui.screens.protocols import CODEC_COMPARE, ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
+    window.run_block.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+    run_dir = window.run_control.last_store.run_dir
+    (run_dir / f"{CODEC_COMPARE}.html").write_text("<p>сравнение</p>", encoding="utf-8")
+    (run_dir / "compare").mkdir(exist_ok=True)
+    (run_dir / "compare" / "codec_1.png").write_bytes(b"")
+    protocols = screen(window, ProtocolsScreen)
+    window.menu.setCurrentRow(4)
+    protocols.refresh()
+    assert protocols.docs_table.item(1, 0).text() == "Сравнение кодеков"
+    assert protocols.docs_table.item(1, 2).text() == "разрешений и кодеков 1, камер 2"
+    assert "Кривые качества" in protocols.docs_table.item(1, 0).toolTip()
+    protocols.docs_table.selectRow(1)
+    assert protocols.open_selected("html") == run_dir / f"{CODEC_COMPARE}.html"
+
+
 def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):
     from qa_tool.gui.screens.protocols import IMAGE_COMPARE, ProtocolsScreen
 

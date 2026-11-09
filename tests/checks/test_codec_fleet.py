@@ -7,12 +7,14 @@
 import time
 
 import pytest
+from openpyxl import load_workbook
 
 from qa_tool.checks.codec.engine import CHECK_ID, RESTORE_ID, STATE_ID
 from qa_tool.checks.codec.quality import has_libvmaf
 from qa_tool.checks.image.engine import CHECK_ID as IMAGE_ID
 from qa_tool.core.models import Camera, Place, Scenario, Stand, Threshold
 from qa_tool.core.scheduler import Runner
+from qa_tool.report.publish import publish
 from qa_tool.tools import tool_path
 from tests import mock_rtsp
 from tests.checks.test_codec_engine import FAST
@@ -94,3 +96,15 @@ def test_eight_cameras_measure_codecs_with_image_in_sync_phase(tmp_path, fleet):
     peak_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024
     print(f"\nфаза «Картинка» + «Кодеки», 8 камер: {elapsed:.0f} с, пик процесса {peak_mb:.0f} МБ")
     assert elapsed < PHASE_LIMIT_S, elapsed
+    publish(store)  # T16: сравнение кодеков выпускается вместе с протоколами
+    run_dir = store.run_dir
+    for suffix in ("html", "pdf", "xlsx"):
+        assert (run_dir / f"codec_compare.{suffix}").exists()
+    html = (run_dir / "codec_compare.html").read_text(encoding="utf-8")
+    assert "320×240 · H.264" in html and html.count('class="page"') >= 1
+    assert (run_dir / "compare" / "codec_1.png").exists()
+    assert 'href="codec_compare.html"' in (run_dir / "summary.html").read_text(encoding="utf-8")
+    sheet = load_workbook(run_dir / "codec_compare.xlsx")["Точки"]
+    rows = list(sheet.iter_rows(min_row=2, values_only=True))
+    assert {r[0] for r in rows} == {f"М{slot}" for slot in range(1, 9)}
+    assert all(isinstance(r[7], float) for r in rows)  # VMAF — числом
