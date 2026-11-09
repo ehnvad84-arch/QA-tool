@@ -1,4 +1,4 @@
-"""Проверка собранной программы: модули ONVIF, API, поток и картинка против виртуальных камер.
+"""Проверка собранной программы: ONVIF, API, поток, картинка и кодеки против виртуальных камер.
 
 Запуск из корня репозитория (виртуальная камера — в tests/):
     uv run python packaging/smoke_onvif.py <программа> [аргументы до «run» …]
@@ -9,7 +9,8 @@
 (без `python -m`), находит свои схемы и выдаёт строки протокола; свой RTSP-клиент читает поток
 метаданных; карта API «Рувер» лежит в сборке, и проверка API выдаёт строки операций; проверка
 картинки снимает кадры ffmpeg из сборки, пишет настройки Imaging и возвращает их, а протокол PDF
-собирается со снимками.
+собирается со снимками; проверка кодеков меняет кодировщик и возвращает его, а VMAF считает
+libvmaf ffmpeg из сборки.
 Код выхода: 0 — сборка годна, 1 — нет.
 """
 
@@ -58,7 +59,7 @@ def run_app(
         timeout=1200,
     )
     print(done.stdout[-4000:], done.stderr[-4000:], sep="\n")
-    runs = sorted(p for p in (folder / "runs").glob("*") if p.is_dir())
+    runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
     if not runs:
         print("ПРОВАЛ: прогон не создал папку результатов")
         return None
@@ -147,7 +148,7 @@ def smoke_image(app: list[str]) -> list[str]:
                 encoding="utf-8",
             )
             rows = run_app(app, folder)
-            runs = sorted(p for p in (folder / "runs").glob("*") if p.is_dir())
+            runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
             pdf = runs[-1] / "protocol_1.pdf" if runs else None
             pdf_size = pdf.stat().st_size if pdf and pdf.exists() else 0
     finally:
@@ -163,6 +164,65 @@ def smoke_image(app: list[str]) -> list[str]:
     if pdf_size < 50_000:  # без снимков протокол — десятки килобайт
         problems.append(f"картинка: PDF протокола {pdf_size} байт — снимков в нём нет")
     print(f"строк картинки: {sum(i.startswith('IMAGE-') for i in rows)}, PDF {pdf_size} байт")
+    return problems
+
+
+def smoke_codec(app: list[str]) -> list[str]:
+    """Кодеки в сборке: запись кодировщика и возврат, VMAF на libvmaf ffmpeg сборки, PDF.
+
+    Mock объявляет только H.264: H.265 для ролика mock нужен libx265 или kvazaar, а их есть не
+    в каждом ffmpeg, из которого mock собирает ролик.
+    """
+    from tests.mock_onvif import MockStream, OnvifState, encoder_now
+
+    state = OnvifState(encoder_video=True, encoder_codecs=("H264",))
+    cam = MockCamera(Passport("Smoke", "M1", "1.0", "SN1"), state=state).start()
+    fast = {
+        "codec.apply_delay_s": 0.0,
+        "codec.restart_wait_s": 1.0,
+        "codec.clip_s": 2.0,
+        "codec.clip_max_s": 2.0,
+        "codec.frames": 15.0,
+        "codec.min_frames": 10.0,
+        "codec.grid_steps": 2.0,
+    }
+    try:
+        with tempfile.TemporaryDirectory(prefix="qa-tool-smoke-codec-") as tmp:
+            folder = Path(tmp)
+            (folder / "stand.yaml").write_text(stand_yaml([cam]), encoding="utf-8")
+            (folder / "scenario.yaml").write_text(
+                "checks: [CORE-CONNECT-1, CODEC-QUALITY-1]\nallow_writes: true\n",
+                encoding="utf-8",
+            )
+            (folder / "thresholds.yaml").write_text(
+                "".join(
+                    f"{key}: {{value: {value}, unit: '', source: проверка сборки}}\n"
+                    for key, value in fast.items()
+                ),
+                encoding="utf-8",
+            )
+            rows = run_app(app, folder)
+            runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
+            pdf = runs[-1] / "protocol_1.pdf" if runs else None
+            pdf_size = pdf.stat().st_size if pdf and pdf.exists() else 0
+            charts = list(runs[-1].rglob("codec-curve-*.png")) if runs else []
+    finally:
+        cam.stop()
+    if rows is None:
+        return ["кодеки: прогон не создал папку результатов"]
+    problems = []
+    # «прошла» у строки кодека — значит, VMAF посчитан: без libvmaf строка «ошибка стенда»
+    for row in ("CODEC-STATE-1", "CODEC-H264-1", "CODEC-RESTORE-1"):
+        if rows.get(row, ("",))[0] != "прошла":
+            problems.append(f"{row}: {rows.get(row, ('нет строки', ''))}")
+    now = encoder_now(state, MockStream(state.profile_token))
+    if (now["encoding"], now["kbps"], now["constant"]) != ("H264", 4000, False):
+        problems.append(f"кодеки: кодировщик виртуальной камеры не вернулся: {now}")
+    if not charts:
+        problems.append("кодеки: график качества в протоколе не нарисован")
+    if pdf_size < 50_000:  # без графика и снимков протокол — десятки килобайт
+        problems.append(f"кодеки: PDF протокола {pdf_size} байт — графика и снимков в нём нет")
+    print(f"строк кодеков: {sum(i.startswith('CODEC-') for i in rows)}, PDF {pdf_size} байт")
     return problems
 
 
@@ -200,6 +260,7 @@ def main(app: list[str]) -> int:
     problems += smoke_api(app)
     problems += smoke_stream(app)
     problems += smoke_image(app)
+    problems += smoke_codec(app)
     for problem in problems:
         print("ПРОВАЛ:", problem)
     return 1 if problems else 0
