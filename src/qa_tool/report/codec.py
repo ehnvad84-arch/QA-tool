@@ -87,6 +87,8 @@ class EncoderSheet:
     better: str
     steps: list[StepLine]
     shots: list[tuple[str, str, str]]  # (миниатюра, полный кадр, подпись)
+    history_chart: str = ""  # «эта прошивка / прошлая»; пусто — сравнить не с чем
+    history_note: str = ""
 
 
 @dataclass
@@ -104,6 +106,7 @@ class CodecAppendix:
     without: list[tuple[str, str, str]]  # (строка, итог, причина) — строки без замера
     lost: list[tuple[str, str]] = field(default_factory=list)  # журнал прошлого прогона
     lines: list[CodecLine] = field(default_factory=list)  # строки листа «Кодеки» Excel
+    history: str = ""  # с каким прогоном сравнивали прошивку или почему не с чем
 
 
 def _finite(value) -> float | None:
@@ -135,7 +138,8 @@ def _read(path: Path, limit: int = MEASURE_LIMIT) -> str:
         return ""
 
 
-def _measure(folder: Path) -> dict:
+def read_measure(folder: Path) -> dict:
+    """`measure.json` строки кодека; не прочитан, не JSON или чужая версия — пустой словарь."""
     try:
         data = json.loads(_read(folder / "measure.json") or "{}")
     except ValueError:
@@ -197,7 +201,7 @@ def _step_lines(codec: str, measure: dict) -> list[StepLine]:
     return lines
 
 
-def _points(measure: dict) -> list[tuple[float, float]]:
+def curve_points(measure: dict) -> list[tuple[float, float]]:
     """Точки графика: X — битрейт в потоке (нет — заданный), Y — VMAF."""
     points = []
     for step in measure.get("ступени", []):
@@ -260,7 +264,7 @@ def _sheet(number: int, rows: list, run_dir: Path) -> EncoderSheet:
             CodecVerdict(CODEC_TITLES.get(codec, codec), row.check_id, row.status, row.reason)
         )
         if row.evidence:
-            found = _measure(run_dir / row.evidence)
+            found = read_measure(run_dir / row.evidence)
             if found:
                 measures[codec] = found
                 folders[codec] = row.evidence
@@ -308,9 +312,9 @@ def _chart(
 ) -> tuple[str, str]:
     """График кодировщика в папку его доказательств; без точек — пусто и причина."""
     series = [
-        XYSeries(CODEC_TITLES.get(codec, codec), _points(m), PLACES.get(codec, 2))
+        XYSeries(CODEC_TITLES.get(codec, codec), curve_points(m), PLACES.get(codec, 2))
         for codec, m in measures.items()
-        if _points(m)
+        if curve_points(m)
     ]
     if not series:
         return "", "Точек для графика нет: VMAF не посчитан ни на одной ступени."
@@ -329,7 +333,7 @@ def _chart(
         rate_ticks([p for s in series for p in s.points]),
         threshold=threshold,
     )
-    missing = [c for c in measures if not _points(measures[c])]
+    missing = [c for c in measures if not curve_points(measures[c])]
     note = ""
     if missing:
         titles = ", ".join(CODEC_TITLES.get(c, c) for c in missing)
@@ -433,7 +437,7 @@ def build_codec_appendix(
 
 def _lines(number: int, row, run_dir: Path) -> list[CodecLine]:
     """Ступени строки протокола для Excel, от большего битрейта к меньшему."""
-    measure = _measure(run_dir / row.evidence)
+    measure = read_measure(run_dir / row.evidence)
     codec = str(measure.get("кодек", row.check_id.split("-")[1]))
     size = measure.get("разрешение")
     size_text = f"{size[0]}×{size[1]}" if isinstance(size, list) and len(size) == 2 else ""

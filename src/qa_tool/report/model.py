@@ -9,6 +9,7 @@ from qa_tool.core.models import Place
 from qa_tool.core.secrets import redact
 from qa_tool.core.store import RunStore
 from qa_tool.report.codec import CodecAppendix, build_codec_appendix
+from qa_tool.report.codec_history import attach_history
 from qa_tool.report.image import ImageAppendix, build_image_appendix
 
 MODULE_TITLES = {
@@ -197,6 +198,9 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
     text, kind = verdict(counts)
     allowed = bool(scenario.get("allow_writes"))
     image = build_image_appendix(rows, store.run_dir, allowed)
+    codec = build_codec_appendix(rows, store.run_dir, allowed, 2 if image else 1)
+    if codec is not None:
+        attach_history(codec, store.run_dir, passport)
     return Protocol(
         protocol_id=store.protocol_id(slot),
         run_id=store.run_id,
@@ -218,7 +222,7 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         camera_name=model,
         profiles=_profiles_matrix(store, rows),
         image=image,
-        codec=build_codec_appendix(rows, store.run_dir, allowed, 2 if image else 1),
+        codec=codec,
     )
 
 

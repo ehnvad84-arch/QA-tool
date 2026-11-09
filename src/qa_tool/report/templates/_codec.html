@@ -59,6 +59,16 @@
 {% endif %}
 {% endfor %}
 
+{% if c.history %}
+<div class="page"></div>
+<h3>4. Эта прошивка и прошлая</h3>
+<p>{{ c.history }}</p>
+{% for s in c.sheets %}
+{% if s.history_chart %}<p><img src="{{ s.history_chart }}" width="600" alt="Профиль {{ s.number }}: VMAF этой и прошлой прошивки"></p>{% endif %}
+{% if s.history_note %}<p class="muted">Профиль {{ s.number }}: {{ s.history_note }}.</p>{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if c.without %}
 <h3>Строки без замера</h3>
 <table border="1" cellspacing="0" cellpadding="4">
