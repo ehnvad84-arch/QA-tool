@@ -1,22 +1,21 @@
 <!doctype html>
 <!-- Макет приложения протокола камеры «API камеры: карта и сверка с ONVIF» (ui-designer, фича api-discovery).
      Только таблицы и атрибуты width: этот HTML печатает в PDF QTextDocument, он не знает flex, grid, max-width, details.
-     ДАННЫЕ ВЫДУМАНЫ. Расхождения взяты по мотивам живых случаев 09.11 (Hikvision .111, Dahua .108),
+     ДАННЫЕ ВЫДУМАНЫ. Расхождения — по мотивам живых случаев 09.11 (Hikvision .111, Dahua .108);
      модели, прошивки, пути и числа — для макета, не с камер.
+     Полная карта (параметры, допустимые и текущие значения) — отдельный документ «Карта API», макет api-map.html
+     (решение директора 09.11). Здесь — только обзор разделов со ссылкой на него.
 
      Геометрия PDF (A4 альбомная, поле 273 × 186 мм, как в write_pdf):
-       лист 1: рамка блокера (если есть) ≈ 35 мм, вводная и «Как читать» ≈ 30 мм, сводка 11 строк × 5 мм ≈ 55 мм,
+       лист 1: рамка блокера (если есть) ≈ 35 мм, вводная и «Как читать» ≈ 30 мм, сводка 12 строк × 5 мм ≈ 60 мм,
                строка возврата ≈ 6 мм — помещается целиком;
-       п. 3 «Сверка» — с новой страницы; строка пары 2 строки текста ≈ 9 мм → ≈ 18 пар на лист; <thead> повторяется
-               на каждом листе (QTextDocument берёт его как headerRowCount);
-       п. 4 «Автопоиск» — сразу за сверкой, без разрыва (обычно 9 строк);
-       п. 5 «Карта» — с новой страницы: обзор разделов (≤ 20 строк), затем карта по разделам, шрифт 8 pt,
-               строка параметра ≈ 4,2 мм → ≈ 40 строк на лист: Hikvision 170 параметров ≈ 5 листов,
-               Dahua ≈ 900 параметров после свёртки индексов ≈ 250–300 строк ≈ 7–8 листов.
-               Больше 400 строк после свёртки — в PDF полностью только разделы с парами и расхождениями,
-               остальные — строкой обзора «полностью — в Excel, лист «Карта API»».
-     HTML-вариант (media="html"): каждый раздел карты — в <details>, раскрыты разделы с парами и расхождениями;
-       широкие таблицы прокручиваются в своей обёртке. В PDF details нет: всё раскрыто. -->
+       п. 3 «Сверка» — с новой страницы; строка 2 строки текста ≈ 9 мм → ≈ 18 строк на лист; <thead> повторяется
+               на каждом листе (QTextDocument берёт его как headerRowCount); каталог ONVIF — 19 настроек, 1–2 листа;
+       п. 4 «Автопоиск» — сразу за сверкой, без разрыва (до 9 строк);
+       п. 5 «Разделы карты» — без разрыва, 8 pt, ≤ 25 строк.
+       Обычно 3–4 листа.
+     HTML-вариант (media="html"): название документа «Карта API» — ссылка на api_map_<место>.html;
+       широкие таблицы прокручиваются в своей обёртке. -->
 <html lang="ru"><head><meta charset="utf-8">
 <title>Макет: протокол камеры, приложение «API камеры»</title>
 <style>
@@ -35,30 +34,31 @@
   .note { background: #f6f6f6; }
   .bad { color: #a11212; font-weight: bold; }
   .page { page-break-before: always; }
-  /* новое: плотная таблица карты и пути API моноширинным (I/l/1 и O/0 различимы, путь копируется как есть) */
+  /* новое: плотные таблицы и пути API моноширинным (I/l/1 и O/0 различимы, путь копируется как есть) */
   .small { font-size: 8pt; }
   .path { font-family: "DejaVu Sans Mono", Consolas, monospace; }
 </style>
 </head><body>
 
-<p class="muted">… разделы 1–4 протокола; у строк API-MATCH-* и API-RANGE-* в «Доказательстве» — «пара — Приложение 3, п. 3, строка N» …</p>
+<p class="muted">… разделы 1–4 протокола; у строк API-MATCH-* и API-RANGE-* в «Доказательстве» — «пара — Приложение 3, п. 3, API-MATCH-12»; у API-MAP-1 — «карта — документ «Карта API QA-20261109-003-3»» …</p>
 <p>Приложения: 1 — Картинка: снимки и замеры; 2 — Кодеки: качество на битрейт; 3 — API камеры: карта и сверка с ONVIF.</p>
 
 <div class="page"></div>
 <h2>Приложение 3. API камеры: карта и сверка с ONVIF</h2>
 
-<!-- Рамка блокера — первой, над вводной: её должен увидеть тот, кто снимает камеру со стенда. -->
+<!-- Рамка блокера — первой, над вводной: её должен увидеть тот, кто снимает камеру со стенда.
+     Так же выглядит API-WRITE-LOST: «Прошлый прогон оставил запись незакрытой — проверьте вручную» и строки журнала. -->
 <table border="2" cellspacing="0" cellpadding="6" class="alarm"><tr><td>
 <b>Камера осталась изменённой после автопоиска — верните вручную.</b> API-RESTORE-1 · не прошла (блокер)<br>
-Запись ONVIF «WDR: вкл» сдвинула два параметра родного API; поиск остановлен, возврат по ONVIF вернул WDR, а выдержка осталась.
+Запись ONVIF «WDR: вкл» сдвинула два параметра родного API; поиск остановлен. Возврат по ONVIF вернул WDR, возврат родным API выдержку не вернул.
 <table border="1" cellspacing="0" cellpadding="3">
-  <thead><tr><th width="22%">Параметр родного API</th><th width="30%">Где в родном API</th><th width="9%">Было</th><th width="9%">Осталось</th><th>Как вернуть</th></tr></thead>
-  <tr><td class="path">Image/Shutter/ShutterLevel</td><td class="path">/ISAPI/Image/channels/1/shutter · ShutterLevel</td><td>1/50</td><td class="bad">! 1/25</td>
-      <td>веб-интерфейс камеры, раздел изображения, экспозиция; пары с ONVIF у параметра нет — по ONVIF не вернуть</td></tr>
+  <thead><tr><th width="20%">Параметр родного API</th><th width="26%">Где в родном API</th><th width="8%">Было</th><th width="8%">Осталось</th><th>Как вернуть</th></tr></thead>
+  <tr><td class="path">Image/channels/1/Shutter/ShutterLevel</td><td class="path">GET /ISAPI/Image/channels/1/shutter · ShutterLevel</td><td>1/50</td><td class="bad">! 1/25</td>
+      <td>запросом к родному API: <span class="path">PUT /ISAPI/Image/channels/1/shutter, ShutterLevel = 1/50</span> — программа пробовала один раз, не вернулось; или в веб-интерфейсе камеры, раздел изображения, экспозиция. Пары с ONVIF у параметра нет.</td></tr>
 </table>
 </td></tr></table>
 
-<p>Родной API — Hikvision ISAPI, карта снята по самоописанию камеры. Изменяющие проверки разрешены: программа по очереди меняла настройки по ONVIF и смотрела, что сдвинется в родном API. Через родной API программа только читала.</p>
+<p>Родной API — Hikvision ISAPI, карта снята по самоописанию камеры. Изменяющие проверки разрешены: программа по очереди меняла настройки по ONVIF и смотрела, что сдвинется в родном API. Через родной API программа читала и только для возврата пробовала записать.</p>
 <table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
 <b>Как читать.</b> <b>Родной API</b> — собственный интерфейс производителя (у Hikvision — ISAPI, у Dahua — CGI), через него работает веб-интерфейс камеры. <b>ONVIF</b> — общий стандарт, через него камеру видят регистраторы и программы видеонаблюдения.
 Одна и та же настройка есть в обоих; <b>пара</b> — «настройка ONVIF ↔ параметр родного API» и правило перевода шкалы. <b>Расхождение</b> значит, что камера сообщает одно и то же по-разному: один из ответов неверен, и регистратор по ONVIF увидит не то, что показывает веб-интерфейс.
@@ -66,132 +66,109 @@
 
 <h3>1. Сводка</h3>
 <table border="1" cellspacing="0" cellpadding="3">
-  <tr><th width="26%">Родной API</th><td>Hikvision ISAPI · производитель на экране «Камеры» — hikvision, по паспорту ONVIF — HIKVISION</td></tr>
+  <tr><th width="26%">Родной API</th><td>Hikvision ISAPI · бренд по паспорту ONVIF — HIKVISION; на экране «Камеры» — hikvision</td></tr>
+  <tr><th>Вход</th><td>Digest MD5, логин ONVIF с экрана «Камеры»</td></tr>
   <tr><th>Модель и прошивка по родному API</th><td>DS-2CD2143G2-I · V5.7.3 build 220112 <span class="muted">(совпадают с паспортом ONVIF)</span></td></tr>
-  <tr><th>Источник карты</th><td>самоописание API (ISAPI capabilities); трафик веб-обхода не понадобился</td></tr>
-  <tr><th>Разделов</th><td>13 из 18 объявленных · 5 не ответили «нет такого ресурса» (функций нет у модели): PTZ, Wireless, Thermal, Traffic, IOT · 2 раздела — только описание: Network, Security</td></tr>
-  <tr><th>Параметров</th><td>172 со значениями · 45 только описание (сеть и безопасность) · с допустимыми значениями 151 · только чтение 38 · скрыто значений (пароли, ключи) 3</td></tr>
-  <tr><th>Таблица соответствий</th><td>8 пар: найдено в этом прогоне — 4; библиотека, найдено автоматически (прогон QA-20261105-004) — 2; библиотека, подтверждено вручную — 2 · у 3 настроек ONVIF пары нет (WDR, компенсация засветки, кодек)</td></tr>
-  <tr><th>Сверка</th><td>строк 12: <span class="st-прошла">прошла</span> 8 · <span class="st-не-прошла">не прошла</span> 1 · <span class="st-пропущена">пропущена</span> 3 — п. 3</td></tr>
-  <tr><th>Автопоиск</th><td><span class="st-не-прошла">не прошла</span>: найдено пар 5 из 9 настроек, остановлен на «WDR» — побочный эффект записи — п. 4</td></tr>
-  <tr><th>Библиотека</th><td>карта и пары сохранены: <span class="path">api-library/hikvision/DS-2CD2143G2-I/V5.7.3_build_220112/</span></td></tr>
-  <tr><th>Файл карты</th><td><span class="path">evidence/3/API-MAP-1/api-map.json</span> · полностью — в Excel, лист «Карта API»</td></tr>
-  <tr><th>Карта</th><td>API-MAP-1 · <span class="st-прошла">прошла</span>: карта снята, разделов 13, параметров 172 — п. 5</td></tr>
+  <tr><th>Источник карты</th><td>самоописание API (ISAPI capabilities)</td></tr>
+  <tr><th>Разделов</th><td>13 из 18 объявленных · 5 не ответили «раздела нет у модели» (404) · 2 — только описание: сеть и безопасность</td></tr>
+  <tr><th>Параметров</th><td>172 со значениями · 45 только описание · с допустимыми значениями 151 · только чтение 38 · скрыто значений (пароли, ключи) 3</td></tr>
+  <tr><th>Таблица соответствий</th><td>9 пар: найдено в этом прогоне — 5; библиотека, найдено автоматически (прогон QA-20261105-004) — 1; найдено на прошивке V5.7.1 (прогон QA-20261102-002) — 1, <b>другая прошивка</b>; подтверждено вручную — 2</td></tr>
+  <tr><th>Сверка</th><td>строк 16: <span class="st-прошла">прошла</span> 15 · <span class="st-не-прошла">не прошла</span> 1 — п. 3</td></tr>
+  <tr><th>Автопоиск</th><td><span class="st-не-прошла">не прошла</span> (мелкая): найдено пар 5, известна заранее 1, остановлен на «WDR» — побочный эффект записи — п. 4</td></tr>
+  <tr><th>Библиотека</th><td><span class="path">runs/api-library/hikvision-1f3a9c2e/ds-2cd2143g2-i-7b0d14aa/v5.7.3_build_220112-c49e8f01/</span><br>
+      confirmed.json — пар 1 · файлов прошлых прогонов прочитано 3</td></tr>
+  <tr><th>Карта</th><td>документ «Карта API QA-20261109-003-3»: <span class="path">api_map_3.pdf</span>, <span class="path">.xlsx</span>, <span class="path">.html</span> в папке прогона, экран «Протоколы»<br>
+      <span class="muted">данные — evidence/3/API-MAP-1/api-map.json</span></td></tr>
+  <tr><th>Итог карты</th><td>API-MAP-1 · <span class="st-прошла">прошла</span>: карта снята, разделов 13, параметров 172</td></tr>
 </table>
 
 <p>2. Возврат после автопоиска · API-RESTORE-1 · <span class="st-не-прошла">не прошла</span> (блокер) — см. рамку в начале приложения.</p>
-<p class="muted">Варианты строки: «прошла: всё, что менялось, возвращено; вся карта родного API совпала с исходной» · «Ничего не менялось: изменяющие проверки запрещены сценарием».</p>
+<p class="muted">Варианты строки: «прошла: всё, что менялось, возвращено; вся карта родного API совпала с исходной» (+ «выдержка возвращена родным API») · «Ничего не менялось: изменяющие проверки запрещены сценарием».</p>
 
 <div class="page"></div>
 <h3>3. Сверка ONVIF ↔ родной API</h3>
-<p>Значение ONVIF переводится по шкале пары и сравнивается со значением родного API. Допуск — одна единица шкалы родного API (округление при переводе).</p>
+<p>Значение ONVIF переводится по шкале пары и сравнивается со значением родного API. Сверяются значения до записей автопоиска. Допуск — шаг или 1 % диапазона родного API.</p>
 <table border="1" cellspacing="0" cellpadding="3">
-  <thead><tr><th width="3%">№</th><th width="11%">Настройка</th><th width="22%">ONVIF</th><th width="24%">Родной API</th><th width="10%">Шкала</th><th width="17%">Итог</th><th>Откуда пара</th></tr></thead>
-  <tr><td>1</td><td>Яркость<br><span class="muted">API-MATCH-1</span></td>
+  <thead><tr><th width="13%">Строка</th><th width="21%">ONVIF</th><th width="24%">Родной API</th><th width="11%">Шкала</th><th width="17%">Итог</th><th>Откуда пара</th></tr></thead>
+  <tr><td>API-MATCH-1<br>Яркость</td>
       <td>Imaging · <span class="path">Brightness</span> = 50<br><span class="muted">0…100</span></td>
-      <td>ISAPI · <span class="path">Image/Color/brightnessLevel</span> = 50<br><span class="muted">0…100</span></td>
+      <td>ISAPI · <span class="path">Image/channels/1/Color/brightnessLevel</span> = 50<br><span class="muted">0…100</span></td>
       <td>1:1</td><td class="st-прошла">прошла</td><td>найдено в этом прогоне</td></tr>
-  <tr><td>2</td><td>Режим экспозиции<br><span class="muted">API-MATCH-2</span></td>
-      <td>Imaging · <span class="path">Exposure/Mode</span> = AUTO<br><span class="muted">AUTO, MANUAL</span></td>
-      <td>ISAPI · <span class="path">Image/Exposure/ExposureType</span> = <span class="bad">! manual</span><br><span class="muted">auto, IrisFirst, ShutterFirst, GainFirst, manual</span></td>
-      <td>список: AUTO ↔ auto; MANUAL ↔ manual</td>
-      <td class="st-не-прошла">не прошла: ONVIF читает AUTO, ISAPI — manual; по шкале пары AUTO ↔ auto</td><td>библиотека: подтверждено вручную</td></tr>
-  <tr><td>3</td><td>Предел усиления<br><span class="muted">API-MATCH-3</span></td>
-      <td>Imaging · <span class="path">Exposure/MaxGain</span> = 0<br><span class="muted">0…100</span></td>
-      <td>ISAPI · <span class="path">Image/Gain/GainLevel</span> = 0<br><span class="muted">0…100</span></td>
-      <td>1:1</td><td class="st-прошла">прошла</td><td>библиотека: подтверждено вручную</td></tr>
-  <tr><td>4</td><td>Резкость<br><span class="muted">API-MATCH-4</span></td>
+  <tr><td>API-RANGE-1<br>Яркость — диапазон</td>
+      <td>0…100</td><td>min 0, max 100</td><td>1:1</td><td class="st-прошла">прошла: диапазоны совпадают</td><td>та же пара</td></tr>
+  <tr><td>API-MATCH-2<br>Контраст</td>
+      <td>Imaging · <span class="path">Contrast</span> = 50</td>
+      <td>ISAPI · <span class="path">Image/channels/1/Color/contrastLevel</span> = 50</td>
+      <td>1:1</td><td class="st-прошла">прошла</td><td>найдено на прошивке V5.7.1, прогон QA-20261102-002 · <b>другая прошивка</b></td></tr>
+  <tr><td>API-MATCH-4<br>Резкость</td>
       <td>Imaging · <span class="path">Sharpness</span> = 128<br><span class="muted">0…255</span></td>
-      <td>ISAPI · <span class="path">Image/Sharpness/SharpnessLevel</span> = 50<br><span class="muted">0…100</span></td>
+      <td>ISAPI · <span class="path">Image/channels/1/Sharpness/SharpnessLevel</span> = 50<br><span class="muted">0…100</span></td>
       <td>× 100/255<br><span class="muted">ожидалось 50 ± 1</span></td><td class="st-прошла">прошла</td><td>найдено в этом прогоне</td></tr>
-  <tr><td>5</td><td>Битрейт, кодировщик 1<br><span class="muted">API-MATCH-5</span></td>
-      <td>Media2 · кодировщик 1 · <span class="path">RateControl/BitrateLimit</span> = 4096 кбит/с</td>
-      <td>ISAPI · <span class="path">Streaming/channels/101/Video/constantBitRate</span> = 4096 кбит/с</td>
+  <tr><td>API-MATCH-12<br>Режим экспозиции</td>
+      <td>Imaging · <span class="path">Exposure/Mode</span> = AUTO<br><span class="muted">AUTO, MANUAL</span></td>
+      <td>ISAPI · <span class="path">Image/channels/1/Exposure/ExposureType</span> = <span class="bad">! manual</span><br><span class="muted">auto, IrisFirst, ShutterFirst, GainFirst, manual</span></td>
+      <td>список: AUTO ↔ auto; MANUAL ↔ manual</td>
+      <td class="st-не-прошла">не прошла: ONVIF читает AUTO, ISAPI — manual; по шкале пары AUTO ↔ auto</td><td>подтверждено вручную (таблица программы)</td></tr>
+  <tr><td>API-MATCH-13<br>Предел усиления</td>
+      <td>Imaging · <span class="path">Exposure/MaxGain</span> = 0<br><span class="muted">0…100</span></td>
+      <td>ISAPI · <span class="path">Image/channels/1/Gain/GainLevel</span> = 0<br><span class="muted">0…100</span></td>
+      <td>по диапазонам: 0…100 ↔ 0…100</td><td class="st-прошла">прошла</td><td>подтверждено вручную: Петров, 09.11.2026, камера .111 (confirmed.json)</td></tr>
+  <tr><td>API-MATCH-15<br>Битрейт, профиль 1</td>
+      <td>Media2 · <span class="path">RateControl/BitrateLimit</span> = 4096 кбит/с</td>
+      <td>ISAPI · <span class="path">Streaming/channels/101/Video/constantBitRate</span> = 4096</td>
       <td>1:1, кбит/с</td><td class="st-прошла">прошла</td><td>библиотека: найдено автоматически, прогон QA-20261105-004</td></tr>
-  <tr><td>6</td><td>Битрейт, кодировщик 1 — диапазон<br><span class="muted">API-RANGE-5</span></td>
+  <tr><td>API-RANGE-15<br>Битрейт — диапазон</td>
       <td>Media2 · <span class="path">BitrateRange</span> 256…16384 кбит/с</td>
-      <td>ISAPI · <span class="path">constantBitRate</span> min 256, max 16384</td>
-      <td>1:1, кбит/с</td><td class="st-прошла">прошла: диапазоны совпадают</td><td>та же пара, что строка 5</td></tr>
-  <tr><td colspan="7" class="muted">… строки 7–9: контраст, насыщенность, баланс белого (красный) — прошла …</td></tr>
-  <tr><td>10</td><td>WDR<br><span class="muted">API-MATCH-10</span></td>
-      <td>Imaging · <span class="path">WideDynamicRange/Mode</span> = OFF</td><td>—</td><td>—</td>
-      <td class="st-пропущена">пропущена: пары нет — автопоиск остановлен на этой настройке, см. п. 4</td><td>—</td></tr>
-  <tr><td>11</td><td>Компенсация засветки<br><span class="muted">API-MATCH-11</span></td>
-      <td>Imaging · <span class="path">BacklightCompensation/Mode</span> = OFF</td><td>—</td><td>—</td>
-      <td class="st-пропущена">пропущена: пары нет — до настройки автопоиск не дошёл</td><td>—</td></tr>
-  <tr><td>12</td><td>Кодек, кодировщик 1<br><span class="muted">API-MATCH-12</span></td>
-      <td>Media2 · кодировщик 1 · <span class="path">Encoding</span> = H265</td><td>—</td><td>—</td>
-      <td class="st-пропущена">пропущена: пары нет — до настройки автопоиск не дошёл</td><td>—</td></tr>
+      <td>ISAPI · min 256, max 16384</td>
+      <td>1:1, кбит/с</td><td class="st-прошла">прошла: диапазоны совпадают</td><td>та же пара</td></tr>
+  <tr><td colspan="6" class="muted">… API-MATCH-3 «Насыщенность», API-MATCH-5 «Баланс белого, режим», API-MATCH-6 «Баланс белого, красный» и строки диапазона API-RANGE-2, 3, 4, 6, 13 — прошла …</td></tr>
 </table>
-<p class="muted">Без галочки «изменяющие» и без таблицы в библиотеке все строки — одной строкой «пропущена: нет таблицы соответствий для модели — нужен прогон с галочкой «изменяющие»».</p>
+<p class="muted">Без пары: WDR (8–9), компенсация засветки (10–11), кодек (16) — см. п. 4. Подтвердить или исправить пару — правкой confirmed.json в папке библиотеки (путь — в сводке; F1: api-map-library).</p>
+<p class="muted">Пар нет — вместо таблицы одна строка: «API-MATCH-0 · пропущена: нет таблицы соответствий для модели — нужен прогон с галочкой «изменяющие»».</p>
 
-<h3>4. Автопоиск соответствий · API-SEARCH-1 · <span class="st-не-прошла">не прошла</span></h3>
-<p>Программа ставит по ONVIF другое значение из диапазона камеры, снимает карту родного API до и после и смотрит, что сдвинулось; второе значение подтверждает пару. После каждой настройки — возврат по ONVIF и сверка всей карты с исходной. Через родной API ничего не записывается.</p>
+<h3>4. Автопоиск соответствий · API-SEARCH-1 · <span class="st-не-прошла">не прошла</span>, мелкая</h3>
+<p>Программа ставит по ONVIF два других значения из диапазона камеры (около 20 % и 80 %), снимает карту родного API до и после и смотрит, что сдвинулось; второе значение подтверждает пару. После каждой настройки — возврат по ONVIF и сверка всей карты с исходной. Пары, уже известные для этой модели, заново не ищутся.</p>
 <table border="1" cellspacing="0" cellpadding="3">
-  <thead><tr><th width="3%">№</th><th width="13%">Настройка ONVIF</th><th width="14%">Записи по ONVIF</th><th width="34%">Что сдвинулось в родном API</th><th width="20%">Пара</th><th>Возврат</th></tr></thead>
-  <tr><td>1</td><td>Яркость</td><td>50 → 100 → 25</td><td class="path">Image/Color/brightnessLevel: 50 → 100 → 25</td><td>найдена, шкала 1:1</td><td>возвращено, карта совпала</td></tr>
-  <tr><td>2</td><td>Контраст</td><td>50 → 100 → 25</td><td class="path">Image/Color/contrastLevel: 50 → 100 → 25</td><td>найдена, шкала 1:1 (совпала с библиотекой)</td><td>возвращено, карта совпала</td></tr>
-  <tr><td>3</td><td>Насыщенность</td><td>50 → 100 → 25</td><td class="path">Image/Color/saturationLevel: 50 → 100 → 25</td><td>найдена, шкала 1:1</td><td>возвращено, карта совпала</td></tr>
-  <tr><td>4</td><td>Резкость</td><td>128 → 255 → 64</td><td class="path">Image/Sharpness/SharpnessLevel: 50 → 100 → 25</td><td>найдена, шкала × 100/255</td><td>возвращено, карта совпала</td></tr>
-  <tr><td>5</td><td>Баланс белого, красный</td><td>128 → 255 → 64</td><td class="path">Image/WhiteBalance/WhiteBalanceRed: 50 → 100 → 25</td><td>найдена, шкала × 100/255</td><td>возвращено, карта совпала</td></tr>
-  <tr><td>6</td><td>WDR</td><td>OFF → ON</td>
-      <td><span class="path">Image/WDR/mode: close → open</span><br><span class="path bad">! Image/Shutter/ShutterLevel: 1/50 → 1/25</span> — вне раздела WDR</td>
-      <td class="st-не-прошла">не найдена: побочный эффект — сдвинулось 2 параметра; поиск остановлен</td>
-      <td class="bad">WDR вернулся; выдержка осталась 1/25 (было 1/50) — блокер</td></tr>
-  <tr><td>7–9</td><td>Компенсация засветки, битрейт, кодек</td><td>—</td><td>—</td><td class="st-пропущена">не пробовали: поиск остановлен на п. 6</td><td>—</td></tr>
+  <thead><tr><th width="3%">№</th><th width="13%">Настройка ONVIF</th><th width="12%">Записи по ONVIF</th><th width="33%">Что сдвинулось</th><th width="20%">Пара</th><th>Возврат</th></tr></thead>
+  <tr><td>1</td><td>Яркость (1)</td><td>50 → 80 → 20</td><td class="path">Image/channels/1/Color/brightnessLevel: 50 → 80 → 20</td><td>найдена, шкала 1:1</td><td>возвращено, карта совпала</td></tr>
+  <tr><td>2</td><td>Контраст (2)</td><td>—</td><td>—</td><td class="st-пропущена">не искали: пара уже известна (прошивка V5.7.1, прогон QA-20261102-002)</td><td>—</td></tr>
+  <tr><td>3</td><td>Насыщенность (3)</td><td>50 → 80 → 20</td><td class="path">Image/channels/1/Color/saturationLevel: 50 → 80 → 20</td><td>найдена, шкала 1:1</td><td>возвращено, карта совпала</td></tr>
+  <tr><td>4</td><td>Резкость (4)</td><td>128 → 204 → 51</td><td class="path">Image/channels/1/Sharpness/SharpnessLevel: 50 → 80 → 20</td><td>найдена, шкала × 100/255</td><td>возвращено, карта совпала</td></tr>
+  <tr><td>5</td><td>Баланс белого (5–7)</td><td>красный 128 → 204 → 51</td><td class="path">Image/channels/1/WhiteBalance/WhiteBalanceRed: 50 → 80 → 20<br>Image/channels/1/WhiteBalance/WhiteBalanceStyle: auto2 → manual</td><td>найдены: красный — × 100/255; режим — список AUTO ↔ auto2, MANUAL ↔ manual</td><td>возвращено, карта совпала</td></tr>
+  <tr><td>6</td><td>WDR (8–9)</td><td>OFF → ON</td>
+      <td><span class="path">Image/channels/1/WDR/mode: close → open</span><br><span class="path bad">! Image/channels/1/Shutter/ShutterLevel: 1/50 → 1/25</span> — вне раздела WDR</td>
+      <td class="st-не-прошла">побочный эффект — 2 параметра на 1 лист ONVIF; поиск остановлен</td>
+      <td class="bad">WDR вернулся; выдержка осталась 1/25 (было 1/50), возврат родным API не помог — блокер</td></tr>
+  <tr><td>7–9</td><td>Компенсация засветки (10–11), битрейт (15), кодек (16)</td><td>—</td><td>—</td><td class="st-пропущена">не пробовали: поиск остановлен на п. 6</td><td>—</td></tr>
 </table>
-<p class="muted">Другие исходы столбца «Пара»: «не найдена: ничего не сдвинулось» · «не найдена: значения не ложатся на шкалу ONVIF (100 → 7, 25 → 7)» · «не найдена: второе значение сдвинуло другой параметр» · «не пробовали: камера не объявляет настройку в ONVIF».</p>
+<p class="muted">Другие исходы «Пары»: «не найдена: ничего не сдвинулось, и после записи с сохранением тоже» · «не найдена: камера не приняла значение по ONVIF (ответ OK, читается прежнее)» · «кандидат: значения не ложатся на шкалу ONVIF (50→50, 80→71, 20→9)» · «не пробовали: не уложились в срок автопоиска» · «пропущена: камера не объявляет настройку в ONVIF».
+Копии по профилям — одной строкой: «VideoColor[0][*].Brightness (3 копии): 50 → 80». Сдвиг другого листа ONVIF — строкой «! в ONVIF: Exposure/MaxGain 100 → 0».
+Другой исход «Возврата»: «вернулось после возврата родным API (PUT …/shutter)».</p>
 
-<div class="page"></div>
-<h3>5. Карта родного API · API-MAP-1 · <span class="st-прошла">прошла</span></h3>
-<p>Разделы — как их называет камера; параметры, которые повторяются по каналам и профилям с одинаковыми допустимыми значениями, свёрнуты в одну строку (<span class="path">[*]</span>), текущие значения — по индексам. Значения разделов сети, пользователей и безопасности не сохраняются; пароли, ключи и токены — «скрыто».</p>
+<h3>5. Разделы карты родного API · API-MAP-1 · <span class="st-прошла">прошла</span></h3>
 <table border="1" cellspacing="0" cellpadding="2" class="small">
-  <thead><tr><th width="30%">Раздел</th><th width="10%">Параметров</th><th width="10%">В парах</th><th width="10%">Расхождений</th><th>Примечание</th></tr></thead>
-  <tr><td class="path">Image</td><td>46</td><td>7</td><td class="bad">! 1</td><td>режим экспозиции — п. 3, строка 2; не вернулась выдержка — см. рамку</td></tr>
-  <tr><td class="path">Streaming</td><td>38</td><td>1</td><td>0</td><td></td></tr>
-  <tr><td class="path">Event</td><td>22</td><td>0</td><td>0</td><td>скрыто 1 значение (пароль почты)</td></tr>
-  <tr><td colspan="5" class="muted">… System 10 · Smart 16 · VideoOverlay 11 · ContentMgmt 9 · Audio 8 · Motion 8 · SDK 2 · Custom 2 …</td></tr>
-  <tr><td class="path">Network</td><td>31</td><td>—</td><td>—</td><td>только описание: раздел сети</td></tr>
-  <tr><td class="path">Security</td><td>14</td><td>—</td><td>—</td><td>только описание: раздел безопасности и учётных записей</td></tr>
+  <thead><tr><th width="20%">Раздел</th><th width="13%">Класс</th><th width="9%">Параметров</th><th width="8%">В парах</th><th width="10%">Расхождений</th><th>Примечание</th></tr></thead>
+  <tr><td class="path">Image/channels/1</td><td>картинка</td><td>46</td><td>8</td><td class="bad">! 1</td><td>режим экспозиции — п. 3, API-MATCH-12; ! не вернулась выдержка — см. рамку</td></tr>
+  <tr><td class="path">Streaming/channels</td><td>кодировщик</td><td>38</td><td>1</td><td>0</td><td></td></tr>
+  <tr><td class="path">Event</td><td>события</td><td>22</td><td>0</td><td>0</td><td>скрыто 1 значение (пароль почты)</td></tr>
+  <tr><td colspan="6" class="muted">… System 10 · Smart 16 · VideoOverlay 11 · ContentMgmt 9 · Audio 8 · Motion 8 · SDK 2 · Custom 2 …</td></tr>
+  <tr><td class="path">System/Network</td><td>сеть и безопасность</td><td>31</td><td>—</td><td>—</td><td>только описание</td></tr>
+  <tr><td class="path">Security</td><td>сеть и безопасность</td><td>14</td><td>—</td><td>—</td><td>только описание</td></tr>
+  <tr><td class="path">PTZCtrl/channels/1</td><td>прочее</td><td>—</td><td>—</td><td>—</td><td>не ответил: 404 — раздела нет у модели (так же Wireless, Thermal, Traffic, IOT)</td></tr>
 </table>
-
-<table border="1" cellspacing="0" cellpadding="2" class="small">
-  <thead><tr><th width="34%">Параметр</th><th width="34%">Тип и допустимые значения</th><th width="14%">Текущее</th><th>Примечание</th></tr></thead>
-  <tr><th colspan="4">Image · <span class="path">/ISAPI/Image/channels/1</span> · 46 параметров</th></tr>
-  <tr><td class="path">Color/brightnessLevel</td><td>число 0…100</td><td>50</td><td>пара: яркость</td></tr>
-  <tr><td class="path">Color/contrastLevel</td><td>число 0…100</td><td>50</td><td>пара: контраст</td></tr>
-  <tr><td class="path">Exposure/ExposureType</td><td>список: auto, IrisFirst, ShutterFirst, GainFirst, manual</td><td class="bad">! manual</td><td class="bad">! расхождение с ONVIF — п. 3, строка 2</td></tr>
-  <tr><td class="path">Shutter/ShutterLevel</td><td>список: 1/25, 1/50, 1/100 … 1/100000 (18 значений)</td><td class="bad">! 1/25</td><td class="bad">! не вернулось: было 1/50 — см. рамку</td></tr>
-  <tr><td class="path">Gain/GainLevel</td><td>число 0…100</td><td>0</td><td>пара: предел усиления</td></tr>
-  <tr><td class="path">IrcutFilter/IrcutFilterType</td><td>список: auto, day, night, schedule</td><td>auto</td><td></td></tr>
-  <tr><td class="path">ImageFlip/enabled</td><td>да / нет</td><td>нет</td><td></td></tr>
-  <tr><td class="path">capabilities/isSupportDehaze</td><td>да / нет, только чтение</td><td>да</td><td>только чтение</td></tr>
-  <tr><td colspan="4" class="muted">… ещё 38 параметров раздела …</td></tr>
-  <tr><th colspan="4">Event · <span class="path">/ISAPI/Event</span> · 22 параметра</th></tr>
-  <tr><td class="path">notification/mailing/authentication/password</td><td>текст до 32 знаков</td><td>скрыто</td><td>пароль: значение вырезано</td></tr>
-  <tr><td colspan="4" class="muted">… …</td></tr>
-  <tr><th colspan="4">Network · <span class="path">/ISAPI/System/Network</span> · 31 параметр · только описание</th></tr>
-  <tr><td colspan="4" class="muted">Раздел сети: значения не читались и не сохранялись. Имена и допустимые значения — в Excel, лист «Карта API».</td></tr>
-</table>
+<p>Параметры, допустимые и текущие значения — в документе <b>«Карта API QA-20261109-003-3»</b>: экран «Протоколы», строка «Карта API»; файлы <span class="path">api_map_3.pdf</span>, <span class="path">.xlsx</span>, <span class="path">.html</span> в папке прогона.</p>
+<p class="muted">Карта по трафику веб-обхода: п. 3 и 4 нет, вместо них «Карта снята по трафику веб-обхода: значения — только те, что видела страница, поэтому сверки и автопоиска нет». Родного API нет или вход отвергнут: только сводка с причиной и что сделать, документа «Карта API» нет.</p>
 
 <h3 class="page">Фрагмент протокола другой камеры: Dahua, место 5 (по мотивам .108, данные выдуманы)</h3>
 <p>Сверка диапазона — оба API объявляют одно, камера держит другое:</p>
 <table border="1" cellspacing="0" cellpadding="3">
-  <thead><tr><th width="3%">№</th><th width="11%">Настройка</th><th width="22%">ONVIF</th><th width="24%">Родной API</th><th width="10%">Шкала</th><th width="17%">Итог</th><th>Откуда пара</th></tr></thead>
-  <tr><td>7</td><td>Битрейт, кодировщик 1, H.264 — диапазон<br><span class="muted">API-RANGE-6</span></td>
-      <td>Media2 · <span class="path">BitrateRange</span> 512…5632 кбит/с</td>
-      <td>CGI · <span class="path">encode.getConfigCaps · MainFormat[0].Video.BitRateOptions</span> 512…5632 кбит/с</td>
+  <thead><tr><th width="13%">Строка</th><th width="21%">ONVIF</th><th width="24%">Родной API</th><th width="11%">Шкала</th><th width="17%">Итог</th><th>Откуда пара</th></tr></thead>
+  <tr><td>API-RANGE-15<br>Битрейт, профиль 1 — диапазон</td>
+      <td>Media2 · H.264 · <span class="path">BitrateRange</span> 512…5632 кбит/с</td>
+      <td>CGI · <span class="path">encode.getConfigCaps · MainFormat[0].Video.BitRateOptions</span> 512…5632</td>
       <td>1:1, кбит/с</td>
-      <td class="st-не-прошла">не прошла: объявлено 512…5632 кбит/с и в ONVIF, и в CGI, а при H.264 камера держит не больше 1792: записано по ONVIF 5632, читается 1792 (ONVIF и CGI)</td>
+      <td class="st-не-прошла">не прошла (серьёзная): объявлено 512…5632 кбит/с и в ONVIF, и в CGI, а при H.264 камера держит не больше 1792: записано по ONVIF 5632, читается 1792</td>
       <td>найдено в этом прогоне</td></tr>
 </table>
-<p>Свёртка индексов в карте CGI:</p>
-<table border="1" cellspacing="0" cellpadding="2" class="small">
-  <thead><tr><th width="34%">Параметр</th><th width="34%">Тип и допустимые значения</th><th width="14%">Текущее</th><th>Примечание</th></tr></thead>
-  <tr><th colspan="4">VideoColor · <span class="path">configManager.getConfig&amp;name=VideoColor</span> · 18 параметров (54 значения)</th></tr>
-  <tr><td class="path">VideoColor[0][*].Brightness</td><td>число 0…100</td><td>[0] 50 · [1] 50 · [2] 60</td><td>пара: яркость (индекс 0)</td></tr>
-  <tr><td class="path">VideoColor[0][*].Gamma</td><td>число 0…100</td><td>[0] 50 · [1] 50 · [2] 50</td><td></td></tr>
-</table>
-<p class="muted">Источник «трафик веб-обхода»: заголовок раздела — метод и адрес запроса («POST /RPC2 · configManager.getConfig»), допустимые значения — «не видны в трафике: известны только встреченные значения». Источник «только ONVIF»: п. 3–5 нет, вместо них строка «пропущена: родной API не найден — нет сборщика для бренда и трафика веб-обхода» и что сделать.</p>
 
 </body></html>
