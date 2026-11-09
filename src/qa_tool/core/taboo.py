@@ -728,6 +728,53 @@ def is_logout_label(label: str) -> bool:
     return " ".join(label.lower().split()) in LOGOUT_LABELS
 
 
+# --- Чтение родного API (api-discovery, решение директора 09.11) --------------------------------
+# Сборщики карты родного API только читают, но у Dahua CGI и запись, и перезагрузка — тоже GET
+# (`configManager.cgi?action=setConfig`, `magicBox.cgi?action=reboot`). Глаголы записи ловит
+# `is_write_request`, перезагрузку и стирание — `check_web_danger`; здесь — то, что опасно именно
+# при чтении: выгрузка конфигурации с паролями, заводской сброс, бесконечные подписки на события.
+
+NATIVE_READ_METHODS = frozenset({"GET", "HEAD"})
+# по началу слова: «upgrader.cgi», «exportConfig»; «configurationdata» — выгрузка Hikvision целиком
+NATIVE_DANGER_PREFIXES = (
+    "export",
+    "backup",
+    "factory",
+    "attach",
+    "firmware",
+    "upgrad",
+    "configurationdata",
+)
+
+
+def check_native_read(method: str, url: str) -> None:
+    """Пропустить только безопасное чтение родного API камеры (Hikvision ISAPI, Dahua CGI и др.).
+
+    Args:
+        method: метод запроса.
+        url: адрес запроса на камере.
+
+    Raises:
+        TabooViolation: не GET/HEAD, путь из запрещённых, глагол записи, опасное действие или
+            признак выгрузки конфигурации, заводского сброса, обновления прошивки, подписки.
+    """
+    if method.upper() not in NATIVE_READ_METHODS:
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: родной API только читается")
+    check_http(method, url)
+    if is_write_request(method, url):
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: похоже на запись (глагол)")
+    check_web_danger(method, url)
+    path, query = _target(url)
+    whole = _WORD.findall(f"{path} {query}".lower())  # «configurationData» без разбора camelCase
+    found = next(
+        (w for w in words(path, query) + whole if w.startswith(NATIVE_DANGER_PREFIXES)), None
+    )
+    if found:
+        raise TabooViolation(
+            f"{method.upper()} {url} не отправлен: опасно и при чтении (признак «{found}»)"
+        )
+
+
 # --- RTSP ---------------------------------------------------------------------------------------
 
 # Методы, которые только читают поток. SET_PARAMETER, ANNOUNCE и RECORD (RFC 2326 §10) меняют
