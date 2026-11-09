@@ -93,8 +93,10 @@ def test_decoder_gets_only_a_temp_file_and_folder_is_removed(camera, tmp_path, m
     RtspFrameSource(context(camera), live(camera)).capture()
     assert commands
     for command in commands:
-        # домашняя папка раннера Windows — runneradmin: «admin» из неё — не пароль камеры
-        joined = " ".join(map(str, command)).replace(str(Path.home()), "~")
+        # пользователь раннера Windows — runneradmin: «admin» в домашней и временной папке
+        # (pytest-of-runneradmin) — не пароль камеры
+        joined = " ".join(map(str, command)).replace(str(tmp_path), "<tmp>")
+        joined = joined.replace(str(Path.home()), "~")
         assert "rtsp://" not in joined and "admin" not in joined and "127.0.0.1" not in joined
     assert not list(tmp_path.glob(f"{IMAGE_PREFIX}*"))
 
