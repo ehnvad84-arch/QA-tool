@@ -163,8 +163,15 @@ def test_same_field_name_in_another_block_is_a_side_effect():
         section.add_param(f"Image/channels/1/{pid}", value="x")
     native.sections.append(section)
     search = Search(
-        [], lambda: native, native, frozenset(), lambda _k: ("Image/channels/*",),
-        lambda *a: None, Limits(), "", "ISAPI",
+        [],
+        lambda: native,
+        native,
+        frozenset(),
+        lambda _k: ("Image/channels/*",),
+        lambda *a: None,
+        Limits(),
+        "",
+        "ISAPI",
     )
     changes = [
         Change("Image/channels/1/BLC/BLCLevel", "50", "80"),
@@ -195,3 +202,126 @@ def test_same_field_name_in_another_block_is_a_side_effect():
 
 - `src/qa_tool/checks/write_pass.py` и `src/qa_tool/checks/image/engine.py`: после блокера возврата журнал не помечается `reported`, и планировщик дублирует блокер в конце прогона. Тот же шаблон перенесён сюда (m1).
 - `src/qa_tool/core/scheduler.py:385-390`: журналы прошлых прогонов планировщик не показывает. Их разбирает сама проверка, и только когда она запущена. Для «Картинки» и «Кодеков» без галочки это означает тишину. Для `API-MAP-1` — W2.
+
+## Круг 2 (после 36e555e)
+
+Ревьюер: независимый ревьюер, Claude Opus 5.5 · Контекст: свежий · Дифф: `git show 36e555e` (`checks/api/search.py`, `checks/api/search_run.py`, `tests/checks/test_api_search.py`; +179 / −20) · Дата: 2026-11-10 · Круг: второй, только изменённая часть
+
+**Вердикт:** request-changes
+
+Фикс закрывает B1 для двух случаев: Fault ONVIF на записи одной настройки и пропажа камеры на записи. Ожидание `api.reconnect_wait_s` подключено. Открытым остался соседний путь того же сбоя: Fault на возврате по ONVIF по-прежнему уничтожает всю `API-MAP-1` (B2, воспроизведено). Он достижим и через новую ветку «камера вернулась»: TCP-порт уже открыт, а ONVIF после перезагрузки ещё отвечает 503. Новых путей к камере в обход `core/taboo.py` нет. Отказ пароля не глотается. «Ошибка стенда» в задачу не превращается.
+
+### Что изменилось
+
+- `Search.run` разбирает исключения записи так:
+  - `REJECTED` (`ValueRejected` картинки и кодировщика) → «не найдена: камера не приняла значение по ONVIF: …»;
+  - `NOT_SENT` (`ImageWriteRefused`, `EncoderWriteRefused`) → «пропущена: запись не отправлена»;
+  - `UNREACHABLE` (`CameraUnreachable`, `NativeUnreachable`, `TransportError`) → `out.lost`, возврат, поиск прерван;
+  - прочее, как раньше, → `knob.restore()` и проброс.
+- `Search._returned`: если камера пропала, перед возвратом `camera_back()`. Не вернулась — `out.unchecked`, возврат не делается, журнал остаётся. Пропала на самом возврате — одно ожидание, второй раз — `unchecked`.
+- `run_search`:
+  - `camera_back` = `WritePass.lost = True` + `camera_back(api.reconnect_wait_s)`;
+  - `restored` учитывает `unchecked`, журнал закрывается только при сверенном возврате;
+  - `UNREACHABLE` на исходных снимках M0a и M0b → `API-SEARCH-1` «ошибка стенда» (мелкая), карта и сверка остаются.
+- `_search_row`: при `lost` — «не прошла», причина `write_pass.LOST`. `_restore_row`: при `unchecked` — «не прошла», блокер.
+- Тесты:
+  - `test_onvif_fault_on_one_setting_is_not_found_and_search_goes_on` — черновик B1, усилен проверкой пары 15 и `search.json`;
+  - `test_camera_lost_for_a_moment_stops_search_and_returns`;
+  - `test_camera_gone_keeps_map_and_journal_and_is_restore_blocker` — ожидание `api.reconnect_wait_s` = 0,05 с, текст «не вернулась за 0.05 с», журнал с `kind == "4"`.
+- Вне плана изменений нет. Незакоммиченная правка `review.md` в рабочей копии — только форматирование ruff черновика W3.
+
+### Проверки по заданию
+
+| Вопрос | Итог | Основание |
+|---|---|---|
+| B1 решён по S4 п. 5 | да для Fault на записи | `search.py:651-654`. Тест 1 падает на родителе 36e555e (воспроизведение круга 1: `CHILDREN: []`) и проходит сейчас. Отдельно проверено: `ValueRejected` у кодировщика на каждой записи и Fault на второй записи `v2` дают `API-RESTORE-1` «прошла», журнал закрыт |
+| B1 решён по S5 «камера пропала» с `api.reconnect_wait_s` | да для пропажи на записи; **нет** для Fault на возврате (B2) | `search.py:655-657, 691-712`, `search_run.py:299-301`. Тест 3 проверяет порог по тексту причины. Пропажа на снимках M1 и M3 (`NativeUnreachable`) идёт тем же путём по коду, но тестов нет |
+| Новые пути к камере в обход `core/taboo.py` | нет | В `search.py` новые импорты — только классы исключений. `camera_back` → `WritePass._wait_for_camera` → `core/worker.camera_alive`: TCP-порт камеры со стенда, код существовал и раньше. `tests/test_architecture.py` зелёный |
+| Журнал `pending-api` закрывается во всех ветках | да, кроме B2 | Закрывается: Fault на записи, `NOT_SENT`, пропажа с возвратом камеры. Остаётся, как велит спека: камера не вернулась. Остаётся ошибочно: Fault на возврате (`stage='restoring'`, B2) и прочие исключения (W4) — в конце прогона это даёт `API-WRITE-LOST` вместо карты |
+| Ложные или двойные блокеры | двойной остался (m1, теперь и на `unchecked`) | При `unchecked` журнал не помечается `reported`. Планировщик (`scheduler.py:389`) добавит `API-WRITE-LOST` к `API-RESTORE-1`. Спека S5: «не вернулась — `API-RESTORE-1` блокер; процесс снят — `API-WRITE-LOST`», то есть два блокера на одно событие против спеки. Блокер при этом не теряется, поэтому уровень прежний — minor |
+| «Ошибка стенда» → задача программистам | нет | Исходные снимки → `stand_error`. Пропажа посреди поиска → «не прошла» (мелкая), как в «Картинке»: спека, таблица «камера пропала — как в «Картинке» — не прошла / ошибка стенда». `REJECTED` — только итог настройки в трассе, `API-SEARCH-1` «прошла» |
+| Глотаются ли исключения, которые должны валить проверку | нет | `LoginRefused` не входит ни в один кортеж: проверено вне репозитория, итог — «ошибка стенда: вход в родной API отвергнут». Fault отказа пароля ONVIF драйверы не заворачивают в `ValueRejected` (`imaging.py:374-384`, `encoder.py:572-575`, `credentials_rejected`), поэтому `REJECTED` его не ловит. Иерархия: `CameraUnreachable(ConnectionError)`, `NativeUnreachable(RuntimeError)`, `httpx.TransportError`; `LoginRefused` ни от одного из них не наследуется |
+| Тесты ловят баг | да для записи | Тест 1 — точный черновик B1. Тест 3 останавливает mock-камеру по-настоящему и проверяет журнал. Не покрыто — ниже |
+
+### Новые находки
+
+Происхождение «новое» — внесено диффом фичи `1926aa6...HEAD`. Отдельно помечено, внёс ли путь сам 36e555e.
+
+| # | Уровень | Где | Проблема и риск | Минимальный фикс |
+|---|---|---|---|---|
+| B2 | blocker | `src/qa_tool/checks/api/search.py:691-712` (`_returned` ловит только `UNREACHABLE`), `:714-732` (`_put_back`: `knob.restore()` на `:717`, `knob.verify()`) | **Fault на возврате по ONVIF уничтожает всю `API-MAP-1`, как B1.** `ImagingWriter.restore` документированно бросает `OnvifFault`, `EncoderWriter.restore` — `ValueRejected`. Оба выходят из `_returned` и `Search.run` (вызов `:664` стоит вне `try`), затем из `run_search` и `Discovery`. Итог — «ошибка стенда: сбой проверки: OnvifFault…», строк нет, журнал `stage='restoring'` открыт, в конце прогона приходит `API-WRITE-LOST`. Пропадают карта, сверка (расхождение .111), найденные пары, `API-SEARCH-1` и `API-RESTORE-1`. **Сценарии.** (1) Внесён этим фиксом. Камера перезагрузилась посреди поиска. `camera_back` проверяет только TCP-порт (`camera_alive`), порт открылся раньше службы ONVIF, и `SetImagingSettings` получает 503 или HTML. `soap.py:216-218` превращает это в `OnvifFault("ответ не SOAP (HTTP 503)")`, а не в `CameraUnreachable`. Это ровно тот случай, ради которого ждут `api.reconnect_wait_s`. (2) Был до фикса. Камера отвечает Fault на полный блок картинки или на `ForcePersistence=true` при возврате. «Картинка» этот случай ловит (`image/engine.py:421`). **Воспроизведено** вне репозитория (`/tmp`, через `qa-test`): `ValueRejected` на записи резкости + `OnvifFault` на её возврате → `STATUS: ошибка стенда`, `CHILDREN: []`, `JOURNAL: ('restoring', 'Резкость')` | В `_returned` ловить `OnvifFault` (кроме `credentials_rejected` — его пробрасывать), `REJECTED` и `NOT_SENT` вокруг `_put_back` → `out.unchecked = f"возврат по ONVIF не подтверждён: {error}"`, вернуть `[], []`. В `run` прерывать поиск и при `out.unchecked` (`:679`), не только при `stop` и `lost`: состояние камеры неизвестно. Тест — черновик ниже |
+| W4 | major | `src/qa_tool/checks/api/search.py:658-663` | **Прочие исключения внутри `_try` по-прежнему уносят `API-MAP-1`** (вопрос главной сессии). Самое вероятное — разовый Fault на чтении: `knob.leaves()` → `GetImagingSettings`, `read_value` после записи, `EncoderWriter.read`. Это `OnvifFault`, а не `ValueRejected`, поэтому он попадает в `except Exception: … raise`. **Воспроизведено:** один `OnvifFault("ter:Action")` на `ImagingWriter.read` после записи резкости → `CHILDREN: []`, журнал `intent` открыт. Не blocker, потому что разовый Fault на чтении у камеры, которая только что ответила на то же чтение, — случай редкий. Но последствия те же, что у B1, а «Картинка» закрывает его общим правилом (`image/engine.py:228`: «сбой на одной настройке не должен унести строки и возврат») | Ловить `OnvifFault`, кроме `credentials_rejected`, как итог настройки «ошибка стенда на чтении: …», затем `_returned` и остановка поиска. Пробрасывать только отказ входа (`LoginRefused`, Fault отказа пароля) и `TabooViolation`. Тест — п. 3 списка ниже |
+| m11 | minor (нужна проверка: живая Hikvision или Dahua после перезагрузки — ставит ли `stale=true` на старый `nonce`) | `src/qa_tool/checks/api/search_run.py:299-301`; `src/qa_tool/drivers/camera/http.py:187-193` | Внесено фиксом. После `camera_back` снимки и возврат родным API идут со старым запросом входа Digest (`HttpLogin.challenge`). Перезагруженная камера `nonce` не знает. Если она отвечает 401 без `stale=true`, `http.py` считает это отказом пароля (m6 круга 1). `on_refused` ставит признак отказа на весь прогон, `LoginRefused` выходит из поиска, и `API-MAP-1` становится «вход отвергнут» без карты. Остальные проверки камеры пароль больше не пробуют. Повторного неверного пароля нет, так что это вопрос доступности, а не блокировки учётной записи | В `camera_back` после «вернулась» сбрасывать `challenge` и `count` у общего `HttpLogin`: первый запрос уйдёт без подписи, и 401 на него отказом не считается. Тест: mock с новым `nonce` после остановки и запуска |
+| m12 | minor | `src/qa_tool/checks/api/search.py:704-712, 723` | Внесено фиксом. Если камера пропала на последнем снимке `_put_back` (`:732`) уже после `self.restorer(...)`, цикл `_returned` после ожидания повторяет весь `_put_back`, и `NativeRestorer.run` отправляет запросы родного API второй раз. Спека S5: «один `restore_request`», в строке возврата — «программа пробовала один раз» | Запоминать, что `restorer` уже отправлял (`out.attempts` с `sent`), и при повторе только перечитывать |
+| m1 | minor (перенос, путь расширен фиксом) | `src/qa_tool/checks/api/search_run.py:327-331`; `src/qa_tool/core/scheduler.py:389` | См. круг 1. Теперь двойной блокер выходит и при `unchecked` (камера не вернулась), а спека S5 здесь называет только `API-RESTORE-1` | Как в круге 1: после строки `API-RESTORE-1` «не прошла» пометить журнал `reported = True` |
+| m13 | nit | `src/qa_tool/checks/api/search.py:46`, `src/qa_tool/checks/write_pass.py:33`, `src/qa_tool/checks/api/search_run.py:20, 87-89` | Две разные константы `LOST` с одним именем. `search_run` берёт причину строки из `write_pass.LOST`, а текст `actual` — из `search.LOST`. Легко перепутать при правке | Переименовать `search.LOST` (например, `SEARCH_LOST`) |
+| m14 | nit | `src/qa_tool/checks/api/search.py:474, 653-654, 755-766` | При `NOT_SENT` на первой записи в трассе стоит `записи: [v0, v1]` и «возвращено, карта совпала», хотя `v1` не уходил | Записывать `v1` в `_facts["записи"]` после `knob.write`, а не до |
+| m15 | nit (старое в фиче, фиксом не внесено) | `src/qa_tool/checks/api/search_run.py:85, 100` | «Найдено пар 11 из 10 настроек» (видно в прогоне вне репозитория). Пары режима из `_mode_pair` считаются вместе с настройками | Считать только пары пробованных настроек или писать «найдено пар K, из них режимов M, по L настройкам» |
+
+Черновик теста для B2 (в `tests/checks/test_api_search.py`, фикстура `run` и помощники оттуда же):
+
+```python
+def test_onvif_fault_on_return_is_restore_blocker_and_map_stays(run, tmp_path, monkeypatch):
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    original_write = imaging.ImagingWriter.write
+    original_restore = imaging.ImagingWriter.restore
+    written = []
+
+    def write(self, key, value, persist=False):
+        written.append(key)
+        return original_write(self, key, value, persist)
+
+    def restore(self, state, touched):
+        if "sharpness" in written:
+            # камера после перезагрузки: порт открыт, ONVIF ещё отвечает 503
+            raise OnvifFault("ответ не SOAP (HTTP 503)", status=503)
+        return original_restore(self, state, touched)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    result, camera = run(hikvision(password=SECRET))
+    found = rows(result)
+    assert {"API-MAP-1", "API-MATCH-1", "API-SEARCH-1"} <= set(found)
+    restore_row = found["API-RESTORE-1"]
+    assert restore_row.result.status is Status.FAILED
+    assert restore_row.severity is Severity.BLOCKER
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is not None
+```
+
+### Непокрытые сценарии — для `test-writer` (круг 2)
+
+1. B2: Fault ONVIF на возврате (картинка — `OnvifFault`, кодировщик — `ValueRejected`), в том числе 503 после `camera_back`. Ожидается `API-RESTORE-1` блокер, карта и сверка на месте, журнал открыт. Сейчас тест падает; черновик выше.
+2. S5 «камера пропала» на снимке, а не на записи: `NativeUnreachable` на M1 (`_try`) и на M3 (`_put_back`) — ожидание, возврат, `API-SEARCH-1` «не прошла». По коду работает, тестов нет.
+3. W4: разовый `OnvifFault` на `GetImagingSettings` или `GetVideoEncoderConfiguration` посреди поиска.
+4. Повторная пропажа на возврате после того, как камера вернулась: `unchecked` «возврат не сверен: …», второго ожидания нет (`search.py:707-712`).
+5. `NOT_SENT`: `EncoderWriteRefused` на смене кодека → «пропущена: запись не отправлена», поиск идёт дальше, журнал закрыт.
+6. `ValueRejected` у кодировщика (битрейт). Вне репозитория проверено, что проходит; в наборе теста нет.
+7. `UNREACHABLE` на исходных снимках M0a и M0b → `API-SEARCH-1` «ошибка стенда», `API-RESTORE-1` нет, карта и сверка на месте (`search_run.py:270-278`).
+8. m11: Digest-камера после перезагрузки (новый `nonce` без `stale=true`) — признак отказа пароля не ставится.
+
+Пункты круга 1: п. 1 закрыт тестом 1. П. 5 закрыт частично — пропажа на записи покрыта, на снимках нет (п. 2 выше). Остальные — открыты.
+
+### Статус находок круга 1
+
+| # | Статус |
+|---|---|
+| B1 | закрыт частично: Fault на записи и пропажа на записи — да; Fault на возврате → B2, прочие исключения → W4 |
+| W1, W2, W3 | открыты, фикс их не касается |
+| m1 | открыт, путь расширен (см. выше) |
+| m2–m10 | открыты, фикс их не касается |
+| S-1 … S-4 (security-check.md) | открыты, фикс их не касается |
+
+### Тесты и проверки круга 2
+
+- Тесты фичи: `qa-test uv run --env-file <LD_LIBRARY_PATH, QT_QPA_PLATFORM=offscreen> pytest -q -p no:cacheprovider tests/checks/test_api_search.py test_api_restore.py test_api_discovery.py test_api_catalog.py test_api_compare.py test_api_library.py test_api_ruver.py tests/test_architecture.py` → `140 passed in 125.11s`.
+- Полный прогон не повторялся. По данным главной сессии (debugger): `1659 passed in 1956.67s`, выход 0.
+- Линтер: `uv run ruff check .` → `All checks passed!`; `uv run ruff format --check .` → `312 files already formatted`.
+- Комментарии: `uv run python scripts/check_comments.py` → без замечаний, выход 0. Новые комментарии диффа объясняют «почему» (S4 п. 5, «камеру уже ждали…»). Пересказа кода и английских комментариев нет.
+- Воспроизведения вне репозитория (`/tmp`, через `qa-test`, mock-камера, реальные камеры не трогались): 5 сценариев.
+  - Fault на возврате — B2, `1 failed`.
+  - Fault на чтении — W4, `1 failed`.
+  - `ValueRejected` кодировщика — `passed`.
+  - `ValueRejected` на второй записи — `passed`.
+  - `LoginRefused` на записи не глотается — `passed`, итог «ошибка стенда: вход в родной API отвергнут».
