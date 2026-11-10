@@ -174,3 +174,15 @@ def test_ruver_map_through_its_session():
     # у виртуального «Рувера» нет ONVIF: сверке не с чем сравнивать, причина — в строке
     assert "ONVIF" in result.actual
     assert mock.closed_sessions  # сеанс закрыт: камера держит не больше трёх
+
+
+def test_profile_without_source_token_still_compares(fleet):
+    # живые Hikvision .111 и .114 10.11: Media2 GetProfiles без источника видео — источник
+    # берётся из GetVideoSources, как в «Картинке», а не «камера не объявляет Imaging»
+    api = hikvision(password=SECRET)
+    api.state.profiles_without_source = True
+    camera = fleet(api)
+    result = run_check(SPEC, ctx_for(camera.port))
+    rows = children(result)
+    assert rows["API-MATCH-12"].result.status is Status.PASSED, rows["API-MATCH-12"].result
+    assert "Imaging" not in rows["API-MAP-1"].result.actual

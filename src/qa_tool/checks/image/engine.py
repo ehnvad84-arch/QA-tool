@@ -28,7 +28,7 @@ from qa_tool.checks.image.rules import limit, rule_for, verdict
 from qa_tool.checks.image.scene import OrdinaryScene, Scene, moved
 from qa_tool.checks.image.settings import METRIC_TITLES, SETTINGS, Exposure, Setting
 from qa_tool.checks.onvif.replay import soap_evidence
-from qa_tool.checks.onvif.stream import first_stream
+from qa_tool.checks.onvif.stream import first_stream, video_source
 from qa_tool.checks.rtsp_refusal import refused_password
 from qa_tool.checks.stream.common import DecoderFailed, ToolMissing
 from qa_tool.checks.write_pass import (
@@ -164,7 +164,7 @@ class Engine:
             if "imaging" not in services:
                 return self._all_skipped("камера не объявляет службу Imaging (ONVIF)")
             _profile, uri, source = first_stream(self.soap, services)
-            source = source or self._first_source(services)
+            source = video_source(self.soap, services, source)
             # читаем все настройки, даже если проверяем часть: журнал прошлого прогона может
             # касаться любой из них
             fields = {s.key: s for s in SETTINGS}
@@ -595,10 +595,3 @@ class Engine:
 
     def _progress(self, text: str) -> None:
         self.ctx.progress(text)
-
-    def _first_source(self, services: dict[str, str]) -> str:
-        """Токен первого источника видео, если профиль его не назвал."""
-        answer = self.soap.call(services.get("media", services["device"]), "<trt:GetVideoSources/>")
-        return next(
-            (e.get("token", "") for e in answer.iter() if e.tag.endswith("VideoSources")), ""
-        )

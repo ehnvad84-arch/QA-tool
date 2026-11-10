@@ -23,7 +23,7 @@ from qa_tool.checks.api.onvif_state import State0, read_state0
 from qa_tool.checks.api.restore import Send
 from qa_tool.checks.api.search_run import SearchReport, run_search
 from qa_tool.checks.core.connect import PASSPORT_KEY
-from qa_tool.checks.onvif.stream import first_stream
+from qa_tool.checks.onvif.stream import first_stream, video_source
 from qa_tool.checks.rtsp_refusal import refused_password, remember_native_refusal
 from qa_tool.core.api_map import (
     LIBRARY_KEY,
@@ -198,6 +198,7 @@ class Discovery:
         try:
             services = service_urls(soap, ctx.camera)
             _profile, _uri, source = first_stream(soap, services)
+            source = video_source(soap, services, source)
         except (CameraUnreachable, OnvifFault) as error:
             return State0(problems=[f"ONVIF: службы камеры не прочитаны: {error}"])
         return read_state0(soap, services, source)

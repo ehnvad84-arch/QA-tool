@@ -104,8 +104,10 @@ def read_state0(soap: SoapClient, services: dict[str, str], source: str) -> Stat
                 state.sides.update(imaging_sides(settings, options))
         except (CameraUnreachable, OnvifFault) as error:
             state.problems.append(f"ONVIF: настройки картинки не прочитаны: {error}")
-    else:
+    elif not imaging:
         state.problems.append("камера не объявляет службу Imaging (ONVIF)")
+    else:
+        state.problems.append("ONVIF: источник видео не найден — настройки картинки не прочитаны")
     try:
         writer = EncoderWriter(soap, services)
         configs = writer.configs()

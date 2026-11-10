@@ -16,7 +16,7 @@ from qa_tool.checks.api.limits import limit
 from qa_tool.checks.api.restore import NativeRestorer, Send, old_native_lines
 from qa_tool.checks.api.search import Limits, Outcome, Search, knobs_for
 from qa_tool.checks.image.settings import SETTINGS
-from qa_tool.checks.onvif.stream import first_stream
+from qa_tool.checks.onvif.stream import first_stream, video_source
 from qa_tool.checks.write_pass import WritePass
 from qa_tool.core.api_map import NativeMap, Pair, Section, volatile_ids
 from qa_tool.core.checks import CheckContext, CheckResult, ChildResult, Evidence, Severity, Status
@@ -179,6 +179,7 @@ def run_search(
     try:
         services = service_urls(soap, ctx.camera)
         _profile, _uri, source = first_stream(soap, services)
+        source = video_source(soap, services, source)
         imaging = state0 = None
         if "imaging" in services and source:
             imaging = ImagingWriter(soap, services["imaging"], source, {s.key: s for s in SETTINGS})
