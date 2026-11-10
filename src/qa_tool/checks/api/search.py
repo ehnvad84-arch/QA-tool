@@ -707,7 +707,9 @@ class Search:
                 item["id"] = key
         leaves = effect.onvif if effect else []
         onvif = [{"лист": k, "было": was, "стало": now} for k, was, now in leaves]
-        if left or native_left:
+        if not self._facts.get("записи"):
+            back = "не менялось"
+        elif left or native_left:
             stuck = [f"ONVIF {name}: было {was}, осталось {now}" for name, was, now in left]
             stuck += [f"{c.id}: было {c.before}, осталось {c.after}" for c in native_left]
             back = "не вернулось — блокер: " + "; ".join(stuck)
