@@ -229,3 +229,22 @@ def test_search_refuses_settings_it_must_not_write():
             "",
             "",
         )
+
+
+def test_same_field_at_two_addresses_is_one_parameter():
+    from qa_tool.checks.api.search import _groups, _representative
+    from qa_tool.core.api_map import Change
+
+    # «Рувер» .100 10.11: яркость в общем разделе и в своей операции сдвигаются вместе
+    both = [
+        Change("/api/image#/brightness", "50", "20"),
+        Change("/api/image/brightness?time_of_day=0#/brightness", "50", "20"),
+    ]
+    (group,) = _groups(both).values()
+    assert _representative(group).id.startswith("/api/image/brightness?")
+    # копии Dahua по профилям с разными исходными — тоже один параметр
+    copies = [Change(f"VideoColor[0][{i}].Brightness", b, "80") for i, b in enumerate("504")]
+    assert len(_groups(copies)) == 1
+    # разные поля — разные параметры
+    other = [Change("/api/image#/brightness", "50", "20"), Change("/api/image#/gain", "50", "20")]
+    assert len(_groups(other)) == 2

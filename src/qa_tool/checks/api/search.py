@@ -17,6 +17,7 @@ import contextlib
 import fnmatch
 import json
 import math
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -323,12 +324,33 @@ class Outcome:
     attempts: list[Any] = field(default_factory=list)  # `restore.Attempt` возврата родным API
 
 
+def _leaf(param_id: str) -> str:
+    """Имя поля без индексов и пути: «VideoColor[0][1].Brightness» и «/api/image#/brightness» —
+    «brightness»."""
+    tail = re.split(r"[#/.]", without_indexes(param_id))[-1]
+    return tail.casefold()
+
+
 def _groups(changes: list[Change]) -> dict[tuple[str, Any], list[Change]]:
-    """Копии одного параметра (индексы каналов и профилей, одно новое значение) — одна группа."""
+    """Копии одного параметра — одна группа: то же имя поля и то же новое значение.
+
+    Копии бывают по каналам и профилям (Dahua `VideoColor[0][0..2]`) и по адресам: «Рувер»
+    отдаёт яркость и в общем разделе `/api/image`, и в операции `/api/image/brightness`
+    (живая камера .100, 10.11) — без этого правила запись одной яркости выглядела побочным
+    эффектом. Исходные значения копий могут различаться (профили день и ночь), поэтому в ключе
+    только новое.
+    """
     found: dict[tuple[str, Any], list[Change]] = {}
     for change in changes:
-        found.setdefault((without_indexes(change.id), canonical(change.after)), []).append(change)
+        key = (_leaf(change.id), canonical(change.after))
+        found.setdefault(key, []).append(change)
     return found
+
+
+def _representative(group: list[Change]) -> Change:
+    """Параметр группы для пары: самый конкретный адрес — у «Рувера» это операция записи,
+    а не общий раздел; у копий по профилям — первая по порядку карты."""
+    return max(group, key=lambda c: len(c.id))
 
 
 def _fit(points: list[tuple[float, float]]) -> tuple[float, float, float]:
@@ -509,7 +531,7 @@ class Search:
         groups = _groups([c for c in delta1 if c.id not in still])
         if len(groups) != 1:
             return
-        change = next(iter(groups.values()))[0]
+        change = _representative(next(iter(groups.values())))
         values = {was: change.before, now: change.after}
         scale = Scale("перечисление", values=values)
         self.out.pairs.append(
@@ -539,7 +561,7 @@ class Search:
         groups2 = _groups(delta2)
         if len(groups2) != 1:
             return f"не найдена: после второй записи сдвинулось {len(groups2)} параметров", None, m2
-        target = next(iter(groups2.values()))[0]
+        target = _representative(next(iter(groups2.values())))
         if target.id not in {c.id for c in delta1}:
             return "не найдена: второй сдвиг не совпал с первым", None, m2
         n0 = self.m0.params()[target.id].value
