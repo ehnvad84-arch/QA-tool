@@ -9,6 +9,7 @@
 """
 
 import contextlib
+import json
 import math
 import os
 import shutil
@@ -17,7 +18,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from playwright.sync_api import (
     Dialog,
@@ -187,6 +188,44 @@ class Window(Enum):
     WRITE = 3
 
 
+# Трафик для карты API (api-discovery, S2): пределы — защита от страницы, которая шлёт
+# сотни запросов или огромные ответы; это не допуски проверки, поэтому константы кода.
+TRAFFIC_MAX_ENTRIES = 400
+TRAFFIC_MAX_BODY = 256 << 10
+# Тела ответов, из которых строится карта: данные страницы, а не разметка, скрипты и картинки.
+_TRAFFIC_TYPES = ("json", "xml", "text/plain")
+
+
+@dataclass(frozen=True)
+class TrafficEntry:
+    """Запрос страницы к камере, замеченный при обходе (пассивно, без своих запросов).
+
+    `body` — тело ответа GET с данными (JSON, XML, «ключ=значение»), не больше
+    `TRAFFIC_MAX_BODY`; у записи — пусто, только имена полей запроса (`fields`), без значений.
+    """
+
+    method: str
+    url: str
+    status: int
+    content_type: str = ""
+    body: bytes = b""
+    fields: tuple[str, ...] = ()
+
+
+def _field_names(body: str | None, content_type: str) -> tuple[str, ...]:
+    """Имена полей тела записи без значений: ключи JSON верхнего уровня или формы."""
+    if not body:
+        return ()
+    names: list[str] = []
+    if "json" in content_type or body.lstrip().startswith("{"):
+        with contextlib.suppress(ValueError, RecursionError):
+            data = json.loads(body)
+            names = list(data) if isinstance(data, dict) else []
+    else:
+        names = [k for k, _v in parse_qsl(body, keep_blank_values=True)]
+    return tuple(n[:128] for n in names[:64] if isinstance(n, str))
+
+
 @dataclass(frozen=True)
 class StoppedRequest:
     """Запрос, который программа не пустила к камере."""
@@ -287,6 +326,7 @@ class BrowserSession:
         self.dialogs: list[str] = []
         self.popups: list[str] = []
         self.answers: list[int] = []
+        self.traffic: list[TrafficEntry] = []
         self.http_refused = False
         self._http_login: tuple[str, str] | None = None
         self._digest_count = 0
@@ -436,14 +476,45 @@ class BrowserSession:
             self._note_error(message.text)
 
     def _note_response(self, response: Response) -> None:
-        """Код ответа самой страницы и ошибки камеры на её ресурсы."""
+        """Код ответа самой страницы и ошибки камеры на её ресурсы; трафик для карты API."""
         request = response.request
+        self._note_traffic(request, response)
         if self._http_login is not None and response.status == 401:
             self.http_refused = True
         if request.is_navigation_request() and request.frame == self._page.main_frame:
             self._document_status = response.status
         elif response.status >= HTTP_ERROR and not request.url.endswith(FAVICON):
             self.bad_answers.append(f"{response.status} {request.method} {request.url}")
+
+    def _note_traffic(self, request: Request, response: Response) -> None:
+        """Запомнить запрос страницы к камере для карты API; своих запросов не делает.
+
+        Тело читается только у GET с данными и известной длиной не больше предела: ответ уже
+        пришёл браузеру, повторного запроса к камере нет.
+        """
+        if len(self.traffic) >= TRAFFIC_MAX_ENTRIES or request.resource_type not in (
+            "xhr",
+            "fetch",
+            "document",
+        ):
+            return
+        if not is_camera_url(request.url, self.host, self.ports):
+            return
+        content_type = response.headers.get("content-type", "").lower()[:128]
+        body, fields = b"", ()
+        if request.method == "GET":
+            size = response.headers.get("content-length", "")
+            small = size.isdigit() and int(size) <= TRAFFIC_MAX_BODY
+            if any(t in content_type for t in _TRAFFIC_TYPES) and (small or not size):
+                with contextlib.suppress(PlaywrightError):
+                    body = response.body()[: TRAFFIC_MAX_BODY + 1]
+                if len(body) > TRAFFIC_MAX_BODY:
+                    body = b""  # обрезанный JSON или XML не разобрать: только адрес
+        else:
+            fields = _field_names(self._body(request), request.headers.get("content-type", ""))
+        self.traffic.append(
+            TrafficEntry(request.method, request.url, response.status, content_type, body, fields)
+        )
 
     def _answer_dialog(self, dialog: Dialog) -> None:
         """Ответить на диалог: без ответа нажатие зависнет.

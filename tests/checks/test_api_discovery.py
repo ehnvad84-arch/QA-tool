@@ -107,6 +107,52 @@ def test_brands_without_reader_are_skipped(maker, vendor, reason):
     assert result.status is Status.SKIPPED and reason in result.reason
 
 
+def test_brand_without_reader_maps_web_walk_traffic():
+    from qa_tool.core.api_map import WEB_TRAFFIC_KEY
+    from qa_tool.drivers.camera.browser import StoppedRequest, TrafficEntry, Verdict
+
+    ctx = ctx_for(1, maker="Tiandy", model="TC-C34", vendor="generic")
+    base = "http://127.0.0.1:1"
+    ctx.extra[WEB_TRAFFIC_KEY] = {
+        "запросы": [
+            TrafficEntry(
+                "GET",
+                base + "/CGI/Image",
+                200,
+                "application/xml",
+                b"<Image><Brightness>50</Brightness></Image>",
+            ),
+            TrafficEntry(
+                "GET",
+                base + "/CGI/Users",
+                200,
+                "application/xml",
+                b"<Users><Name>admin</Name><Password>p1</Password></Users>",
+            ),
+        ],
+        "остановлены": [StoppedRequest("POST", base + "/CGI/Network", Verdict.STOP_WRITE)],
+    }
+    result = run_check(SPEC, ctx)
+    assert result.status is Status.PASSED, result.reason
+    assert result.actual.startswith("карта по трафику веб-обхода: разделов 2")
+    assert "сверки нет" in result.actual and result.children == []  # S2: без сверки и поиска
+    data = json.loads(next(e.content for e in result.evidence if e.name == "api-map.json"))
+    text = json.dumps(data, ensure_ascii=False)
+    assert "трафик веб-обхода" in text and "p1" not in text
+    assert "остановлена табу" in text
+
+
+def test_walk_traffic_without_api_data_is_skipped_with_reason():
+    from qa_tool.core.api_map import WEB_TRAFFIC_KEY
+    from qa_tool.drivers.camera.browser import TrafficEntry
+
+    ctx = ctx_for(1, maker="Axis", vendor="axis")
+    page = TrafficEntry("GET", "http://127.0.0.1:1/", 200, "text/html", b"")
+    ctx.extra[WEB_TRAFFIC_KEY] = {"запросы": [page], "остановлены": []}
+    result = run_check(SPEC, ctx)
+    assert result.status is Status.SKIPPED and "не увидел запросов" in result.reason
+
+
 def test_bad_thresholds_are_stand_error():
     ctx = ctx_for(1, thresholds={"api.share_low": Threshold(0.9, "доля", "тест")})
     result = run_check(SPEC, ctx)

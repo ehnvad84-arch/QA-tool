@@ -33,6 +33,10 @@ CHANGE_PAGE = """<h1>Смена пароля</h1><form><input id="u" name="usern
 <button type="submit">Сохранить</button></form>"""
 
 
+# тип ответа по окончанию адреса: трафик для карты API берёт тела только JSON, XML и текста
+_TYPES = {".js": "text/javascript", ".json": "application/json", ".xml": "application/xml"}
+
+
 class MockWebCamera:
     """Сервер страниц на 127.0.0.1; страницы задаются словарём «путь → HTML»."""
 
@@ -119,7 +123,10 @@ class MockWebCamera:
                     return
                 body = (page or "{}").encode()
                 self.send_response(200)
-                kind = "text/javascript" if path.endswith(".js") else "text/html; charset=utf-8"
+                kind = next(
+                    (t for end, t in _TYPES.items() if path.endswith(end)),
+                    "text/html; charset=utf-8",
+                )
                 self.send_header("Content-Type", kind)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

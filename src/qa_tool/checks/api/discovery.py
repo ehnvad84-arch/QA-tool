@@ -28,6 +28,7 @@ from qa_tool.core.api_map import (
     LIBRARY_KEY,
     MAP_FILE,
     PAIRS_FILE,
+    WEB_TRAFFIC_KEY,
     MapFormatError,
     NativeMap,
     PairTable,
@@ -65,6 +66,7 @@ from qa_tool.drivers.camera.ruver.client import (
 )
 from qa_tool.drivers.camera.ruver.collector import ruver_fetch, ruver_send
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
+from qa_tool.drivers.camera.traffic import from_traffic
 
 CHECK_ID = "API-MAP-1"
 NOT_FOUND = "родной API не найден — нет сборщика для бренда и трафика веб-обхода"
@@ -210,10 +212,10 @@ class Discovery:
         choice = choose_collector(all_collectors(), passport, ctx.camera)
         collector = choice.collector
         if collector is None:
-            return CheckResult.skipped(NOT_FOUND)
+            return self._traffic_map(passport, "")
         why = getattr(collector, "why", "")
         if why:
-            return CheckResult.skipped(f"{why}; трафика веб-обхода нет")
+            return self._traffic_map(passport, why)
         ctx.progress(f"карта родного API: {collector.name}")
         meta = _meta(ctx, collector, passport)
         with ExitStack() as stack:
@@ -222,12 +224,64 @@ class Discovery:
                 self.reader = self._reader(collector)
                 native = self.reader.read(meta)
                 if not any(s.code == 200 for s in native.sections):
-                    return CheckResult.skipped(
-                        f"{NOT_FOUND} (сборщик {collector.name}: разделов нет)"
-                    )
+                    return self._traffic_map(passport, f"сборщик {collector.name}: разделов нет")
                 return self._result(collector, native, choice.note)
             except ACCESS_ERRORS as error:
                 return self._access_failed(error)
+
+    def _traffic_map(self, passport: dict, why: str) -> CheckResult:
+        """Карта по трафику веб-обхода этого прогона (S2): без сверки и автопоиска.
+
+        Args:
+            passport: паспорт ONVIF камеры.
+            why: почему родной API не читается напрямую (заготовка бренда, нет разделов); пусто —
+                для бренда нет сборщика.
+        """
+        ctx = self.ctx
+        lead = why or NOT_FOUND
+        traffic = ctx.extra.get(WEB_TRAFFIC_KEY)
+        if not traffic:
+            tail = "проверка «Веб-интерфейс» не входила в сценарий или не прошла страницу входа"
+            if why:
+                return CheckResult.skipped(f"{why}; трафика веб-обхода нет: {tail}")
+            return CheckResult.skipped(f"{NOT_FOUND}: {tail}")
+        ctx.progress(f"карта API по трафику веб-обхода: запросов {len(traffic['запросы'])}")
+        meta = NativeMap(
+            brand=str(passport.get("manufacturer", "")).lower()[:64],
+            collector="трафик",
+            maker=str(passport.get("manufacturer", "")),
+            model=str(passport.get("model", "")),
+            firmware=str(passport.get("firmware", "")),
+            run=str(ctx.extra.get(RUN_ID_KEY, "")),
+            place=ctx.camera.slot,
+            time=datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+            login="вход веб-обхода",
+        )
+        native = from_traffic(list(traffic["запросы"]), list(traffic["остановлены"]), meta)
+        if not native.sections:
+            return CheckResult.skipped(
+                f"{lead}; веб-обход не увидел запросов страницы к данным камеры "
+                f"(запросов {len(traffic['запросы'])})"
+            )
+        notes = [n for n in (why, native.cut_reason) if n]
+        evidence = []
+        try:
+            evidence.append(Evidence(MAP_FILE, dumps_map(native)))
+        except MapFormatError as error:
+            return CheckResult.stand_error(f"карта по трафику не записана: {error}")
+        actual = (
+            f"карта по трафику веб-обхода: разделов {len(native.sections)}, "
+            f"параметров {native.param_count()}; допустимые значения не видны, сверки нет"
+        )
+        if notes:
+            actual += "; " + "; ".join(notes)
+        return CheckResult(
+            Status.PASSED,
+            expected="родной API виден в трафике веб-интерфейса, карта снята",
+            actual=actual,
+            evidence=evidence,
+            data={"native_sections": len(native.sections), "native_params": native.param_count()},
+        )
 
     def _access_failed(self, error: Exception) -> CheckResult:
         """Строка при отказе входа, неподдержанном входе или пропаже камеры (S8)."""

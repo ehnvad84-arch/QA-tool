@@ -355,3 +355,31 @@ def test_sessions_are_isolated():
         assert state["cookies"]
         with BrowserSession(camera.url) as second:
             assert second.session_state()["cookies"] == []
+
+
+def test_traffic_is_recorded_passively():
+    page = """<script>
+    fetch('/api/image.json').catch(() => {});
+    fetch('/api/osd.xml').catch(() => {});
+    fetch('/api/image/brightness', {method: 'POST', body: '{"brightness": 5, "mode": "x"}'})
+      .catch(() => {});
+    </script>"""
+    pages = {
+        "/": page,
+        "/api/image.json": '{"brightness": 50, "mode": "auto"}',
+        "/api/osd.xml": "<Osd><Title>cam</Title></Osd>",
+    }
+    with MockWebCamera(pages) as camera:
+        with BrowserSession(camera.url) as session:
+            session.open(camera.url + "/")
+            session.wait(300)
+            traffic = {(t.method, t.url.split(camera.url)[-1]): t for t in session.traffic}
+        arrived = list(camera.arrived)
+    image = traffic[("GET", "/api/image.json")]
+    assert image.status == 200 and b'"brightness": 50' in image.body
+    assert b"<Title>cam</Title>" in traffic[("GET", "/api/osd.xml")].body
+    assert traffic[("GET", "/")].body == b""  # разметка страницы — не данные API
+    # запись остановлена до камеры: в трафике её нет, своих запросов браузер не делал
+    assert ("POST", "/api/image/brightness") not in traffic
+    assert all(method == "GET" for method, _ in arrived)
+    assert arrived.count(("GET", "/api/image.json")) == 1  # тело взято из ответа странице
