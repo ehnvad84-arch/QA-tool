@@ -2,7 +2,7 @@
 
 Ревьюер: Claude (claude-opus-5-5), свежий контекст · Дифф фичи: `9d669b6..HEAD` (по существу `8d57a17..HEAD`: после слияния этапа 2) · Дата: 2026-11-10
 
-**Вердикт:** pass <!-- fail — ни одного; есть warning и note ниже, табу AD-7 не нарушено -->
+**Вердикт:** pass <!-- fail — ни одного; есть warning и note ниже, табу AD-7 не нарушено; круг 2 (ce867a6) вердикт не меняет -->
 
 Применимые фреймворки по `docs/rules/security.md`: только OWASP Top 10. LLM Top 10, Agentic AI, MITRE ATLAS, NIST AI RMF не отмечены — разделы удалены.
 
@@ -32,7 +32,7 @@
 | Любой запрос к камере — через `core/taboo.py` | pass | ONVIF Imaging — только `SoapClient.call` → `check_onvif` до отправки (`drivers/camera/soap.py:150`); RTSP — `RtspClient` (`frames.py:201`), только методы на чтение. Новых сокетов и HTTP-клиентов нет; `tests/test_architecture.py` в диффе не менялся (исключений не добавлено) и проходит |
 | Сеть, логины, пароли не меняются | pass | `GetOptions`, `Get/SetImagingSettings`, `GetProfiles`, `GetStreamUri`, `GetVideoSources` не в `FORBIDDEN_ONVIF`; полный блок, присланный камерой, проходит `check_onvif` целиком: вложенный `SetUser` → `TabooViolation` (`tests/drivers/test_imaging.py::test_full_block_with_nested_set_user_is_taboo`) |
 | Режим экспозиции не меняется | pass с оговоркой | запись проверки не трогает `Exposure` (белый список + сверка со снимком). Возврат (`imaging.py:504`) и возврат по журналу (`imaging.py:465`) отправляют полный исходный блок, в том числе `Exposure`, с `ForcePersistence=true` — это запись исходных значений, не изменение; см. review.md, W-6 |
-| Без галочки «изменяющие» — ни одной записи | pass | `engine.py:220-222`; тест `test_without_checkbox_nothing_is_written_but_state_is_recorded` (`imaging_writes == []`) |
+| Без галочки «изменяющие» — ни одной записи | pass | `engine.py:220-222` (после ce867a6 — `:246-248`); тест `test_without_checkbox_nothing_is_written_but_state_is_recorded` (`imaging_writes == []`) |
 | Пароль не повторяется после отказа | pass | `refused_password` в начале прохода и перед каждым снимком (`engine.py:178`, `frames.py:180`); отказ ONVIF — `Abort` без повтора (`engine.py:305-307`), полный блок после отказа входа не шлётся (`imaging.py:374-375`) |
 | Ответы камеры в путях файлов не используются | pass | имена доказательств — из ID строки и `p000/p050/p100`; журнал — `journal_file` очищает адрес (`write_journal.py:62-64`); PDF подкладывает только файлы внутри папки прогона (`report/pdf.py:44-57`) |
 | Пароли и токены вырезаны из доказательств | pass | `onvif-N.txt` — из уже вычищенных `SoapClient.exchanges`; `measure.json`, `state.txt`, `imaging.xml` — только значения настроек; смоук `packaging/smoke_image.py:109` ищет пароль во всех файлах прогона |
@@ -72,3 +72,7 @@
 | S-2 | note | новое | `checks/image/frames.py:246-253` | спека («Враждебный ввод»): по ffprobe больше 8192 × 8192 → `FrameTooLarge`. Сейчас ограничена только высота после сжатия; поток 16384 × 9216 декодируется целиком (сотни МБ на кадр в процессе ffmpeg) | проверка `width > 8192 or height > 8192` до запуска ffmpeg |
 | S-3 | note | новое | `drivers/camera/imaging.py:255` | токен длиннее 64 символов (ReferenceToken) не ведёт к «пропущена», как в спеке. Риск низкий: токен экранируется | проверка длины в `Engine.run` |
 | S-4 | note | новое | `checks/image/engine.py:543` | в журнал как `restore["token"]` пишется `writer.source` — XML-обёртка `<timg:VideoSourceToken>…</timg:VideoSourceToken>`, а не токен; при возврате по журналу берётся токен текущего прогона. Безопасности не вредит, но поле журнала не то, что называет | писать сам токен |
+
+## Круг 2 (ce867a6, фикс B-1)
+
+Дифф `cf21c58..HEAD`: `checks/image/engine.py`, `tests/checks/test_image_effect.py`, `progress.md`. Новых запросов к камере, клиентов, сокетов, зависимостей, хуков и настроек `.claude/` нет. Новые ветки разбирают уже полученные снимки (`Capture.stable`, `Capture.lumas`) и читают только пороги стенда (`Timings.of`). Табу AD-7 и запрет записи без галочки не затронуты: `engine.py:246-248`. Секретов в диффе нет. Причина строки состоит из чисел и порогов, текста камеры в ней нет. Сканеры не перезапускались: Snyk не установлен; pip-audit и agentshield не нужны, потому что зависимости, хуки и `.claude/` не менялись. Номера строк `engine.py` в таблицах выше — по состоянию до ce867a6 (сдвиг +21…+57). Вердикт — **pass**, без изменений.
