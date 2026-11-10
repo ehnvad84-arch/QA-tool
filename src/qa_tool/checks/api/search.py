@@ -28,11 +28,22 @@ from qa_tool.checks.api.catalog import BY_N, CATALOG, ENCODER, IMAGE, Entry
 from qa_tool.checks.api.compare import number
 from qa_tool.checks.image.settings import BY_KEY
 from qa_tool.core.api_map import Change, NativeMap, Pair, Scale, canonical, diff, finite_number
+from qa_tool.drivers.camera import encoder as encoder_driver
+from qa_tool.drivers.camera import imaging as imaging_driver
 from qa_tool.drivers.camera.encoder import CodecOptions, EncoderConfig, EncoderWriter, compare
+from qa_tool.drivers.camera.http import TransportError
 from qa_tool.drivers.camera.imaging import Declared, ImagingState, ImagingWriter
 from qa_tool.drivers.camera.key_value import without_indexes
+from qa_tool.drivers.camera.native import NativeUnreachable
+from qa_tool.drivers.camera.soap import CameraUnreachable
 
 MIN_GAP = 0.15  # доли диапазона: ближе значения не различить на шкале камеры
+# Fault ONVIF на записи одной настройки — её итог, а не сбой всего поиска (S4 п. 5)
+REJECTED = (imaging_driver.ValueRejected, encoder_driver.ValueRejected)
+# драйвер сам не отправил блок (защищённые поля, Media1 без H.265) — настройку не пробуем
+NOT_SENT = (imaging_driver.ImageWriteRefused, encoder_driver.EncoderWriteRefused)
+UNREACHABLE = (CameraUnreachable, NativeUnreachable, TransportError)
+LOST = "камера перестала отвечать во время автопоиска"
 
 
 class SearchRefused(RuntimeError):
@@ -322,6 +333,8 @@ class Outcome:
     native_left: list[Change] = field(default_factory=list)
     held: dict[int, tuple[float, str]] = field(default_factory=dict)
     attempts: list[Any] = field(default_factory=list)  # `restore.Attempt` возврата родным API
+    lost: str = ""  # камера пропадала посреди поиска: что случилось
+    unchecked: str = ""  # возврат не сверен (камера не вернулась) — почему; журнал остаётся
 
 
 def _leaf(param_id: str) -> str:
@@ -378,6 +391,8 @@ class Search:
         source: подпись найденной пары («найдено автоматически, прогон …»).
         restorer: возврат родным API параметров, которые не вернул ONVIF (`NativeRestorer.run`);
             `None` — только вручную.
+        camera_back: дождаться пропавшей камеры перед возвратом (`WritePass.camera_back`);
+            пусто — можно возвращать, иначе причина, почему возврата нет.
     """
 
     def __init__(
@@ -395,6 +410,7 @@ class Search:
         clock: Callable[[], float] = time.monotonic,
         progress: Callable[[str], None] = lambda _t: None,
         restorer: Callable[[list[Change], NativeMap], list[Any]] | None = None,
+        camera_back: Callable[[], str] = lambda: "",
     ) -> None:
         """Подготовить поиск; записи начинаются в `run`."""
         for knob in knobs:
@@ -404,7 +420,7 @@ class Search:
         self.expected, self.note, self.limits = expected, note, limits
         self.source, self.label = source, label
         self.sleep, self.clock, self.progress = sleep, clock, progress
-        self.restorer = restorer
+        self.restorer, self.camera_back = restorer, camera_back
         self.out = Outcome()
         self._facts: dict[str, Any] = {}  # записи и сдвиги текущей настройки для `search.json`
 
@@ -632,14 +648,20 @@ class Search:
             self._facts = {}
             try:
                 verdict, pair, _last = self._try(knob, self.m0)
+            except REJECTED as error:
+                verdict, pair = f"не найдена: камера не приняла значение по ONVIF: {error}", None
+            except NOT_SENT as error:
+                verdict, pair = f"пропущена: запись не отправлена: {error}", None
+            except UNREACHABLE as error:
+                self.out.lost = f"{LOST}: {error}"
+                verdict, pair = f"остановлен: {LOST}", None
             except Exception:
-                # камера пропала или отказала посреди записи: вернуть по ONVIF что получится;
-                # журнал остаётся открытым — следующий прогон увидит незакрытую запись
+                # непредвиденный сбой: вернуть по ONVIF что получится; журнал остаётся
+                # открытым — следующий прогон увидит незакрытую запись
                 with contextlib.suppress(Exception):
                     knob.restore()
                 raise
-            self.note(entry, str(knob.current()), str(knob.current()), "restoring", knob.journal())
-            left, native_left = self._put_back(knob)
+            left, native_left = self._returned(knob)
             self.out.trace.append(
                 {
                     "n": entry.n,
@@ -654,17 +676,40 @@ class Search:
                 self.out.left, self.out.native_left = left, native_left
                 if self.out.stop is None:
                     self.out.stop = SideEffect(entry, native_left, left, [])
-            if self.out.stop is not None:
+            if self.out.stop is not None or self.out.lost:
+                why = (
+                    f"прерван на п. {entry.n}: {LOST}"
+                    if self.out.lost
+                    else f"остановлен на п. {entry.n}"
+                )
                 n = self.knobs.index(knob)
                 for rest in self.knobs[n + 1 :]:
-                    self.out.trace.append(
-                        {
-                            "n": rest.entry.n,
-                            "итог": f"не пробовали: поиск остановлен на п. {entry.n}",
-                        }
-                    )
+                    self.out.trace.append({"n": rest.entry.n, "итог": f"не пробовали: поиск {why}"})
                 break
         return self.out
+
+    def _returned(self, knob: Knob) -> tuple[list[tuple[str, str, str]], list[Change]]:
+        """Возврат настройки; пропавшую камеру сначала ждём (S5, «камера пропала»).
+
+        Камера не вернулась или пропала снова — `out.unchecked` с причиной: возврат не сверен,
+        журнал остаётся, а уже собранные карта, сверка и трасса не теряются.
+        """
+        entry = knob.entry
+        while True:
+            if self.out.lost:
+                absent = self.camera_back()
+                if absent:
+                    self.out.unchecked = absent
+                    return [], []
+            self.note(entry, str(knob.current()), str(knob.current()), "restoring", knob.journal())
+            try:
+                return self._put_back(knob)
+            except UNREACHABLE as error:
+                if self.out.lost:
+                    # камеру уже ждали: второй раз не ждём, решает следующий прогон по журналу
+                    self.out.unchecked = f"возврат не сверен: {LOST}: {error}"
+                    return [], []
+                self.out.lost = f"{LOST}: {error}"
 
     def _put_back(self, knob: Knob) -> tuple[list[tuple[str, str, str]], list[Change]]:
         """Возврат по ONVIF, затем родным API того, что ONVIF не вернул (S5), и сверка с M0."""
@@ -709,6 +754,8 @@ class Search:
         onvif = [{"лист": k, "было": was, "стало": now} for k, was, now in leaves]
         if not self._facts.get("записи"):
             back = "не менялось"
+        elif self.out.unchecked:
+            back = f"не сверено — блокер: {self.out.unchecked}"
         elif left or native_left:
             stuck = [f"ONVIF {name}: было {was}, осталось {now}" for name, was, now in left]
             stuck += [f"{c.id}: было {c.before}, осталось {c.after}" for c in native_left]

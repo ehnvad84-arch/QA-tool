@@ -171,6 +171,92 @@ def test_old_journal_native_params_are_manual_blocker(run, tmp_path):
     assert rows(result)["API-SEARCH-1"].result.status is Status.SKIPPED
 
 
+def test_onvif_fault_on_one_setting_is_not_found_and_search_goes_on(run, tmp_path, monkeypatch):
+    # B1 ревью api-discovery: Fault на одной записи раньше уничтожал всю проверку API-MAP-1
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    original = imaging.ImagingWriter.write
+
+    def write(self, key, value, persist=False):
+        if key == "sharpness":
+            raise imaging.ValueRejected(OnvifFault("ter:InvalidArgVal"))
+        return original(self, key, value, persist)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    api = hikvision(password=SECRET)
+    result, camera = run(api)
+    found = rows(result)
+    assert {"API-MAP-1", "API-SEARCH-1", "API-RESTORE-1", "API-MATCH-1"} <= set(found)
+    assert found["API-SEARCH-1"].result.status is Status.PASSED
+    assert found["API-RESTORE-1"].result.status is Status.PASSED
+    pairs = pairs_of(result)
+    assert 1 in pairs and 15 in pairs  # яркость до резкости и битрейт после неё не потеряны
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    assert "не найдена: камера не приняла значение по ONVIF" in trace
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None
+    assert api.state.imaging_xml.count("<tt:Brightness>50</tt:Brightness>") == 1
+
+
+def test_camera_lost_for_a_moment_stops_search_and_returns(run, tmp_path, monkeypatch):
+    # обрыв посреди записи, к возврату камера снова на связи: возврат сверен, журнал закрыт
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import CameraUnreachable
+
+    original = imaging.ImagingWriter.write
+
+    def write(self, key, value, persist=False):
+        if key == "sharpness":
+            raise CameraUnreachable("нет ответа (ReadTimeout)")
+        return original(self, key, value, persist)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    api = hikvision(password=SECRET)
+    result, camera = run(api)
+    found = rows(result)
+    assert {"API-MAP-1", "API-MATCH-1"} <= set(found)
+    search = found["API-SEARCH-1"]
+    assert search.result.status is Status.FAILED and "перестала отвечать" in search.result.reason
+    assert found["API-RESTORE-1"].result.status is Status.PASSED
+    assert 1 in pairs_of(result)  # найденное до обрыва не потеряно
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    assert "не пробовали: поиск прерван на п. 4" in trace
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None
+
+
+def test_camera_gone_keeps_map_and_journal_and_is_restore_blocker(run, tmp_path, monkeypatch):
+    # камера пропала насовсем: карта и сверка на месте, возврат — блокер, журнал не потерян
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import CameraUnreachable
+
+    api = hikvision(password=SECRET)
+    camera = MockCamera(
+        Passport("Hikvision", "DS-2CD2043G2-I", "V1", "SN1"), password=SECRET, native=api
+    ).start()
+    original = imaging.ImagingWriter.write
+
+    def write(self, key, value, persist=False):
+        if key == "sharpness":
+            camera.stop()
+            raise CameraUnreachable("нет ответа (ConnectError)")
+        return original(self, key, value, persist)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setitem(FAST, "api.reconnect_wait_s", Threshold(0.05, "с", "тест"))
+    try:
+        result, _ = run(api, camera=camera)
+    finally:
+        camera.stop()
+    found = rows(result)
+    assert {"API-MAP-1", "API-MATCH-1"} <= set(found)
+    assert found["API-SEARCH-1"].result.status is Status.FAILED
+    restore = found["API-RESTORE-1"]
+    assert restore.result.status is Status.FAILED and restore.severity is Severity.BLOCKER
+    assert "не вернулась за 0.05 с" in restore.result.actual
+    entry = load(tmp_path / "pending-api", "127.0.0.1", camera.port)
+    assert entry is not None and entry.kind == "4"  # резкость: следующий прогон вернёт по журналу
+
+
 def test_bitrate_edge_like_108_reaches_range_row(run):
     api = dahua(password=SECRET)
     bitrate_edge_like_108(api.state)

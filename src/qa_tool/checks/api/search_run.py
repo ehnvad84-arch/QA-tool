@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from qa_tool.checks.api.catalog import BY_N, Entry
 from qa_tool.checks.api.limits import limit
 from qa_tool.checks.api.restore import NativeRestorer, Send, old_native_lines
-from qa_tool.checks.api.search import Limits, Outcome, Search, knobs_for
+from qa_tool.checks.api.search import UNREACHABLE, Limits, Outcome, Search, knobs_for
 from qa_tool.checks.image.settings import SETTINGS
 from qa_tool.checks.onvif.stream import first_stream, video_source
-from qa_tool.checks.write_pass import WritePass
+from qa_tool.checks.write_pass import LOST, WritePass
 from qa_tool.core.api_map import NativeMap, Pair, Section, volatile_ids
 from qa_tool.core.checks import CheckContext, CheckResult, ChildResult, Evidence, Severity, Status
 from qa_tool.core.write_journal import API, RUN_ID_KEY, PendingWrite, load
@@ -83,7 +83,12 @@ def _search_row(outcome: Outcome, label: str, restored: bool) -> ChildResult:
     """`API-SEARCH-1`: найдено пар K из L; при побочном эффекте — «не прошла» (мелкая)."""
     expected = "запись одной настройки ONVIF меняет в родном API ровно один параметр"
     found = sum(p.state == "найдена" for p in outcome.pairs)
-    if outcome.stop is not None:
+    if outcome.lost:
+        tail = "после возврата всё вернулось" if restored else "возврат не сверен — см. возврат"
+        result = CheckResult(
+            Status.FAILED, reason=LOST, expected=expected, actual=f"{outcome.lost}; {tail}"
+        )
+    elif outcome.stop is not None:
         tail = "после возврата всё вернулось" if restored else "вернулось не всё — см. возврат"
         result = CheckResult(
             Status.FAILED, expected=expected, actual=f"{outcome.stop.text(label)}; {tail}"
@@ -102,6 +107,13 @@ def _restore_row(outcome: Outcome, label: str) -> ChildResult:
     expected = "все настройки ONVIF и вся наблюдаемая карта родного API — как до записи"
     if outcome.tried == 0:
         result = CheckResult.skipped("ничего не менялось")
+    elif outcome.unchecked:
+        result = CheckResult(
+            Status.FAILED,
+            reason="возврат после автопоиска не сверен",
+            expected=expected,
+            actual=outcome.unchecked,
+        )
     elif outcome.left or outcome.native_left:
         lines = [f"ONVIF {name}: было {was}, осталось {now}" for name, was, now in outcome.left]
         how = {a.change.id: a.how() for a in outcome.attempts}
@@ -148,7 +160,10 @@ def _restore_facts(outcome: Outcome, label: str) -> Evidence:
                 else "веб-интерфейс камеры, раздел изображения",
             }
         )
-    data = {"как вышло": outcome.stop.text(label) if outcome.stop else "", "осталось": left}
+    data = {
+        "как вышло": outcome.stop.text(label) if outcome.stop else outcome.lost,
+        "осталось": left,
+    }
     return Evidence("restore.json", json.dumps(data, ensure_ascii=False, indent=1))
 
 
@@ -252,9 +267,15 @@ def run_search(
         return reader(observed).read(NativeMap(brand=m0.brand, collector=m0.collector))
 
     ctx.progress("Автопоиск · исходная карта, 2 снимка")
-    m0a = snapshot()
-    sleep(limit(ctx, "api.baseline_gap_s").value)
-    m0b = snapshot()
+    try:
+        m0a = snapshot()
+        sleep(limit(ctx, "api.baseline_gap_s").value)
+        m0b = snapshot()
+    except UNREACHABLE as error:
+        # записей ещё не было: карта M0 и сверка остаются, теряется только поиск
+        result = CheckResult.stand_error(f"исходные снимки родного API не сняты: {error}")
+        report.rows.append(_row(SEARCH_ID, "Автопоиск соответствий", result, Severity.MINOR))
+        return report
     volatile = volatile_ids(m0a, m0b)
     knobs = knobs_for(imaging, state0, encoder, config0, options, known)
     if not knobs:
@@ -274,6 +295,10 @@ def run_search(
         note(entry, old_value, new_value, "restoring", restore)
 
     restorer = NativeRestorer(collector, m0, volatile, send, journal_native)
+
+    def camera_back() -> str:
+        writes.lost = True
+        return writes.camera_back(limit(ctx, "api.reconnect_wait_s").value)
 
     limits = Limits(
         apply_delay_s=limit(ctx, "api.apply_delay_s").value,
@@ -297,9 +322,10 @@ def run_search(
         sleep=sleep,
         progress=ctx.progress,
         restorer=restorer.run,
+        camera_back=camera_back,
     )
     outcome = search.run()
-    restored = not outcome.left and not outcome.native_left
+    restored = not outcome.left and not outcome.native_left and not outcome.unchecked
     if restored:
         writes.close()
     trace = Evidence("search.json", search.trace_json())
