@@ -1,5 +1,6 @@
 """Экран «Протоколы»: прогоны из папки прогонов, протоколы камер и сводка в трёх форматах."""
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -22,6 +23,20 @@ IMAGE_COMPARE_TIP = (
 CODEC_COMPARE = "codec_compare"
 CODEC_COMPARE_TIP = "Кривые качества всех камер на одном графике по каждому разрешению и кодеку."
 TIPS = {IMAGE_COMPARE: IMAGE_COMPARE_TIP, CODEC_COMPARE: CODEC_COMPARE_TIP}
+API_MAP_TIP = (
+    "Полная карта родного API камеры: разделы, параметры, допустимые и текущие значения. "
+    "Итоги, пары с ONVIF и задачи — в протоколе камеры."
+)
+_SIZE = re.compile(r"разделов \d+, параметров \d+")
+
+
+def _api_size(protocol) -> str:
+    """«разделов 13, параметров 172» для строки «Карта API»; по трафику — с пометкой."""
+    if protocol.api is None:
+        return ""
+    found = _SIZE.search(protocol.api.map_reason)
+    size = found.group() if found else ""
+    return f"по трафику веб-обхода: {size}" if protocol.api.traffic else size
 
 
 def open_file(path: Path) -> None:
@@ -42,7 +57,8 @@ def list_runs(runs_dir: Path) -> list[dict]:
             worst = summary_status(store)
             protocols = [build_protocol(store, c["slot"]) for c in store.cameras()]
             cameras = [
-                {"slot": p.slot, "name": p.camera_name, "verdict": p.verdict} for p in protocols
+                {"slot": p.slot, "name": p.camera_name, "verdict": p.verdict, "api": _api_size(p)}
+                for p in protocols
             ]
             runs.append(
                 {
@@ -180,15 +196,25 @@ class ProtocolsScreen(Screen):
                     f"разрешений и кодеков {pairs}, камер {count}",
                 )
             )
-        rows += [
-            (
-                f"protocol_{c['slot']}",
-                f"Протокол {run['id']}-{c['slot']}",
-                f"{c['slot']}. {c['name']}",
-                c["verdict"],
+        for c in run["cameras"]:
+            rows.append(
+                (
+                    f"protocol_{c['slot']}",
+                    f"Протокол {run['id']}-{c['slot']}",
+                    f"{c['slot']}. {c['name']}",
+                    c["verdict"],
+                )
             )
-            for c in run["cameras"]
-        ]
+            # «Карта API» — сразу после протокола своей камеры, если документ выпущен
+            if (run["dir"] / f"api_map_{c['slot']}.html").exists():
+                rows.append(
+                    (
+                        f"api_map_{c['slot']}",
+                        f"Карта API {run['id']}-{c['slot']}",
+                        f"{c['slot']}. {c['name']}",
+                        c.get("api", ""),
+                    )
+                )
         self.docs_table.setRowCount(len(rows))
         for r, (stem, *values) in enumerate(rows):
             self.docs.append(stem)
@@ -196,6 +222,8 @@ class ProtocolsScreen(Screen):
                 item = QTableWidgetItem(value)
                 if stem in TIPS:
                     item.setToolTip(TIPS[stem])
+                elif stem.startswith("api_map_"):
+                    item.setToolTip(API_MAP_TIP)
                 self.docs_table.setItem(r, c, item)
         self.docs_table.selectRow(0)
 

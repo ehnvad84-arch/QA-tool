@@ -8,6 +8,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from qa_tool.core.checks import Status
+from qa_tool.report.api_doc import ApiMapDocument, parameter_rows, section_rows
 from qa_tool.report.api_map import number as api_number
 from qa_tool.report.model import Protocol, Summary
 
@@ -438,6 +439,55 @@ def _api_pairs_sheet(ws: Worksheet, p: Protocol) -> None:
                 )
     table(ws, _API_PAIRS_HEADERS, rows, {1: 24, 5: 40, 9: 40, 10: 40})
     ws.auto_filter.ref = ws.dimensions
+
+
+_MAP_SECTION_HEADERS = [
+    "Раздел",
+    "Класс",
+    "Запрос чтения",
+    "Запрос описания",
+    "Код",
+    "Байт",
+    "Чувствительность",
+    "Параметров",
+    "В парах",
+    "Расхождений",
+]
+_MAP_PARAM_HEADERS = [
+    "Раздел",
+    "Параметр",
+    "Индекс",
+    "Тип",
+    "Минимум",
+    "Максимум",
+    "Шаг",
+    "Допустимые",
+    "Длина макс",
+    "Только чтение",
+    "Текущее, число",
+    "Текущее, текст",
+    "Чувствительность",
+    "Меняется сам",
+    "В паре с ONVIF",
+    "Источник",
+]
+
+
+def write_api_map_xlsx(path: Path, doc: ApiMapDocument) -> Path:
+    """Excel документа «Карта API»: «Разделы», «Параметры», «Ошибки»; автофильтр, числа числами."""
+    wb = Workbook()
+    sheets = (
+        ("Разделы", _MAP_SECTION_HEADERS, section_rows(doc), {1: 40, 3: 50, 4: 40}),
+        ("Параметры", _MAP_PARAM_HEADERS, parameter_rows(doc), {1: 30, 2: 50, 8: 40, 12: 30}),
+        ("Ошибки", ["Запрос", "Код", "Причина"], [list(e) for e in doc.errors], {1: 60, 3: 60}),
+    )
+    for index, (name, headers, rows, widths) in enumerate(sheets):
+        ws = wb.active if index == 0 else wb.create_sheet()
+        ws.title = name
+        table(ws, headers, rows, widths)
+        ws.auto_filter.ref = ws.dimensions
+    wb.save(path)
+    return path
 
 
 def write_summary_xlsx(path: Path, s: Summary) -> Path:

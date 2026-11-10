@@ -123,3 +123,42 @@ def test_pdf_prints_the_appendix(blocked, tmp_path):
     html = render_protocol(build_protocol(blocked, 1))
     pdf = write_pdf(tmp_path / "p.pdf", html, "Протокол", blocked.run_dir)
     assert pdf.read_bytes()[:4] == b"%PDF" and pdf.stat().st_size > 10_000
+
+
+def test_map_document_published_next_to_protocol(blocked):
+    from qa_tool.gui.screens.protocols import list_runs
+    from qa_tool.report.publish import publish
+
+    written = {path.name for path in publish(blocked)}
+    assert {"api_map_1.html", "api_map_1.pdf", "api_map_1.xlsx"} <= written
+    html = (blocked.run_dir / "api_map_1.html").read_text(encoding="utf-8")
+    assert "КАРТА РОДНОГО API КАМЕРЫ" in html and 'href="protocol_1.html"' in html
+    assert "! не вернулось: было 100" in html  # GainLevel остался изменённым
+    assert "только описание" in html  # разделы сети и безопасности — без значений
+    book = load_workbook(blocked.run_dir / "api_map_1.xlsx")
+    assert book.sheetnames == ["Разделы", "Параметры", "Ошибки"]
+    params = book["Параметры"]
+    assert params.auto_filter.ref and params["B1"].value == "Параметр"
+    run = next(r for r in list_runs(blocked.run_dir.parent) if r["dir"] == blocked.run_dir)
+    assert run["cameras"][0]["api"].startswith("разделов ")
+
+
+def test_copies_fold_into_one_row():
+    from qa_tool.report.api_doc import _fold
+
+    params = [
+        {"id": f"VideoColor[0][{i}].Brightness", "тип": "целое", "значение": str(v)}
+        for i, v in enumerate((50, 50, 60))
+    ]
+    (line,) = _fold(params, "VideoColor", {}, set())
+    assert line.name == "VideoColor[*][*].Brightness"
+    assert line.current == "[0] 50 · [1] 50 · [2] 60"
+
+
+def test_describe_lists_and_ranges():
+    from qa_tool.report.api_doc import describe
+
+    assert describe({"тип": "целое", "допустимые": {"мин": 0, "макс": 100}}) == "целое 0…100"
+    many = {"тип": "перечисление", "допустимые": {"значения": [str(i) for i in range(18)]}}
+    assert describe(many) == "список: 0, 1, 2, …, 17, (18 значений)"
+    assert describe({"тип": "строка", "допустимые": None}) == "строка; не объявлены"

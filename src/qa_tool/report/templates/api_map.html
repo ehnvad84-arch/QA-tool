@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>{{ d.title }}</title>
+{% include "_style.html" %}
+<style>
+  .small { font-size: 8pt; }
+  .path { font-family: "DejaVu Sans Mono", Consolas, monospace; }
+</style>
+</head><body>
+<h1>КАРТА РОДНОГО API КАМЕРЫ · {{ d.protocol_id }}</h1>
+<table border="1" cellspacing="0" cellpadding="3">
+  <tr><th width="28%">Камера</th><td>{{ d.place }}</td></tr>
+  <tr><th>Производитель · модель · прошивка</th><td>{{ d.camera }}</td></tr>
+  <tr><th>Адрес</th><td>{{ d.address }}</td></tr>
+  <tr><th>Источник</th><td>{{ d.source }}</td></tr>
+  {% if d.login %}<tr><th>Вход</th><td>{{ d.login }}</td></tr>{% endif %}
+  <tr><th>Итого</th><td>{{ d.total }}</td></tr>
+</table>
+<p>Итоги, пары с ONVIF и задачи программистам — в протоколе <a href="{{ d.protocol_file }}"><b>{{ d.protocol_id }}</b></a>, приложение «API камеры».</p>
+{% if d.cut %}<p class="note">Карта обрезана: {{ d.cut }}</p>{% endif %}
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+<b>Как читать.</b> Раздел — один ресурс родного API (адрес ISAPI, имя конфигурации CGI). Тип: «число 0…100», «список: …», «текст до 32 знаков»; «только чтение» — камера не даёт его менять; «не объявлены» — камера не сообщила допустимые значения.
+<span class="path">[*]</span> — параметр повторяется по каналам, профилям или потокам с одинаковыми допустимыми значениями; текущие значения — по индексам «[0] 50 · [1] 50».
+«скрыто» — пароль, ключ или токен: значение вырезано. «только описание» — раздел сети, учётных записей или безопасности: значения не читались и не сохранялись. «меняется сам» — значение менялось без записи (автоматика, счётчики).
+</td></tr></table>
+
+<h2>1. Разделы</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="30%">Раздел</th><th width="13%">Класс</th><th width="9%">Параметров</th><th>Запрос</th></tr></thead>
+  {% for s in d.sections %}<tr><td class="path"><a href="#{{ s.anchor }}">{{ s.title }}</a></td><td>{{ s.cls }}</td><td>{{ s.count }}</td><td class="path">{{ s.read }}</td></tr>{% endfor %}
+</table>
+
+<div class="page"></div>
+<h2>2. Карта</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="34%">Параметр</th><th width="24%">Тип и допустимые</th><th width="20%">Текущее</th><th>Примечание</th></tr></thead>
+  {% for s in d.sections %}
+  <tr><th colspan="4"><a name="{{ s.anchor }}"></a>{{ s.title }} · {{ s.cls }} · {{ s.read }} · параметров {{ s.count }}{% if s.sensitive %} · только описание{% endif %}</th></tr>
+  {% if s.sensitive %}
+  <tr><td colspan="4" class="muted">Раздел сети, учётных записей или безопасности: значения не читались и не сохранялись. Имена и допустимые значения — в Excel, лист «Параметры».</td></tr>
+  {% else %}
+  {% for l in s.params %}<tr><td class="path">{{ l.name }}</td><td>{{ l.kind }}</td><td>{{ l.current }}</td><td{% if l.bad %} class="bad"{% endif %}>{{ l.note }}</td></tr>{% endfor %}
+  {% endif %}
+  {% endfor %}
+</table>
+
+{% if d.errors %}
+<h2>3. Не ответили и остановлены</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="45%">Запрос</th><th width="10%">Код</th><th>Причина</th></tr></thead>
+  {% for req, code, why in d.errors %}<tr><td class="path">{{ req }}</td><td>{{ code }}</td><td>{{ why }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+</body></html>

@@ -3,12 +3,13 @@
 from pathlib import Path
 
 from qa_tool.core.store import RunStore
+from qa_tool.report.api_doc import build_api_document
 from qa_tool.report.codec_compare import build_codec_compare, publish_codec_compare
-from qa_tool.report.html import render_protocol, render_summary, write_html
+from qa_tool.report.html import render_protocol, render_summary, render_template, write_html
 from qa_tool.report.image_compare import build_image_compare, publish_image_compare
 from qa_tool.report.model import build_summary
 from qa_tool.report.pdf import write_pdf
-from qa_tool.report.xlsx import write_protocol_xlsx, write_summary_xlsx
+from qa_tool.report.xlsx import write_api_map_xlsx, write_protocol_xlsx, write_summary_xlsx
 
 
 def publish(store: RunStore) -> list[Path]:
@@ -35,6 +36,15 @@ def publish(store: RunStore) -> list[Path]:
             write_pdf(out / f"protocol_{p.slot}.pdf", html, f"Протокол {p.protocol_id}", out),
             write_protocol_xlsx(out / f"protocol_{p.slot}.xlsx", p),
         ]
+        doc = build_api_document(p, out)
+        if doc is not None:
+            # «Карта API» — рядом с протоколом своей камеры (api-discovery, T18)
+            html = render_template("api_map.html", d=doc)
+            written += [
+                write_html(out / f"api_map_{p.slot}.html", html),
+                write_pdf(out / f"api_map_{p.slot}.pdf", html, doc.title, out),
+                write_api_map_xlsx(out / f"api_map_{p.slot}.xlsx", doc),
+            ]
     html = render_summary(summary)
     written += [
         write_html(out / "summary.html", html),
