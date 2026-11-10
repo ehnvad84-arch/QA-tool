@@ -121,6 +121,37 @@ def _restore_row(outcome: Outcome, label: str) -> ChildResult:
     return _row(RESTORE_ID, "Возврат после автопоиска", result, Severity.BLOCKER)
 
 
+def _restore_facts(outcome: Outcome, label: str) -> Evidence:
+    """`restore.json` — таблица рамки блокера приложения: что осталось и как вернуть."""
+    attempts = {a.change.id: a for a in outcome.attempts}
+    left = [
+        {
+            "параметр": f"ONVIF {name}",
+            "где": "ONVIF Imaging / Media",
+            "было": was,
+            "осталось": now,
+            "как вернуть": f"по ONVIF: {name} = {was}",
+        }
+        for name, was, now in outcome.left
+    ]
+    for change in outcome.native_left:
+        attempt = attempts.get(change.id)
+        write = attempt.write if attempt else None
+        left.append(
+            {
+                "параметр": f"{label} {change.id}",
+                "где": f"{write.method} {write.path}" if write else "",
+                "было": change.before,
+                "осталось": change.after,
+                "как вернуть": attempt.how()
+                if attempt
+                else "веб-интерфейс камеры, раздел изображения",
+            }
+        )
+    data = {"как вышло": outcome.stop.text(label) if outcome.stop else "", "осталось": left}
+    return Evidence("restore.json", json.dumps(data, ensure_ascii=False, indent=1))
+
+
 def run_search(
     ctx: CheckContext,
     collector: Collector,
@@ -274,6 +305,7 @@ def run_search(
     for row in (_search_row(outcome, label, restored), _restore_row(outcome, label)):
         row.result.evidence.append(trace)
         report.rows.append(row)
+    report.rows[-1].result.evidence.append(_restore_facts(outcome, label))
     report.pairs, report.held = outcome.pairs, outcome.held
     report.evidence.append(trace)
     return report

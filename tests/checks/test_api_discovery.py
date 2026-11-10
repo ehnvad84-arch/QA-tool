@@ -95,7 +95,10 @@ def test_dahua_without_pairs_gives_one_skipped_match(fleet):
     result = run_check(SPEC, ctx_for(camera.port, maker="Dahua", model="IPC-HFW2431S-S-S2"))
     assert result.status is Status.PASSED and "CGI" in result.actual
     rows = children(result)
-    assert list(rows) == ["API-MATCH-0"] and rows["API-MATCH-0"].result.status is Status.SKIPPED
+    assert (
+        list(rows) == ["API-MAP-1", "API-MATCH-0"]
+        and rows["API-MATCH-0"].result.status is Status.SKIPPED
+    )
 
 
 @pytest.mark.parametrize(

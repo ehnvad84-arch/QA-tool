@@ -8,6 +8,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from qa_tool.core.checks import Status
+from qa_tool.report.api_map import number as api_number
 from qa_tool.report.model import Protocol, Summary
 
 _HEADER_FILL = PatternFill("solid", fgColor="E8E8E8")
@@ -150,6 +151,9 @@ def write_protocol_xlsx(path: Path, p: Protocol) -> Path:
         _image_sheet(wb.create_sheet("Картинка"), p)
     if p.codec is not None:
         _codec_sheet(wb.create_sheet("Кодеки"), p)
+    if p.api is not None and not p.api.traffic:
+        _api_match_sheet(wb.create_sheet("Сверка API"), p)
+        _api_pairs_sheet(wb.create_sheet("Пары API"), p)
     if p.profiles.get("matrix"):
         declared = set(p.profiles.get("declared", []))
         rows = [
@@ -304,6 +308,136 @@ def _codec_sheet(ws: Worksheet, p: Protocol) -> None:
             cell.data_type = "s"
             cell.hyperlink = link
             cell.font = Font(color="1155CC", underline="single")
+
+
+_API_MATCH_HEADERS = [
+    "ID",
+    "n",
+    "Настройка",
+    "ONVIF путь",
+    "ONVIF значение, число",
+    "ONVIF значение, текст",
+    "ONVIF мин",
+    "ONVIF макс",
+    "Родной API",
+    "Родной путь",
+    "Родное значение, число",
+    "Родное значение, текст",
+    "Допустимые мин",
+    "Допустимые макс",
+    "Вид шкалы",
+    "a",
+    "b",
+    "Фактический предел",
+    "Итог",
+    "Важность",
+    "Причина",
+    "Откуда пара",
+]
+_API_PAIRS_HEADERS = [
+    "Настройка ONVIF",
+    "n",
+    "Запись №",
+    "Записано",
+    "Сдвинувшийся параметр",
+    "Копий",
+    "Было",
+    "Стало",
+    "Пара",
+    "Возврат",
+]
+
+
+def _api_match_sheet(ws: Worksheet, p: Protocol) -> None:
+    """Лист «Сверка API»: строка на `API-MATCH`/`API-RANGE`; у значений два столбца — число
+    и текст, чтобы столбец был одного типа и автофильтр работал."""
+    a = p.api
+    assert a is not None
+    rows = []
+    for m in a.matches:
+        onvif, native = m.raw.get("onvif") or {}, m.raw.get("родной") or {}
+        scale = m.raw.get("шкала") or {}
+        rows.append(
+            [
+                m.check_id,
+                m.n,
+                m.title,
+                m.onvif_path,
+                api_number(onvif.get("значение")),
+                m.onvif_value,
+                api_number(onvif.get("мин")),
+                api_number(onvif.get("макс")),
+                m.native_api,
+                m.native_path,
+                api_number(native.get("значение")),
+                m.native_value,
+                api_number(native.get("мин")),
+                api_number(native.get("макс")),
+                str(scale.get("вид") or ""),
+                api_number(scale.get("a")),
+                api_number(scale.get("b")),
+                api_number(onvif.get("держит")),
+                m.status,
+                m.severity,
+                m.reason,
+                m.source,
+            ]
+        )
+    table(ws, _API_MATCH_HEADERS, rows, {3: 24, 4: 30, 10: 40, 21: 60, 22: 30})
+    ws.auto_filter.ref = ws.dimensions
+
+
+def _api_pairs_sheet(ws: Worksheet, p: Protocol) -> None:
+    """Лист «Пары API»: ход автопоиска — строка на «настройка × сдвинувшийся параметр × запись»;
+    блокер ищется фильтром по столбцу «Возврат»."""
+    a = p.api
+    assert a is not None
+    rows = []
+    for line in a.searches:
+        writes = [str(w) for w in line.raw.get("записи") or []]
+        moved = [m for m in line.raw.get("сдвинулось") or [] if isinstance(m, dict)]
+        for leaf in line.raw.get("onvif") or []:
+            if isinstance(leaf, dict):
+                moved.append(
+                    {
+                        "id": f"ONVIF {leaf.get('лист', '')}",
+                        "значения": [leaf.get("было"), leaf.get("стало")],
+                    }
+                )
+        if not moved:
+            rows.append(
+                [
+                    line.title,
+                    line.n,
+                    None,
+                    " → ".join(writes),
+                    "",
+                    None,
+                    "",
+                    "",
+                    line.pair,
+                    line.restored,
+                ]
+            )
+        for change in moved:
+            values = [str(v) for v in change.get("значения") or []]
+            for step, (was, now) in enumerate(zip(values, values[1:], strict=False), start=1):
+                rows.append(
+                    [
+                        line.title,
+                        line.n,
+                        step,
+                        writes[step] if step < len(writes) else "",
+                        str(change.get("id") or ""),
+                        change.get("копий") if isinstance(change.get("копий"), int) else None,
+                        was,
+                        now,
+                        line.pair,
+                        line.restored,
+                    ]
+                )
+    table(ws, _API_PAIRS_HEADERS, rows, {1: 24, 5: 40, 9: 40, 10: 40})
+    ws.auto_filter.ref = ws.dimensions
 
 
 def write_summary_xlsx(path: Path, s: Summary) -> Path:

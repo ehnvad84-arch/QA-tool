@@ -148,7 +148,7 @@ def test_check_compares_by_library_on_next_run(tmp_path):
         extra = {PASSPORT_KEY: passport, LIBRARY_KEY: str(tmp_path), "run_id": "QA-1"}
         ctx = CheckContext(place, SECRET, Place.COLOR_BOX, extra=extra)
         first = run_check(REGISTRY.get(CHECK_ID), ctx)
-        assert [c.check_id for c in first.children] == ["API-MATCH-0"]
+        assert [c.check_id for c in first.children] == ["API-MAP-1", "API-MATCH-0"]
         folder = firmware_dir(tmp_path, "dahua", "IPC-1", "2.800")
         assert (folder / "map-QA-1-1.json").is_file()
         write(

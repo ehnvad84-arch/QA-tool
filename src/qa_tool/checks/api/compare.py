@@ -10,6 +10,7 @@ ISAPI ExposureType manual). Сверяются значения снимка M0 
 Значения камеры в тексте строк — недоверенные; их экранирует шаблон протокола.
 """
 
+import json
 from dataclasses import dataclass
 
 from qa_tool.checks.api.catalog import BY_N, Entry
@@ -100,8 +101,40 @@ class _Row:
         """Оба пути для доказательства."""
         return f"ONVIF {self.entry.onvif} ↔ {self.label} {self.pair.native}"
 
-    def child(self, prefix: str, result: CheckResult, severity: Severity | None) -> ChildResult:
-        """Строка протокола с доказательством `pair.txt`."""
+    def facts(self, param: Param | None, side: OnvifSide | None) -> str:
+        """`pair.json` — обе стороны пары числами и путями для приложения и Excel (T17)."""
+        allowed = (param.allowed if param else None) or {}
+        scale = self.pair.scale
+        data = {
+            "n": self.pair.n,
+            "onvif": {
+                "путь": self.entry.onvif,
+                "значение": side.value if side else None,
+                "мин": side.low if side else None,
+                "макс": side.high if side else None,
+                "держит": side.held if side else None,
+            },
+            "родной": {
+                "api": self.label,
+                "путь": self.pair.native,
+                "значение": param.value if param else None,
+                "мин": allowed.get("мин"),
+                "макс": allowed.get("макс"),
+            },
+            "шкала": {"вид": scale.kind, "a": scale.a, "b": scale.b, "значения": scale.values},
+            "источник": self.pair.source,
+        }
+        return json.dumps(data, ensure_ascii=False, indent=1)
+
+    def child(
+        self,
+        prefix: str,
+        result: CheckResult,
+        severity: Severity | None,
+        param: Param | None = None,
+        side: OnvifSide | None = None,
+    ) -> ChildResult:
+        """Строка протокола с доказательствами `pair.txt` и `pair.json`."""
         result.evidence.append(
             Evidence(
                 "pair.txt",
@@ -109,6 +142,7 @@ class _Row:
                 f"итог: {result.status}: {result.actual or result.reason}\n",
             )
         )
+        result.evidence.append(Evidence("pair.json", self.facts(param, side)))
         title = f"{self.entry.title}: {'значение' if prefix == 'API-MATCH' else 'диапазон'}"
         return ChildResult(f"{prefix}-{self.entry.n}", title, result, severity=severity)
 
@@ -231,14 +265,15 @@ def compare_pairs(
         param = params.get(pair.native)
         skip = _skip_reason(param, pair, label)
         if skip:
-            rows.append(row.child("API-MATCH", CheckResult.skipped(skip), None))
+            rows.append(row.child("API-MATCH", CheckResult.skipped(skip), None, param))
             continue
         side = onvif.get(pair.n, OnvifSide(None))
-        rows.append(row.child("API-MATCH", _match(row, param, side, tol), Severity.MAJOR))
+        match = _match(row, param, side, tol)
+        rows.append(row.child("API-MATCH", match, Severity.MAJOR, param, side))
         if pair.scale.kind == "перечисление":
             continue
         ranged = _range(row, param, side, tol)
         if ranged is not None:
             severity = Severity.MAJOR if ranged.data.get("held") else Severity.MINOR
-            rows.append(row.child("API-RANGE", ranged, severity))
+            rows.append(row.child("API-RANGE", ranged, severity, param, side))
     return rows

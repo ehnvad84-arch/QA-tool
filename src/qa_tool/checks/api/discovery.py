@@ -10,13 +10,14 @@
 """
 
 import datetime
+import json
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
-from qa_tool.checks.api.catalog import manual_pairs
+from qa_tool.checks.api.catalog import CATALOG, manual_pairs
 from qa_tool.checks.api.compare import Tolerances, compare_pairs
-from qa_tool.checks.api.library import LibraryPairs, load_library, resolve, save
+from qa_tool.checks.api.library import LibraryPairs, load_library, model_dir, resolve, save
 from qa_tool.checks.api.limits import bad_thresholds, limit, timeout_s
 from qa_tool.checks.api.onvif_state import State0, read_state0
 from qa_tool.checks.api.restore import Send
@@ -42,6 +43,7 @@ from qa_tool.core.checks import (
     ChildResult,
     Evidence,
     Phase,
+    Severity,
     Status,
 )
 from qa_tool.core.secrets import redact
@@ -69,6 +71,7 @@ from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClien
 from qa_tool.drivers.camera.traffic import from_traffic
 
 CHECK_ID = "API-MAP-1"
+SUMMARY_FILE = "summary.json"
 NOT_FOUND = "родной API не найден — нет сборщика для бренда и трафика веб-обхода"
 EXCHANGES_LIMIT = 1 << 20
 # имя родного API в строках протокола по сборщику
@@ -264,7 +267,15 @@ class Discovery:
                 f"(запросов {len(traffic['запросы'])})"
             )
         notes = [n for n in (why, native.cut_reason) if n]
-        evidence = []
+        entries = traffic["запросы"]
+        summary = {
+            "api": "не читается напрямую" + (f": {why}" if why else ""),
+            "источник": f"трафик веб-обхода этого прогона: запросов {len(entries)}",
+            "разделы": f"{len(native.sections)}; ошибок и остановленных — {len(native.errors)}",
+            "параметры": str(native.param_count()),
+            "карта": f"данные — evidence/{ctx.camera.slot}/{CHECK_ID}/{MAP_FILE}",
+        }
+        evidence = [Evidence(SUMMARY_FILE, json.dumps(summary, ensure_ascii=False, indent=1))]
         try:
             evidence.append(Evidence(MAP_FILE, dumps_map(native)))
         except MapFormatError as error:
@@ -332,7 +343,10 @@ class Discovery:
         if root:
             table = PairTable(native.maker, native.model, native.firmware, found.pairs)
             notes += save(Path(root), native, table)
-        evidence = list(found.evidence)
+        summary = _summary_facts(
+            ctx, native, label, pairs, manual.pairs, library, found, children, root
+        )
+        evidence = [*found.evidence, Evidence(SUMMARY_FILE, summary)]
         if found.pairs:
             table = PairTable(native.maker, native.model, native.firmware, found.pairs)
             evidence.append(Evidence(PAIRS_FILE, dumps_pairs(table)))
@@ -348,15 +362,81 @@ class Discovery:
         )
         if notes:
             actual += "; " + "; ".join(notes)
-        return CheckResult(
+        head = CheckResult(
             Status.PASSED,
             expected="родной API читается, карта снята; одна настройка в родном API и ONVIF "
             "читается одинаково",
             actual=actual,
             evidence=evidence,
-            children=children,
             data={"native_sections": len(native.sections), "native_params": native.param_count()},
         )
+        # Карта — своей строкой: у составной проверки в протокол идут только дочерние строки
+        # (RunStore.add_result), и без неё пропали бы итог API-MAP-1, api-map.json и обмен.
+        head_row = ChildResult(CHECK_ID, "Карта родного API", head, severity=Severity.MINOR)
+        return replace(head, children=[head_row, *children])
+
+
+def _summary_facts(
+    ctx: CheckContext,
+    native: NativeMap,
+    label: str,
+    pairs: list,
+    manual: tuple,
+    library: LibraryPairs,
+    found: SearchReport,
+    children: list[ChildResult],
+    root: str | None,
+) -> str:
+    """`summary.json` — сводка приложения «API камеры» словами (T17)."""
+    passport = _passport(ctx)
+    maker = str(passport.get("manufacturer", ""))
+    vendor = ctx.camera.vendor
+    brand = f"по паспорту ONVIF — {maker or 'не сообщён'}; на экране «Камеры» — {vendor}"
+    if maker and vendor not in ("generic", "") and vendor.lower() not in maker.lower():
+        brand += " — проверьте производителя на экране «Камеры»"
+    params = list(native.params().values())
+    statuses = [
+        c.result.status.value for c in children if c.check_id.startswith(("API-MATCH", "API-RANGE"))
+    ]
+    by_source = {
+        "ручная таблица программы": len(manual),
+        "подтверждено вручную (confirmed.json)": len(library.confirmed),
+        "прошлые прогоны": len(library.past),
+        "другая прошивка": len(library.other_firmware),
+        "найдено в этом прогоне": len(found.pairs),
+    }
+    paired = {p.n for p in pairs}
+    missing = [e.title for e in CATALOG if e.writes and e.n not in paired]
+    search = next((c for c in found.rows if c.check_id == "API-SEARCH-1"), None)
+    data = {
+        "api": f"{label} · сборщик {native.collector}",
+        "бренд": brand,
+        "вход": native.login or "Digest MD5, логин ONVIF с экрана «Камеры»",
+        "модель": f"{native.model} · {native.firmware}",
+        "источник": f"самоописание API ({label})",
+        "разделы": f"{len(native.sections)}; не ответили — {len(native.errors)}",
+        "параметры": (
+            f"{len(params)}: со значениями — {sum(p.value is not None for p in params)}, "
+            f"с допустимыми значениями — {sum(bool(p.allowed) for p in params)}"
+            + (f"; карта обрезана: {native.cut_reason}" if native.cut_reason else "")
+        ),
+        "пары": f"всего {len(pairs)}: "
+        + ", ".join(f"{k} — {v}" for k, v in by_source.items() if v),
+        "сверка": ", ".join(f"{s} — {statuses.count(s)}" for s in dict.fromkeys(statuses))
+        or "пар для сверки нет",
+        "автопоиск": (search.result.actual or search.result.reason)
+        if search
+        else "не запускался: изменяющие проверки запрещены сценарием",
+        "библиотека": (
+            f"{model_dir(Path(root), native.brand, native.model)}"
+            + ("; " + "; ".join(library.problems) if library.problems else "")
+        )
+        if root
+        else "не задана",
+        "карта": f"данные — evidence/{ctx.camera.slot}/{CHECK_ID}/{MAP_FILE}",
+        "без пары": ", ".join(missing),
+    }
+    return json.dumps(data, ensure_ascii=False, indent=1)
 
 
 @REGISTRY.check(

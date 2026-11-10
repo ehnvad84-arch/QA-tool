@@ -384,6 +384,7 @@ class Search:
         self.sleep, self.clock, self.progress = sleep, clock, progress
         self.restorer = restorer
         self.out = Outcome()
+        self._facts: dict[str, Any] = {}  # записи и сдвиги текущей настройки для `search.json`
 
     # --- снимки и сдвиги --------------------------------------------------------------------
 
@@ -432,6 +433,7 @@ class Search:
         if isinstance(values, str):
             return f"пропущена: {values}", None, m_prev
         v0, (v1, v2) = knob.current(), values
+        self._facts["записи"] = [str(v0), str(v1)]
         before = knob.leaves()
         self.note(entry, str(v0), str(v1), "intent", knob.journal())
         accepted, back1 = knob.write(v1)
@@ -444,6 +446,7 @@ class Search:
             lower = knob.below(held[0]) if held else None
             if lower is not None:
                 v1 = lower
+                self._facts["записи"] = [str(v0), str(v1)]
                 self.note(entry, str(v0), str(v1), "intent", knob.journal())
                 accepted, back1 = knob.write(v1)
                 self.note(entry, str(v0), str(v1), "sent", knob.journal())
@@ -463,17 +466,22 @@ class Search:
             delta1 = diff(m_prev, m1, self.volatile)
             if not delta1:
                 return "не найдена: родной параметр не сдвинулся", None, m1
+        self._facts["Δ1"] = delta1
         effect = self._side_effect(knob, delta1, before, after, m1)
         if effect is not None:
             self.out.stop = effect
+            self._facts["effect"] = effect
             return "остановлен: побочный эффект записи", None, m1
+        self._facts["записи"].append(str(v2))
         accepted, back2 = knob.write(v2)
         self.note(entry, str(v0), str(v2), "sent", knob.journal())
         m2 = self._shot()
         delta2 = diff(m1, m2, self.volatile)
+        self._facts["Δ2"] = delta2
         effect = self._side_effect(knob, delta2, after, knob.leaves(), m2)
         if effect is not None:
             self.out.stop = effect
+            self._facts["effect"] = effect
             return "остановлен: побочный эффект записи", None, m2
         self._mode_pair(knob, before, after, delta1, delta2)
         return self._decide(knob, (v0, v1, v2), (back1, back2), delta1, delta2, m2)
@@ -597,6 +605,7 @@ class Search:
                 break
             self.progress(f"автопоиск: {entry.title}")
             self.out.tried += 1
+            self._facts = {}
             try:
                 verdict, pair, _last = self._try(knob, self.m0)
             except Exception:
@@ -607,7 +616,14 @@ class Search:
                 raise
             self.note(entry, str(knob.current()), str(knob.current()), "restoring", knob.journal())
             left, native_left = self._put_back(knob)
-            self.out.trace.append({"n": entry.n, "настройка": entry.title, "итог": verdict})
+            self.out.trace.append(
+                {
+                    "n": entry.n,
+                    "настройка": entry.title,
+                    "итог": verdict,
+                    **self._trace_facts(left, native_left),
+                }
+            )
             if pair is not None:
                 self.out.pairs.append(pair)
             if left or native_left:
@@ -637,11 +653,48 @@ class Search:
         self.out.attempts = attempts
         if not any(a.sent for a in attempts):
             return left, native_left
+        self._facts["родной"] = True
         # у пары вроде GainLevel ↔ MaxGain ONVIF возвращается следом: только перечитать —
         # повторная запись снимка по ONVIF сбила бы то, что вернул родной API
         self.sleep(self.limits.apply_delay_s)
         left = knob.verify()
         return left, diff(self.m0, self.snapshot(), self.volatile)
+
+    def _trace_facts(
+        self, left: list[tuple[str, str, str]], native_left: list[Change]
+    ) -> dict[str, Any]:
+        """Записи, сдвиги по шагам и возврат одной настройки для `search.json` и приложения."""
+        delta1 = self._facts.get("Δ1", [])
+        delta2 = {c.id: c.after for c in self._facts.get("Δ2", [])}
+        effect: SideEffect | None = self._facts.get("effect")
+        outside = set(effect.outside) if effect else set()
+        moved: dict[str, dict[str, Any]] = {}
+        for change in delta1:
+            key = without_indexes(change.id)
+            item = moved.setdefault(key, {"id": change.id, "копий": 0, "вне раздела": False})
+            item["копий"] += 1
+            item["значения"] = [change.before, change.after] + (
+                [delta2[change.id]] if change.id in delta2 else []
+            )
+            item["вне раздела"] |= change.id in outside
+            if item["копий"] > 1:
+                item["id"] = key
+        leaves = effect.onvif if effect else []
+        onvif = [{"лист": k, "было": was, "стало": now} for k, was, now in leaves]
+        if left or native_left:
+            stuck = [f"ONVIF {name}: было {was}, осталось {now}" for name, was, now in left]
+            stuck += [f"{c.id}: было {c.before}, осталось {c.after}" for c in native_left]
+            back = "не вернулось — блокер: " + "; ".join(stuck)
+        elif self._facts.get("родной"):
+            back = "вернулось после возврата родным API"
+        else:
+            back = "возвращено, карта совпала"
+        return {
+            "записи": self._facts.get("записи", []),
+            "сдвинулось": list(moved.values()),
+            "onvif": onvif,
+            "возврат": back,
+        }
 
     def trace_json(self) -> str:
         """`search.json`: трасса по настройкам и найденное."""
