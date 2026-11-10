@@ -172,3 +172,17 @@ def test_self_signed_certificate_is_accepted(tmp_path):
         assert camera.url.startswith("https://")
         with BrowserSession(camera.url) as session:
             assert session.open(camera.url + "/").status == 200
+
+
+def test_login_stopped_by_taboo_is_not_a_refusal():
+    # Hikvision .112 (06.11 и 10.11): страница входа спрашивает GET /SDK/activateStatus — табу
+    # его останавливает, пароль до камеры не доходит
+    page = "<input type=password><button onclick=\"fetch('/SDK/activateStatus')\">Войти</button>"
+    ctx = context()
+    ctx.thresholds["web.login_timeout_s"] = Threshold(1.0, "с", "тест")
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        result = login(ctx, session, camera.url + "/")
+    assert result.entry is Entry.STOPPED and not result.walk_allowed
+    assert "/SDK/activateStatus" in result.reason
+    assert refused_password(ctx) == ""  # отказа не было — вход для других проверок открыт
+    assert camera.arrived == [("GET", "/")]

@@ -7,6 +7,7 @@
 import time
 from dataclasses import dataclass
 from enum import Enum
+from urllib.parse import urlsplit
 
 from qa_tool.checks.rtsp_refusal import refused_password, remember_web_refusal
 from qa_tool.checks.web.limits import limit
@@ -37,6 +38,7 @@ class Entry(Enum):
     REFUSED = "пароль не принят"
     CHANGE_REQUIRED = "камера просит сменить пароль"
     SESSIONS_FULL = "заняты все подключения"
+    STOPPED = "вход остановлен программой"
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,7 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
         return LoginResult(Entry.REFUSED, "на странице входа нет кнопки входа: попытки не было")
     password_field = next(item for item in items if item.kind == "password")
     name_field = _name_field(items)
+    stopped_before = len(session.stopped)
     with session.login_window(ctx.camera.username, ctx.password):
         if name_field is not None:
             session.set_field(name_field, ctx.camera.username)
@@ -177,6 +180,15 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
             if outcome is not None:
                 return outcome
             session.wait(POLL_MS)
+    stopped = session.stopped[stopped_before:]
+    if stopped:
+        # Табу остановило запрос страницы во время входа (Hikvision .112 — GET
+        # /SDK/activateStatus, 06.11 и 10.11): пароль до камеры не дошёл, отказа нет.
+        # Решение директора 06.11 — «ошибка стенда» с причиной; признак отказа не ставится,
+        # иначе он выключал вход для «API камеры», «Картинки» и «Кодеков».
+        first = stopped[0]
+        path = urlsplit(first.url).path
+        return LoginResult(Entry.STOPPED, f"табу остановило запрос входа {first.method} {path}")
     return _refused(ctx, "форма входа осталась на экране")
 
 
