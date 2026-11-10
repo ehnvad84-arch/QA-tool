@@ -250,6 +250,7 @@ def run_search(
     def snapshot() -> NativeMap:
         return reader(observed).read(NativeMap(brand=m0.brand, collector=m0.collector))
 
+    ctx.progress("Автопоиск · исходная карта, 2 снимка")
     m0a = snapshot()
     sleep(limit(ctx, "api.baseline_gap_s").value)
     m0b = snapshot()

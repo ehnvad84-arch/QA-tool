@@ -217,7 +217,8 @@ def _range(side: dict, low: str = "мин", high: str = "макс") -> str:
 def _source(raw: dict) -> tuple[str, bool]:
     """«Откуда пара» и пометка «другая прошивка»."""
     source = _text(raw.get("источник"))
-    other = bool(raw.get("другая прошивка"))
+    # пометку ставит библиотека: «(найдено на прошивке V5.7.1)» к источнику пары
+    other = "найдено на прошивке" in source
     return source, other
 
 

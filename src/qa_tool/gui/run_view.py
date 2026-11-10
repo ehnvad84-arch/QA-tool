@@ -63,10 +63,11 @@ class Step:
         if not self.parts:
             return self.title
         forms = ("тест", "теста", "тестов")
-        if self.check_id.startswith("API-"):
-            forms = ("операция", "операции", "операций")
-        elif self.check_id.startswith(("STREAM-", "WEB-", "IMAGE-", "CODEC-")):
+        # API-MAP — строки карты и сверки, а не операции API «Рувер»: проверяется раньше «API-»
+        if self.check_id.startswith(("STREAM-", "WEB-", "IMAGE-", "CODEC-", "API-MAP")):
             forms = ("строка", "строки", "строк")
+        elif self.check_id.startswith("API-"):
+            forms = ("операция", "операции", "операций")
         return f"{self.title}: {plural(len(self.parts), *forms)}"
 
 

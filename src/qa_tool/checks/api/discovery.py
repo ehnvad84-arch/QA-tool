@@ -219,7 +219,7 @@ class Discovery:
         why = getattr(collector, "why", "")
         if why:
             return self._traffic_map(passport, why)
-        ctx.progress(f"карта родного API: {collector.name}")
+        ctx.progress(f"Карта API · {collector.name}")
         meta = _meta(ctx, collector, passport)
         with ExitStack() as stack:
             try:
@@ -248,7 +248,7 @@ class Discovery:
             if why:
                 return CheckResult.skipped(f"{why}; трафика веб-обхода нет: {tail}")
             return CheckResult.skipped(f"{NOT_FOUND}: {tail}")
-        ctx.progress(f"карта API по трафику веб-обхода: запросов {len(traffic['запросы'])}")
+        ctx.progress(f"Карта API · трафик веб-обхода · запросов {len(traffic['запросы'])}")
         meta = NativeMap(
             brand=str(passport.get("manufacturer", "")).lower()[:64],
             collector="трафик",
@@ -313,7 +313,7 @@ class Discovery:
     def _result(self, collector: Collector, native: NativeMap, note: str) -> CheckResult:
         """Строка API-MAP-1, строки сверки, доказательства."""
         ctx = self.ctx
-        ctx.progress("сверка с ONVIF")
+        ctx.progress("Сверка с ONVIF")
         state = self.state0()
         manual = manual_pairs(collector.brand, native.model, native.firmware)
         root = self.ctx.extra.get(LIBRARY_KEY)

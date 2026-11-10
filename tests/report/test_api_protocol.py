@@ -162,3 +162,12 @@ def test_describe_lists_and_ranges():
     many = {"тип": "перечисление", "допустимые": {"значения": [str(i) for i in range(18)]}}
     assert describe(many) == "список: 0, 1, 2, …, 17, (18 значений)"
     assert describe({"тип": "строка", "допустимые": None}) == "строка; не объявлены"
+
+
+def test_pair_from_other_firmware_is_marked():
+    from qa_tool.report.api_map import _source
+
+    assert _source({"источник": "найдено автоматически, прогон QA-1 (найдено на прошивке V5.7.1)"})[
+        1
+    ]
+    assert not _source({"источник": "подтверждено вручную: ОТК"})[1]

@@ -436,6 +436,7 @@ class Search:
         self._facts["записи"] = [str(v0), str(v1)]
         before = knob.leaves()
         self.note(entry, str(v0), str(v1), "intent", knob.journal())
+        self.progress(f"Автопоиск · {entry.title} · ONVIF {v0} → {v1}")
         accepted, back1 = knob.write(v1)
         self.note(entry, str(v0), str(v1), "sent", knob.journal())
         if not accepted:
@@ -473,6 +474,7 @@ class Search:
             self._facts["effect"] = effect
             return "остановлен: побочный эффект записи", None, m1
         self._facts["записи"].append(str(v2))
+        self.progress(f"Автопоиск · {entry.title} · ONVIF {v1} → {v2} · подтверждение")
         accepted, back2 = knob.write(v2)
         self.note(entry, str(v0), str(v2), "sent", knob.journal())
         m2 = self._shot()
@@ -603,7 +605,7 @@ class Search:
                         {"n": rest.entry.n, "итог": "не пробовали: не уложились в срок автопоиска"}
                     )
                 break
-            self.progress(f"автопоиск: {entry.title}")
+            self.progress(f"Автопоиск · {entry.title} · настройка {index + 1} из {len(self.knobs)}")
             self.out.tried += 1
             self._facts = {}
             try:
@@ -644,11 +646,13 @@ class Search:
 
     def _put_back(self, knob: Knob) -> tuple[list[tuple[str, str, str]], list[Change]]:
         """Возврат по ONVIF, затем родным API того, что ONVIF не вернул (S5), и сверка с M0."""
+        self.progress(f"Автопоиск · {knob.entry.title} · возврат и сверка карты")
         left = knob.restore()
         m3 = self.snapshot()
         native_left = diff(self.m0, m3, self.volatile)
         if not native_left or self.restorer is None:
             return left, native_left
+        self.progress(f"Автопоиск · {knob.entry.title} · возврат родным API")
         attempts = self.restorer(native_left, m3)
         self.out.attempts = attempts
         if not any(a.sent for a in attempts):

@@ -270,3 +270,15 @@ def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):
     assert "0, 50 и 100 %" in protocols.docs_table.item(1, 0).toolTip()
     protocols.docs_table.selectRow(1)
     assert protocols.open_selected("html") == run_dir / f"{IMAGE_COMPARE}.html"
+
+
+def test_api_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):
+    window = make_window(qtbot, tmp_path, fleet[:1])
+    scenario = screen(window, ScenarioScreen)
+    window.menu.setCurrentRow(2)
+    note = scenario.writes_note
+    assert any(
+        line.startswith("Без этой галочки «API камеры»") for line in note.text().splitlines()
+    )
+    scenario.allow_writes.setChecked(True)
+    assert any(line.startswith("«API камеры» будет менять") for line in note.text().splitlines())
