@@ -308,3 +308,32 @@ def ruver_fetch(client: RuverClient, collector: RuverCollector) -> Callable[[str
         return client.call(op)
 
     return fetch
+
+
+def ruver_send(client: RuverClient, collector: RuverCollector) -> Callable[[NativeWrite], int]:
+    """Отправка возврата S5 через сеанс «Рувер»: только операция записи карты из `restore_request`.
+
+    Raises (из возвращённой функции):
+        NotSent: такой операции записи в карте нет или тело не объект JSON.
+        CallRefused: нет галочки «изменяющие» (отказывает `RuverClient`).
+        LoginRejected, LoginFailed, NoFreeSession, TransportError: как у `RuverClient.call`.
+    """
+
+    def send(write: NativeWrite) -> int:
+        op = next(
+            (
+                op
+                for op in collector.api.operations
+                if op.kind in (WRITE, RETURN_ONLY)
+                and op.method == write.method
+                and op.path == write.path
+                and _query(op) == write.query
+            ),
+            None,
+        )
+        body = json.loads(write.body or "{}")
+        if op is None or not isinstance(body, dict):
+            raise NotSent(f"{write.method} {write.path}: операции записи нет в карте «Рувер»")
+        return client.call(op, body=body).status_code
+
+    return send

@@ -586,7 +586,9 @@ def side_effect_like_111(
     with_max_gain(api.state)
 
     def hook(state: OnvifState, names: set[str]) -> None:
-        if trigger in names:
+        # явная запись MaxGain (возврат полным блоком) побеждает сдвиг; камеру, где не
+        # побеждает, моделирует imaging_sticky
+        if trigger in names and "MaxGain" not in names:
             state.imaging_xml = _set_leaf(state.imaging_xml, "Exposure/MaxGain", gain_after)
 
     api.state.imaging_hooks.append(hook)
@@ -601,6 +603,10 @@ def bitrate_edge_like_108(state: OnvifState, cap_kbps: int = 1792) -> None:
     """Dahua .108: объявлено 512…5632 кбит/с, а при H.264 камера держит не больше `cap_kbps`."""
     state.encoder_kbps_range = (512, 5632)
     state.encoder_kbps_cap["H264"] = cap_kbps
+    # стартовый битрейт выше потолка камера держать не может: иначе возврат «не вернёт» его
+    for stream in state.streams or (MockStream(state.profile_token),):
+        now = state.encoder_now.setdefault(stream.token, {})
+        now["kbps"] = min(now.get("kbps", stream.kbps), cap_kbps)
 
 
 def _set_leaf(imaging_xml: str, path: str, text: str) -> str:

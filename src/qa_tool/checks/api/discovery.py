@@ -10,15 +10,30 @@
 """
 
 import datetime
+from contextlib import ExitStack
+from dataclasses import replace
+from pathlib import Path
 
 from qa_tool.checks.api.catalog import manual_pairs
 from qa_tool.checks.api.compare import Tolerances, compare_pairs
+from qa_tool.checks.api.library import LibraryPairs, load_library, resolve, save
 from qa_tool.checks.api.limits import bad_thresholds, limit, timeout_s
 from qa_tool.checks.api.onvif_state import State0, read_state0
+from qa_tool.checks.api.restore import Send
+from qa_tool.checks.api.search_run import SearchReport, run_search
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.checks.onvif.stream import first_stream
 from qa_tool.checks.rtsp_refusal import refused_password, remember_native_refusal
-from qa_tool.core.api_map import MAP_FILE, MapFormatError, NativeMap, dumps_map
+from qa_tool.core.api_map import (
+    LIBRARY_KEY,
+    MAP_FILE,
+    PAIRS_FILE,
+    MapFormatError,
+    NativeMap,
+    PairTable,
+    dumps_map,
+    dumps_pairs,
+)
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -32,11 +47,13 @@ from qa_tool.core.secrets import redact
 from qa_tool.core.write_journal import RUN_ID_KEY
 from qa_tool.drivers.camera.collectors import all_collectors
 from qa_tool.drivers.camera.digest import LoginUnsupported
-from qa_tool.drivers.camera.http import HttpLogin, LoginRefused, TransportError
+from qa_tool.drivers.camera.http import HttpLogin, LoginRefused, TransportError, request
 from qa_tool.drivers.camera.native import (
+    MAX_RESPONSE_BYTES,
     Collector,
     NativeReader,
     NativeUnreachable,
+    NativeWrite,
     choose_collector,
 )
 from qa_tool.drivers.camera.onvif_generic import service_urls
@@ -46,7 +63,7 @@ from qa_tool.drivers.camera.ruver.client import (
     NoFreeSession,
     RuverClient,
 )
-from qa_tool.drivers.camera.ruver.collector import ruver_fetch
+from qa_tool.drivers.camera.ruver.collector import ruver_fetch, ruver_send
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
 CHECK_ID = "API-MAP-1"
@@ -54,6 +71,15 @@ NOT_FOUND = "родной API не найден — нет сборщика дл
 EXCHANGES_LIMIT = 1 << 20
 # имя родного API в строках протокола по сборщику
 LABELS = {"ISAPI": "ISAPI", "CGI": "CGI", "OpenAPI": "API «Рувер»"}
+ACCESS_ERRORS = (
+    LoginRefused,
+    LoginRejected,
+    LoginUnsupported,
+    LoginFailed,
+    NoFreeSession,
+    NativeUnreachable,
+    TransportError,
+)
 
 
 def _passport(ctx: CheckContext) -> dict:
@@ -93,24 +119,25 @@ class Discovery:
         """Подготовить проход по контексту камеры."""
         self.ctx = ctx
         self.reader: NativeReader | None = None
+        self.access: dict = {}
+        self.send: Send | None = None
 
-    def _reader(self, collector: Collector, **kwargs) -> NativeReader:
+    def _reader(self, collector: Collector) -> NativeReader:
+        """Новый читатель с общим для прохода входом (`HttpLogin` или сеанс «Рувер»)."""
         ctx = self.ctx
-        self.reader = NativeReader(
+        return NativeReader(
             ctx.camera,
             collector,
             timeout_s=limit(ctx, "api.request_timeout_s").value,
             budget_s=limit(ctx, "api.map_budget_s").value,
-            **kwargs,
+            **self.access,
         )
-        return self.reader
 
-    def read_map(self, collector: Collector, meta: NativeMap) -> NativeMap:
-        """Снять карту сборщиком своим способом входа.
+    def open(self, collector: Collector, stack: ExitStack, meta: NativeMap) -> None:
+        """Вход в родной API на весь проход: карта и снимки автопоиска идут одним входом.
 
         Raises:
-            LoginRefused, LoginUnsupported, LoginRejected, LoginFailed, NoFreeSession,
-            NativeUnreachable, TransportError: см. `run`.
+            LoginRejected, LoginFailed, NoFreeSession, TransportError: сеанс «Рувер» не открыт.
         """
         ctx = self.ctx
         if collector.login == "session":
@@ -119,20 +146,45 @@ class Discovery:
                 ctx.camera.port,
                 ctx.camera.username,
                 ctx.password,
+                # запись — только возврат S5 (`ruver_send`); чтение карты идёт только операциями
+                # чтения (`ruver_fetch`), галочка его не расширяет
+                allow_writes=ctx.allow_writes,
                 timeout=limit(ctx, "api.request_timeout_s").value,
             )
-            with client:
-                meta.login = "сеанс «Рувер»"
-                return self._reader(
-                    collector, login=None, fetch=ruver_fetch(client, collector)
-                ).read(meta)
+            stack.enter_context(client)
+            meta.login = "сеанс «Рувер»"
+            self.access = {"login": None, "fetch": ruver_fetch(client, collector)}
+            self.send = ruver_send(client, collector)
+            return
         login = HttpLogin(
             ctx.camera.username,
             ctx.password,
             already_refused=refused_password(ctx),
             on_refused=lambda reason: remember_native_refusal(ctx, reason),
         )
-        return self._reader(collector, login=login).read(meta)
+        self.access = {"login": login}
+        self.send = self._http_send(login)
+
+    def _http_send(self, login: HttpLogin) -> Send:
+        """Отправка возврата S5 тем же входом Digest; табу и слова-признаки — в `http.request`."""
+        ctx = self.ctx
+
+        def send(write: NativeWrite) -> int:
+            query = f"?{write.query}" if write.query else ""
+            url = f"http://{ctx.camera.address}:{ctx.camera.port}{write.path}{query}"
+            headers = {"Content-Type": "application/xml"} if write.body.startswith("<") else {}
+            response = request(
+                write.method,
+                url,
+                content=write.body,
+                headers=headers,
+                timeout=limit(ctx, "api.request_timeout_s").value,
+                login=login,
+                max_bytes=MAX_RESPONSE_BYTES,
+            )
+            return response.status_code
+
+        return send
 
     def state0(self) -> State0:
         """ONVIF до записи; не прочиталось — листы без значений, сверка их пропустит."""
@@ -146,7 +198,7 @@ class Discovery:
         return read_state0(soap, services, source)
 
     def run(self) -> CheckResult:
-        """Пройти карту и сверку; вернуть составной результат."""
+        """Пройти карту, автопоиск (с галочкой) и сверку; вернуть составной результат."""
         ctx = self.ctx
         refused = refused_password(ctx)
         if refused:
@@ -164,25 +216,34 @@ class Discovery:
             return CheckResult.skipped(f"{why}; трафика веб-обхода нет")
         ctx.progress(f"карта родного API: {collector.name}")
         meta = _meta(ctx, collector, passport)
-        try:
-            native = self.read_map(collector, meta)
-        except (LoginRefused, LoginRejected) as error:
-            if isinstance(error, LoginRejected):
-                remember_native_refusal(ctx, str(error))
+        with ExitStack() as stack:
+            try:
+                self.open(collector, stack, meta)
+                self.reader = self._reader(collector)
+                native = self.reader.read(meta)
+                if not any(s.code == 200 for s in native.sections):
+                    return CheckResult.skipped(
+                        f"{NOT_FOUND} (сборщик {collector.name}: разделов нет)"
+                    )
+                return self._result(collector, native, choice.note)
+            except ACCESS_ERRORS as error:
+                return self._access_failed(error)
+
+    def _access_failed(self, error: Exception) -> CheckResult:
+        """Строка при отказе входа, неподдержанном входе или пропаже камеры (S8)."""
+        if isinstance(error, LoginRejected):
+            remember_native_refusal(self.ctx, str(error))
+        if isinstance(error, LoginRefused | LoginRejected):
             return CheckResult.stand_error(f"вход в родной API отвергнут: {error}")
-        except LoginUnsupported as error:
+        if isinstance(error, LoginUnsupported):
             if "Basic" in str(error):
                 return CheckResult.skipped(f"пароль ушёл бы открытым текстом: {error}")
             return CheckResult.stand_error(f"способ входа не поддержан: {error}")
-        except (LoginFailed, NoFreeSession) as error:
+        if isinstance(error, LoginFailed | NoFreeSession):
             return CheckResult.stand_error(f"вход в родной API не удался: {error}")
-        except NativeUnreachable as error:
+        if isinstance(error, NativeUnreachable):
             return CheckResult.stand_error(f"камера пропала во время чтения карты: {error}")
-        except TransportError as error:
-            return CheckResult.stand_error(f"камера не ответила на вход: {type(error).__name__}")
-        if not any(s.code == 200 for s in native.sections):
-            return CheckResult.skipped(f"{NOT_FOUND} (сборщик {collector.name}: разделов нет)")
-        return self._result(collector, native, choice.note)
+        return CheckResult.stand_error(f"камера не ответила: {type(error).__name__}")
 
     def _result(self, collector: Collector, native: NativeMap, note: str) -> CheckResult:
         """Строка API-MAP-1, строки сверки, доказательства."""
@@ -190,15 +251,37 @@ class Discovery:
         ctx.progress("сверка с ONVIF")
         state = self.state0()
         manual = manual_pairs(collector.brand, native.model, native.firmware)
+        root = self.ctx.extra.get(LIBRARY_KEY)
+        library = (
+            load_library(Path(root), collector.brand, native.model, native.firmware)
+            if root
+            else LibraryPairs()
+        )
+        label = LABELS.get(collector.name, collector.name)
+        found = SearchReport()
+        if ctx.allow_writes:
+            known = {p.n for p in resolve([], list(manual.pairs), library)}
+            found = run_search(ctx, collector, native, self._reader, known, label, self.send)
+        pairs = resolve(found.pairs, list(manual.pairs), library)
+        for n, (held, held_note) in found.held.items():
+            if n in state.sides:
+                state.sides[n] = replace(state.sides[n], held=held, held_note=held_note)
         tol = Tolerances(
             limit(ctx, "api.compare_tol_pct").value, limit(ctx, "api.range_tol_pct").value
         )
-        label = LABELS.get(collector.name, collector.name)
-        children: list[ChildResult] = compare_pairs(
-            native, state.sides, list(manual.pairs), tol, label
-        )
+        children: list[ChildResult] = [
+            *found.rows,
+            *compare_pairs(native, state.sides, pairs, tol, label),
+        ]
         notes = [n for n in (note, native.cut_reason, manual.problem, *state.problems) if n]
-        evidence = []
+        notes += library.problems
+        if root:
+            table = PairTable(native.maker, native.model, native.firmware, found.pairs)
+            notes += save(Path(root), native, table)
+        evidence = list(found.evidence)
+        if found.pairs:
+            table = PairTable(native.maker, native.model, native.firmware, found.pairs)
+            evidence.append(Evidence(PAIRS_FILE, dumps_pairs(table)))
         try:
             evidence.append(Evidence(MAP_FILE, dumps_map(native)))
         except MapFormatError as error:
@@ -236,6 +319,14 @@ class Discovery:
     writes=False,
     timeout_s=timeout_s(),
     help_id="api-map",
+    read_only_note=(
+        "Без этой галочки «API камеры» только снимет карту родного API и сверит её с ONVIF "
+        "по найденным раньше и ручным соответствиям: новые соответствия не ищутся."
+    ),
+    writes_note=(
+        "«API камеры» будет менять настройки изображения, битрейт и кодек по ONVIF, чтобы найти "
+        "соответствия с родным API, и возвращать каждую после проверки. Сеть и пароли не меняются."
+    ),
 )
 def api_map(ctx: CheckContext) -> CheckResult:
     """Карта родного API и сверка с ONVIF; составной результат со строками пар."""

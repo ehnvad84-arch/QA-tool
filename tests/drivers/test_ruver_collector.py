@@ -12,9 +12,20 @@ from qa_tool.checks.rtsp_refusal import refused_password, remember_web_refusal
 from qa_tool.core.api_map import NativeMap, Sensitivity
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import RUVER, Camera, Place
-from qa_tool.drivers.camera.native import NativeReader, ParseRefused, ReadTemplate
-from qa_tool.drivers.camera.ruver.client import RuverClient
-from qa_tool.drivers.camera.ruver.collector import RuverCollector, class_of, ruver_fetch
+from qa_tool.drivers.camera.native import (
+    NativeReader,
+    NativeWrite,
+    NotSent,
+    ParseRefused,
+    ReadTemplate,
+)
+from qa_tool.drivers.camera.ruver.client import CallRefused, RuverClient
+from qa_tool.drivers.camera.ruver.collector import (
+    RuverCollector,
+    class_of,
+    ruver_fetch,
+    ruver_send,
+)
 from tests.mock_ruver import MockRuver
 
 load_all()
@@ -117,6 +128,21 @@ def test_restore_brightness_with_map_operation(camera):
         "time_of_day=0",
     )
     assert json.loads(write.body) == {"brightness": 50}
+
+
+def test_send_restore_through_session_only_with_checkbox(camera):
+    m0, _ = read_all(camera)
+    write = COLLECTOR.restore_request(m0.params()[f"{BRIGHTNESS}#/brightness"], m0)
+    args = ("127.0.0.1", camera.port, "admin", camera.password)
+    with RuverClient(*args, timeout=2.0) as client, pytest.raises(CallRefused):
+        ruver_send(client, COLLECTOR)(write)
+    with RuverClient(*args, allow_writes=True, timeout=2.0) as client:
+        send = ruver_send(client, COLLECTOR)
+        assert send(write) == 200
+        # операции нет в карте — запрос не уходит
+        with pytest.raises(NotSent):
+            send(NativeWrite("POST", "/api/network/ip", body="{}"))
+    assert len(camera.sent("POST", "/api/image/brightness")) == 1
 
 
 def test_restore_only_image_settings(camera):

@@ -194,11 +194,13 @@ def test_image_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):
     scenario = screen(window, ScenarioScreen)
     window.menu.setCurrentRow(2)
     note = scenario.writes_note
-    assert note.isVisibleTo(window) and note.text().startswith("Без этой галочки «Картинка»")
+    lines = note.text().splitlines()
+    assert note.isVisibleTo(window)
+    assert any(line.startswith("Без этой галочки «Картинка»") for line in lines)
     assert note.property(HELP_ID) == "scenario-permissions" and note.toolTip()
     assert "«Картинка» снимает текущий кадр" in scenario.allow_writes.toolTip()
     scenario.allow_writes.setChecked(True)
-    assert note.text().startswith("«Картинка» будет менять")
+    assert any(line.startswith("«Картинка» будет менять") for line in note.text().splitlines())
     item = next(
         i
         for i in scenario._check_items()

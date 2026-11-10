@@ -30,6 +30,9 @@ PAIRS_FORMAT = "qa-tool/api-pairs"
 VERSION = 1
 MAP_FILE = "api-map.json"
 PAIRS_FILE = "api-pairs.json"
+# библиотека карт и пар рядом с папками прогонов; путь проверкам передаёт планировщик
+LIBRARY_KEY = "api_library_dir"
+LIBRARY_DIR = "api-library"
 
 # Пределы защиты от враждебного ввода (раздел «Безопасность» спеки): это не допуски проверки,
 # поэтому константы кода, а не thresholds.yaml.

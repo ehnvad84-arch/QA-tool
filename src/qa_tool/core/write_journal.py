@@ -220,4 +220,15 @@ CODEC = Journal(
     ),
     "служба",
 )
-JOURNALS = (WEB, IMAGE, CODEC)  # планировщик ищет строки «блокер» в каждом
+API = Journal(
+    "pending-api",
+    "api_journal_dir",
+    _lost_spec(
+        "API-WRITE-LOST",
+        "api",
+        "Запись автопоиска соответствий API не завершена",
+        "по ONVIF при поиске соответствий с родным API",
+    ),
+    "служба",
+)
+JOURNALS = (WEB, IMAGE, CODEC, API)  # планировщик ищет строки «блокер» в каждом

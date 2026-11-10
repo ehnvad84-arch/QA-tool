@@ -502,6 +502,14 @@ class ImagingWriter:
             CameraUnreachable, OnvifFault: нет связи или отказ — возврат не подтверждён.
         """
         self._send(state.element, None, persist=True)
+        return self.verify(state, touched)
+
+    def verify(self, state: ImagingState, touched: list[str]) -> RestoreReport:
+        """Сверить картинку камеры со снимком `state` без записи (после возврата родным API).
+
+        Raises:
+            CameraUnreachable, OnvifFault: нет связи или отказ.
+        """
         now = self.read()
         report = RestoreReport()
         for key in touched:
