@@ -7,13 +7,16 @@
 
 Проверяется то, что ломается именно в сборке: onvif-tt запускается из собранной программы
 (без `python -m`), находит свои схемы и выдаёт строки протокола; свой RTSP-клиент читает поток
-метаданных; карта API «Рувер» лежит в сборке, и проверка API выдаёт строки операций; проверка
+метаданных; карта API «Рувер» лежит в сборке, и проверка API выдаёт строки операций;
+«API камеры» снимает карту виртуальных Hikvision и Dahua, сверяет её по таблице пар из сборки
+и выпускает документ «Карта API»; проверка
 картинки снимает кадры ffmpeg из сборки, пишет настройки Imaging и возвращает их, а протокол PDF
 собирается со снимками; проверка кодеков меняет кодировщик и возвращает его, а VMAF считает
 libvmaf ffmpeg из сборки.
 Код выхода: 0 — сборка годна, 1 — нет.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -92,6 +95,59 @@ def smoke_api(app: list[str]) -> list[str]:
     api_rows = [i for i in rows if i.startswith("API-")]
     print(f"строк API: {len(api_rows)}")
     return [] if len(api_rows) >= MIN_API_ROWS else [f"строк API {len(api_rows)} < {MIN_API_ROWS}"]
+
+
+def smoke_api_map(app: list[str]) -> list[str]:
+    """«API камеры» в сборке на виртуальных Hikvision и Dahua: карта, сверка по таблице пар из
+    сборки (`qa_tool/data/api_pairs`), документ «Карта API» из шаблона сборки; список проблем."""
+    from tests.mock_native import dahua, hikvision
+
+    problems = []
+    for maker, model, api in (
+        ("Hikvision", "DS-2CD2043G2-I", hikvision()),
+        ("Dahua", "IPC-HFW2431S-S-S2", dahua()),
+    ):
+        cam = MockCamera(Passport(maker, model, "1.0", "SN1"), native=api).start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="qa-tool-smoke-api-map-") as tmp:
+                folder = Path(tmp)
+                (folder / "stand.yaml").write_text(stand_yaml([cam]), encoding="utf-8")
+                (folder / "scenario.yaml").write_text(
+                    "checks: [CORE-CONNECT-1, API-MAP-1]\nallow_writes: false\n",
+                    encoding="utf-8",
+                )
+                rows = run_app(app, folder)
+                runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
+                documents = [runs[-1] / f"api_map_1.{ext}" for ext in ("html", "pdf", "xlsx")]
+                missing = [d.name for d in documents if not runs or not d.exists()]
+                found = list(runs[-1].rglob("api-map.json")) if runs else []
+                native = json.loads(found[0].read_text(encoding="utf-8")) if found else {}
+        finally:
+            cam.stop()
+        if rows is None:
+            problems.append(f"API камеры, {maker}: прогон не создал папку результатов")
+            continue
+        head = rows.get("API-MAP-1", ("нет строки", ""))
+        if head[0] != "прошла":
+            problems.append(f"API-MAP-1, {maker}: {head}")
+        failed = [
+            i for i, (status, _) in rows.items() if i.startswith("API-") and status == "не прошла"
+        ]
+        problems += [f"{i}, {maker}: {rows[i]}" for i in failed]
+        problems += [f"«Карта API», {maker}: нет файла {name}" for name in missing]
+        pairs = [i for i in rows if i.startswith(("API-MATCH-", "API-RANGE-"))]
+        # у Hikvision в таблице программы две подтверждённые пары: без них данных сборки нет
+        if maker == "Hikvision" and rows.get("API-MATCH-12", ("",))[0] != "прошла":
+            problems.append(f"API-MATCH-12, {maker}: {rows.get('API-MATCH-12', ('нет строки',))}")
+        sections = native.get("разделы", [])
+        params = sum(len(x.get("параметры", [])) for x in sections)
+        if not sections:
+            problems.append(f"API камеры, {maker}: api-map.json пуст или не записан")
+        print(
+            f"API камеры, {maker}: {head[0]}; разделов {len(sections)}, параметров {params}, "
+            f"строк сверки {len(pairs)}"
+        )
+    return problems
 
 
 def smoke_stream(app: list[str]) -> list[str]:
@@ -258,6 +314,7 @@ def main(app: list[str]) -> int:
         problems.append(f"строк onvif-tt {len(ott_rows)} < {MIN_OTT_ROWS}")
     print(f"строк протокола: {len(rows)}, из них onvif-tt: {len(ott_rows)}")
     problems += smoke_api(app)
+    problems += smoke_api_map(app)
     problems += smoke_stream(app)
     problems += smoke_image(app)
     problems += smoke_codec(app)
