@@ -46,6 +46,7 @@ def main(app: list[str]) -> int:
                 timeout=300,
             )
             print(done.stdout[-3000:], done.stderr[-3000:], sep="\n")
+            # рядом с прогонами лежат папки журналов записи (`pending-web`): прогон — только `QA-*`
             runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
             if not runs:
                 print("ПРОВАЛ: прогон не создал папку результатов")
