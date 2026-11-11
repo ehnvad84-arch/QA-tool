@@ -434,11 +434,17 @@ WEB_APPROVED_READS = frozenset(
 )
 
 
+# Имена параметров-меток против кэша, которые страницы добавляют к адресу. Другое имя — даже
+# с числом (`?reboot=1`, `?factoryReset=1`) — уже не «чтение буквально» (ревью, круг 3, B3).
+WEB_APPROVED_QUERY_NAMES = frozenset({"_", "t", "ts", "timestamp"})
+
+
 def is_web_approved_read(method: str, url: str) -> bool:
     """Разрешённое директором чтение страницы входа: адрес буквально, без фрагмента.
 
-    Параметры допускаются только числовые: страницы добавляют к адресу метку времени против
-    кэша (`?_=1731300000000`), а словом в параметре можно было бы протащить запись.
+    Параметры допускаются только метки времени против кэша (`?_=1731300000000`): имя из
+    `WEB_APPROVED_QUERY_NAMES`, значение из цифр ASCII. Иначе через разрешённый адрес можно было
+    бы протащить действие или запись.
     """
     parts = urlsplit(url)
     if parts.fragment or url.endswith(("?", "#")):
@@ -449,7 +455,10 @@ def is_web_approved_read(method: str, url: str) -> bool:
         pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
     except ValueError:
         return False
-    return all(value.isdigit() for _, value in pairs)
+    return all(
+        name in WEB_APPROVED_QUERY_NAMES and value.isascii() and value.isdigit()
+        for name, value in pairs
+    )
 
 
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:

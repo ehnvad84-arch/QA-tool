@@ -325,3 +325,73 @@ def test_onvif_fault_on_return_is_restore_blocker_and_map_stays(run, tmp_path, m
   - `ValueRejected` кодировщика — `passed`.
   - `ValueRejected` на второй записи — `passed`.
   - `LoginRefused` на записи не глотается — `passed`, итог «ошибка стенда: вход в родной API отвергнут».
+
+## Круг 3 (после 06a8417)
+
+Ревьюер: независимый ревьюер, Claude Opus 5.5 · Контекст: свежий · Дифф: `06a8417..0c0e7e8` без слияний `feature/web`, `feature/image`, `feature/codec-quality` (их ревьюят в своих ветках). Коммиты: bd476cb, 3cdb0c3, d83d823, af6c175, 1cf2e01 · Дата: 2026-11-11 · Круг: третий, только изменённая часть
+
+**Вердикт:** request-changes
+
+B2 закрыт, остаток B1 по формулировкам круга 2 закрыт (W4 остаётся major, как и был). Новый blocker B3: исключение директора 11.11 проверяет только значения параметров, а имена параметров не проверяет. Раннее `return None` в `_judge` пропускает мимо `check_web_danger` запросы, которые до 3cdb0c3 останавливались как опасное действие. Остальные коммиты (CI, `stand_error`, mock) замечаний уровня major и выше не дают.
+
+### Что изменилось
+
+- bd476cb, `checks/api/search.py`: `_returned` ловит `OnvifFault`, `REJECTED` и `NOT_SENT` вокруг `_put_back`. Итог: `out.unchecked` «возврат по ONVIF не подтверждён: …; вернуть вручную: по ONVIF <настройка> = <M0>». Отказ пароля (`credentials_rejected`) пробрасывается. `run` прерывает поиск и при `unchecked`. Добавлены три теста: 503 на возврате картинки после пропажи, `ValueRejected` на возврате кодировщика, Fault отказа пароля на возврате.
+- 3cdb0c3: `WEB_APPROVED_READS` и `is_web_approved_read` в `core/taboo.py:425-452`. В `browser.py:610` проверка стоит рядом с `is_static_asset`, до всех проверок табу. AD-7 и security.md дополнены. Тесты в `test_taboo_browser.py` и `test_browser.py`.
+- d83d823: тесты входа, остановленного табу, переведены на `/SDK/activateDevice`; комментарий в `checks/web/login.py:185-190`.
+- af6c175: `scripts/ci_apt.sh` (замена зеркала `azure.archive.ubuntu.com` → `archive.ubuntu.com`, `Acquire::Retries=5`), два шага в `.github/workflows/ci.yml`.
+- 1cf2e01: `CheckResult.stand_error(reason, evidence=None)`; `_part()` в `tests/mock_rtsp.py` (свой `.part` на процесс и поток); регрессионный тест `test_frame_not_received_is_stand_error_with_evidence`.
+- Вне плана: 3cdb0c3 и d83d823 — по решению директора 11.11, отмечены в AD-7. af6c175 и 1cf2e01 — исправления CI, к фиче напрямую не относятся. `8d7e3c2` (версия 0.6.0) и `0c0e7e8` (progress) — служебные.
+
+### Проверки по заданию
+
+| Вопрос | Итог | Основание |
+|---|---|---|
+| B2 закрыт | да | `search.py:718-728`. Fault и `ValueRejected` на возврате → `unchecked`, `[]`, поиск прерван (`:679-689`), строки карты на месте. `restored` в `search_run.py:328` учитывает `unchecked`, журнал остаётся открытым со `stage='restoring'`. Сценарий круга 2 (503 после `camera_back`) — тест `test_onvif_fault_on_image_return_after_reboot_is_restore_blocker`; кодировщик — `test_encoder_rejects_return_is_restore_blocker`; S8 — `test_password_fault_on_return_is_not_swallowed`. Повторной попытки возврата нет (`returns.count == 1`) |
+| Остаток B1 (круг 2) | закрыт в части B2; W4 открыт | `except Exception: … raise` в `run` (`search.py:658-663`) не менялся: разовый `OnvifFault` на чтении посреди поиска по-прежнему уносит `API-MAP-1`. Уровень прежний — major |
+| Исключение браузера: регистр, `%XX`, `;`, `..`, `//`, хвостовой `/`, fragment, пустой `?`, пустые значения, `;` в query, `&&` | держит | Проверено вызовом `is_web_approved_read` (21 адрес, вне репозитория). Путь сравнивается буквально, без декодирования: `/API/…`, `create%5Fsession`, `create_session;x=1`, `/api/x/../auth/…`, `//api/…`, `…/` → False. `?_=`, `?_`, `?`, `#x`, `?_=1;reset`, `?_=1&&_=2` → False. `POST` → False. Повтор `?_=1&_=2` → True: значения числовые, это допустимо |
+| Исключение браузера: имена параметров | **не держит (B3)** | см. ниже |
+| Раннее `return None` и проверки опасных действий | **обходит (B3)** | `browser.py:610` стоит до `check_web_danger` (`:621`), а `check_web_danger` проверяет и имена параметров (`taboo.py:658-663`) |
+| `http.py` исключение не применяет | да | `grep is_web_approved_read\|WEB_APPROVED_READS src` — только `taboo.py` и `browser.py:47, 610`. `http.py` и `native.py` не менялись |
+| Чужой хост через исключение | нет | `is_camera_url` в `_judge` стоит раньше (`browser.py:608`) |
+| `stand_error(evidence=…)` | исправлено | Все вызовы с `evidence=` — `image/engine.py:197, 206, 648`, `codec/engine.py:244` — теперь проходят. Доказательства — `soap_evidence` (секреты вырезает `RunStore`) и `rtsp.txt` из `exchanges` без учётных данных (`rtsp.py:130`). Регрессионный тест на «кадр не получен» есть; на «журнал прошлого прогона не разобран» и на кодеки — нет (minor m17) |
+| `scripts/ci_apt.sh` | да | `set -euo pipefail` и `[ -f "$f" ] && sudo sed …` в цикле: несуществующий файл (в том числе неразвёрнутый glob `sources.list.d/*`) прогон не роняет, это проверено в bash. Формат deb822 (`ubuntu.sources`, Ubuntu 24.04) тоже правится. Шаг только для Linux. Секретов нет |
+
+### Новые находки
+
+Происхождение у всех — «новое», внесено указанным коммитом.
+
+| # | Уровень | Где | Проблема и риск | Минимальный фикс |
+|---|---|---|---|---|
+| B3 | blocker | `src/qa_tool/core/taboo.py:437-452` (`is_web_approved_read` проверяет только `value.isdigit()`, имена не проверяет); `src/qa_tool/drivers/camera/browser.py:610` (ранний `return None` до `check_web_danger`) | **Исключение 11.11 снимает проверку опасных действий по имени параметра.** Внесено 3cdb0c3. До него `check_web_danger` («ни при каких галочках», AD-7) останавливал `GET /SDK/activateStatus?factoryReset=1&format=1` и `GET /api/auth/create_session?reboot=1` (признак в имени параметра), а `check_web_request` — ещё и `?password=1234`. Теперь все три уходят к камере: имя параметра любое, значение числовое. Это любой скрипт страницы камеры, то есть недоверенный код, который браузер исполняет. Происходит в любом окне, в том числе во время нажатий: `_judge_plain` и `_quiet_reads` тоже пропускаются. Решение директора в коде и в security.md: «параметры только числовые», «изменить ими ничего нельзя». Сам docstring говорит, что «словом в параметре можно было бы протащить запись», но слово в имени не ловится. Тест `?password=new1` и `?_=1&user=admin` отбивается только из-за буквенного значения: `?password=12345678` проходит. **Воспроизведено** (`qa-test uv run python`, вне репозитория): `is_web_approved_read("GET", CAM + "/SDK/activateStatus?factoryReset=1&format=1")` → `True`; тот же адрес в `check_web_danger` → `WebDangerViolation`. Обрабатывают ли эти обработчики прошивки такие параметры, не проверено: живых камер у ревьюера нет. Но табу обязано остановить такой запрос до отправки, а не надеяться на сервер | В `is_web_approved_read` разрешать только имена из белого списка: `_` (метка против кэша, как в тесте и docstring), плюс то, что реально шлют .100 и .112 (нужна проверка по журналу живого прогона 11.11). Значения — `value.isascii() and value.isdigit()`. Вариант строже: не делать ранний `return`, а пропускать исключение после `check_web_danger`. Тесты: `?reboot=1`, `?factoryReset=1&format=1`, `?password=12345678`, `?a%3Dreset=1` → False |
+| m16 | minor | `src/qa_tool/core/taboo.py:452` | `str.isdigit()` принимает не только ASCII: `?_=%D9%A1` (арабская «1») и `?_=%C2%B2` («²») → `True`. Записи этим не протащить, но «числовые» в решении директора — это цифры 0–9, а Unicode-трюки в недоверенном вводе подозрительны | `value.isascii() and value.isdigit()`; тест на оба адреса |
+| m17 | minor | `tests/checks/test_image_effect.py:338-348`; `src/qa_tool/checks/image/engine.py:206`, `src/qa_tool/checks/codec/engine.py:244` | Регрессионный тест 1cf2e01 покрывает только «кадр не получен». Две другие ветки, которые падали `TypeError` («журнал прошлого прогона не разобран» и «кодировщики не прочитаны»), тестами не покрыты: возврат к старой сигнатуре пройдёт незамеченным в них | Тест на `OnvifFault` из `settle_old` картинки и из чтения кодировщиков: «ошибка стенда», `evidence` не пустой |
+| m18 | nit | `docs/rules/architecture.md:70` | В строке «Дата» AD-7 «2026-11-11: чтения страниц входа в браузере» вставлено в середину перечня 2026-11-04: «…`taboo_proxy.py`; 2026-11-11: …; NTP, источник времени и адреса входа…». Теперь кажется, что NTP добавлен 11.11 | Перенести «дополнено 2026-11-11 (решение директора): …» в конец строки |
+| m19 | nit | `src/qa_tool/checks/api/search.py:725-726` | В тексте «вернуть вручную: по ONVIF <настройка> = {knob.current()}» у картинки без значения в снимке будет «= None». На практике до возврата дойдёт только настройка с известным `v0` (`plan` отсекает `None`), так что это лишь хрупкость | Если `current()` — `None`, писать «значение до записи неизвестно» |
+
+### Перенос и статус находок прошлых кругов
+
+| # | Статус |
+|---|---|
+| B1 | закрыт: Fault на записи, пропажа на записи (круг 2), Fault на возврате (B2, круг 3). Прочие исключения остаются в W4 |
+| B2 | закрыт (bd476cb), тесты есть |
+| W4 | открыт, без изменений (`search.py:658-663`) |
+| m1 | открыт; путь шире: при Fault на возврате журнал тоже остаётся, и к `API-RESTORE-1` в конце прогона добавится `API-WRITE-LOST` |
+| m11, m12, m13, m14, m15 | открыты, фикс их не касается |
+| W1, W2, W3, m2–m10 | открыты, фикс их не касается |
+| S-1 … S-5 | открыты (security-check.md); S-6, S-7 — новые, круг 3 |
+
+### Непокрытые сценарии — для `test-writer` (круг 3)
+
+1. B3: `GET` на разрешённый адрес с признаком опасного действия в имени параметра (`?reboot=1`, `?factoryReset=1&format=1`, `?password=12345678`, `?a%3Dreset=1`) не уходит к камере: `test_taboo_browser.py` → `is_web_approved_read` False; `test_browser.py` → `camera.arrived` пуст, причина `STOP_DANGER` или `STOP_TABOO`.
+2. m16: не-ASCII цифры в значении (`%D9%A1`, `%C2%B2`) → False.
+3. Разрешённое чтение во время нажатия кнопки (`_pressing`): после фикса B3 решить, должно ли оно попадать в `_quiet_reads`, и закрепить тестом.
+4. m17: «ошибка стенда» с доказательствами в ветках «журнал прошлого прогона не разобран» (картинка) и «кодировщики не прочитаны» (кодеки).
+5. Пункты 2–8 круга 2 остаются (п. 1 закрыт тестами bd476cb).
+
+### Тесты и проверки круга 3
+
+- Затронутые тесты: `qa-test uv run pytest -q -p no:cacheprovider tests/core/test_taboo*.py tests/drivers/test_browser.py tests/checks/test_web_login.py tests/checks/test_api_search.py tests/checks/test_image_effect.py tests/checks/test_codec*.py tests/test_architecture.py` (с `LD_LIBRARY_PATH` и `QT_QPA_PLATFORM=offscreen`, без `VIRTUAL_ENV`) → `411 passed in 567.11s`, выход 0. Полный прогон не повторялся (по заданию). Зелёные тесты B3 не ловят: случая «буквенное имя, числовое значение» в наборе нет.
+- Линтер: `uv run ruff check .` → `All checks passed!`; `uv run ruff format --check .` → `318 files already formatted`.
+- Комментарии: `scripts/check_comments.py` → выход 0. Новые комментарии в `search.py:719-723`, `taboo.py:425-428`, `login.py:185-190`, `ci_apt.sh:2-4`, `mock_rtsp.py:62-66` объясняют «почему». Они по-русски и не пересказывают код. Docstring `is_web_approved_read` обещает защиту от «слова в параметре», которой для имён нет (B3): после фикса нужно поправить.
+- Воспроизведения: вызовы `is_web_approved_read`, `check_web_danger` и `check_web_request` через `qa-test uv run python -c` (вне репозитория, без сети); поведение `set -e` в цикле `ci_apt.sh` — в bash. Живые камеры не трогались.

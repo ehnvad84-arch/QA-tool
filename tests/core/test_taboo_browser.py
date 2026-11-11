@@ -235,6 +235,7 @@ def test_danger_ignores_credentials_only_inside_window():
         CAM + "/api/auth/create_session",  # «Рувер» .100 при загрузке страницы
         CAM + "/SDK/activateStatus",  # Hikvision .112 при загрузке страницы
         CAM + "/SDK/activateStatus?_=1731300000000",  # метка времени против кэша
+        CAM + "/api/auth/create_session?t=1731300000000&_=2",
     ],
 )
 def test_reads_of_login_pages_approved_by_director_pass(url):
@@ -255,6 +256,15 @@ def test_reads_of_login_pages_approved_by_director_pass(url):
         ("GET", CAM + "/SDK/activateStatus;/../users"),
         ("GET", CAM + "/api/auth/create_session/../../users/set_password"),
         ("GET", CAM + "/api/auth/create_user"),
+        # ревью, круг 3, B3: опасное слово в имени параметра с числовым значением
+        ("GET", CAM + "/SDK/activateStatus?factoryReset=1&format=1"),
+        ("GET", CAM + "/api/auth/create_session?reboot=1"),
+        ("GET", CAM + "/api/auth/create_session?password=12345678"),
+        ("GET", CAM + "/SDK/activateStatus?a%3Dreset=1"),
+        ("GET", CAM + "/SDK/activateStatus?_=1&reset=1"),
+        # цифры не ASCII
+        ("GET", CAM + "/SDK/activateStatus?_=%D9%A1"),
+        ("GET", CAM + "/SDK/activateStatus?_=%C2%B2"),
     ],
 )
 def test_only_exact_approved_reads_are_excepted(method, url):
