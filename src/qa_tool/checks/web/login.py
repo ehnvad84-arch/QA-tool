@@ -155,6 +155,7 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     """
     if refused_password(ctx):
         return LoginResult(Entry.REFUSED, refused_password(ctx))
+    stopped_before = len(session.stopped)
     load = session.open(address, limit(ctx, "web.login_timeout_s"))
     if load.status == HTTP_UNAUTHORIZED:
         return _http_login(ctx, session, address)
@@ -168,7 +169,6 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
         return LoginResult(Entry.REFUSED, "на странице входа нет кнопки входа: попытки не было")
     password_field = next(item for item in items if item.kind == "password")
     name_field = _name_field(items)
-    stopped_before = len(session.stopped)
     with session.login_window(ctx.camera.username, ctx.password):
         if name_field is not None:
             session.set_field(name_field, ctx.camera.username)
@@ -182,8 +182,9 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
             session.wait(POLL_MS)
     stopped = session.stopped[stopped_before:]
     if stopped:
-        # Табу остановило запрос страницы во время входа (Hikvision .112 — GET
-        # /SDK/activateStatus, 06.11 и 10.11): пароль до камеры не дошёл, отказа нет.
+        # Табу остановило служебный запрос страницы входа — ещё при загрузке, до нажатия
+        # (Hikvision .112 — GET /SDK/activateStatus, «Рувер» .100 — GET /api/auth/create_session,
+        # 11.11), или во время входа: форма без него не работает, пароль до камеры не дошёл.
         # Решение директора 06.11 — «ошибка стенда» с причиной; признак отказа не ставится,
         # иначе он выключал вход для «API камеры», «Картинки» и «Кодеков».
         first = stopped[0]

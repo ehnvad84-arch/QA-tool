@@ -175,9 +175,12 @@ def test_self_signed_certificate_is_accepted(tmp_path):
 
 
 def test_login_stopped_by_taboo_is_not_a_refusal():
-    # Hikvision .112 (06.11 и 10.11): страница входа спрашивает GET /SDK/activateStatus — табу
-    # его останавливает, пароль до камеры не доходит
-    page = "<input type=password><button onclick=\"fetch('/SDK/activateStatus')\">Войти</button>"
+    # Hikvision .112 (11.11): страница входа при загрузке спрашивает GET /SDK/activateStatus —
+    # табу его останавливает, форма без ответа не работает, пароль до камеры не доходит
+    page = (
+        "<script>fetch('/SDK/activateStatus').catch(() => {})</script>"
+        "<input type=password><button>Войти</button>"
+    )
     ctx = context()
     ctx.thresholds["web.login_timeout_s"] = Threshold(1.0, "с", "тест")
     with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
@@ -186,3 +189,12 @@ def test_login_stopped_by_taboo_is_not_a_refusal():
     assert "/SDK/activateStatus" in result.reason
     assert refused_password(ctx) == ""  # отказа не было — вход для других проверок открыт
     assert camera.arrived == [("GET", "/")]
+
+
+def test_login_request_stopped_on_click_is_not_a_refusal():
+    page = "<input type=password><button onclick=\"fetch('/SDK/activateStatus')\">Войти</button>"
+    ctx = context()
+    ctx.thresholds["web.login_timeout_s"] = Threshold(1.0, "с", "тест")
+    with MockWebCamera({"/": page}) as camera, BrowserSession(camera.url) as session:
+        result = login(ctx, session, camera.url + "/")
+    assert result.entry is Entry.STOPPED and refused_password(ctx) == ""
