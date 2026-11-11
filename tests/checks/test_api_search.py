@@ -257,6 +257,76 @@ def test_camera_gone_keeps_map_and_journal_and_is_restore_blocker(run, tmp_path,
     assert entry is not None and entry.kind == "4"  # резкость: следующий прогон вернёт по журналу
 
 
+def _assert_return_fault_is_restore_blocker(result, tmp_path, port, failed_n):
+    found = rows(result)
+    assert {"API-MAP-1", "API-MATCH-1", "API-SEARCH-1"} <= set(found)
+    assert 1 in pairs_of(result)  # пары, найденные до сбоя возврата, не потеряны
+    restore = found["API-RESTORE-1"]
+    assert restore.result.status is Status.FAILED and restore.severity is Severity.BLOCKER
+    assert "возврат по ONVIF не подтверждён" in restore.result.actual
+    assert "вернуть вручную" in restore.result.actual
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    # состояние камеры неизвестно: дальше не пишем
+    assert f"не пробовали: поиск прерван на п. {failed_n}" in trace
+    entry = load(tmp_path / "pending-api", "127.0.0.1", port)
+    assert entry is not None and entry.kind == str(failed_n) and entry.stage == "restoring"
+
+
+def test_onvif_fault_on_image_return_after_reboot_is_restore_blocker(run, tmp_path, monkeypatch):
+    # B2 ревью api-discovery: камера перезагрузилась, порт открыт, а ONVIF ещё отвечает 503;
+    # раньше Fault на возврате уничтожал всю проверку API-MAP-1
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault
+
+    original_write = imaging.ImagingWriter.write
+    returns = []
+
+    def write(self, key, value, persist=False):
+        if key == "sharpness":
+            raise CameraUnreachable("нет ответа (ReadTimeout)")
+        return original_write(self, key, value, persist)
+
+    original_restore = imaging.ImagingWriter.restore
+
+    def restore(self, state, touched):
+        returns.append(list(touched))
+        if touched == ["sharpness"]:
+            raise OnvifFault("ответ не SOAP (HTTP 503)", status=503)
+        return original_restore(self, state, touched)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    result, camera = run(hikvision(password=SECRET))
+    _assert_return_fault_is_restore_blocker(result, tmp_path, camera.port, 4)
+    assert returns.count(["sharpness"]) == 1  # одна попытка возврата, без повтора
+
+
+def test_encoder_rejects_return_is_restore_blocker(run, tmp_path, monkeypatch):
+    # B2: Fault на возврате конфигурации кодировщика (ForcePersistence, полный блок)
+    from qa_tool.drivers.camera import encoder
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    def restore(self, config):
+        raise encoder.ValueRejected(OnvifFault("ter:ConfigModify"))
+
+    monkeypatch.setattr(encoder.EncoderWriter, "restore", restore)
+    result, camera = run(hikvision(password=SECRET))
+    _assert_return_fault_is_restore_blocker(result, tmp_path, camera.port, 15)
+
+
+def test_password_fault_on_return_is_not_swallowed(run, monkeypatch):
+    # отказ пароля на возврате — не итог возврата: вход больше не пробуем (S8)
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    def restore(self, state, touched):
+        raise OnvifFault("отказ входа", status=401)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    result, _ = run(hikvision(password=SECRET))
+    assert result.status is Status.STAND_ERROR and "API-RESTORE-1" not in rows(result)
+
+
 def test_bitrate_edge_like_108_reaches_range_row(run):
     api = dahua(password=SECRET)
     bitrate_edge_like_108(api.state)

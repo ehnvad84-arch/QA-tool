@@ -35,7 +35,7 @@ from qa_tool.drivers.camera.http import TransportError
 from qa_tool.drivers.camera.imaging import Declared, ImagingState, ImagingWriter
 from qa_tool.drivers.camera.key_value import without_indexes
 from qa_tool.drivers.camera.native import NativeUnreachable
-from qa_tool.drivers.camera.soap import CameraUnreachable
+from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
 
 MIN_GAP = 0.15  # доли диапазона: ближе значения не различить на шкале камеры
 # Fault ONVIF на записи одной настройки — её итог, а не сбой всего поиска (S4 п. 5)
@@ -676,12 +676,13 @@ class Search:
                 self.out.left, self.out.native_left = left, native_left
                 if self.out.stop is None:
                     self.out.stop = SideEffect(entry, native_left, left, [])
-            if self.out.stop is not None or self.out.lost:
-                why = (
-                    f"прерван на п. {entry.n}: {LOST}"
-                    if self.out.lost
-                    else f"остановлен на п. {entry.n}"
-                )
+            if self.out.stop is not None or self.out.lost or self.out.unchecked:
+                if self.out.lost:
+                    why = f"прерван на п. {entry.n}: {LOST}"
+                elif self.out.unchecked:
+                    why = f"прерван на п. {entry.n}: возврат не сверен"
+                else:
+                    why = f"остановлен на п. {entry.n}"
                 n = self.knobs.index(knob)
                 for rest in self.knobs[n + 1 :]:
                     self.out.trace.append({"n": rest.entry.n, "итог": f"не пробовали: поиск {why}"})
@@ -691,8 +692,12 @@ class Search:
     def _returned(self, knob: Knob) -> tuple[list[tuple[str, str, str]], list[Change]]:
         """Возврат настройки; пропавшую камеру сначала ждём (S5, «камера пропала»).
 
-        Камера не вернулась или пропала снова — `out.unchecked` с причиной: возврат не сверен,
-        журнал остаётся, а уже собранные карта, сверка и трасса не теряются.
+        Камера не вернулась, пропала снова или ответила на возврат Fault — `out.unchecked`
+        с причиной: возврат не сверен, журнал остаётся, а уже собранные карта, сверка и трасса
+        не теряются; поиск после этого прерывается.
+
+        Raises:
+            OnvifFault: отказ пароля на возврате (`credentials_rejected`).
         """
         entry = knob.entry
         while True:
@@ -710,6 +715,17 @@ class Search:
                     self.out.unchecked = f"возврат не сверен: {LOST}: {error}"
                     return [], []
                 self.out.lost = f"{LOST}: {error}"
+            except (OnvifFault, *REJECTED, *NOT_SENT) as error:
+                # отказ пароля — не итог возврата: вход больше не пробуем (S8)
+                if isinstance(error, OnvifFault) and credentials_rejected(error):
+                    raise
+                # Fault на возврате, в том числе 503 службы ONVIF, когда порт после перезагрузки
+                # уже открыт, — возврат не подтверждён, а не сбой всей карты (как в «Картинке»)
+                self.out.unchecked = (
+                    f"возврат по ONVIF не подтверждён: {error}; вернуть вручную: "
+                    f"по ONVIF {entry.title} = {knob.current()}"
+                )
+                return [], []
 
     def _put_back(self, knob: Knob) -> tuple[list[tuple[str, str, str]], list[Change]]:
         """Возврат по ONVIF, затем родным API того, что ONVIF не вернул (S5), и сверка с M0."""
