@@ -333,3 +333,16 @@ def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
     assert restore.status is Status.FAILED and "не вернулась" in restore.reason
     kept = load(tmp_path, "127.0.0.1", cam.port)
     assert kept is not None and kept.kind == "saturation"
+
+
+@needs_video
+def test_frame_not_received_is_stand_error_with_evidence(camera_with, monkeypatch):
+    # CI 11.11: ветка «кадр не получен» падала TypeError и теряла все строки картинки
+    def refuse(self, *args, **kwargs):
+        raise frames.StreamRefused("поток не открывается: камера закрыла соединение RTSP")
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", refuse)
+    result = run(camera_with(), ["brightness"])
+    assert result.status is Status.STAND_ERROR, result.reason
+    assert "камера закрыла соединение RTSP" in result.reason
+    assert result.evidence  # обмен ONVIF и RTSP до сбоя

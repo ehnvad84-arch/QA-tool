@@ -58,6 +58,15 @@ def find_ffmpeg() -> str | None:
     return None
 
 
+def _part(path: Path) -> Path:
+    """Временный файл ролика: свой у каждого процесса и потока.
+
+    Несколько mock-камер в одном процессе (смоук картинки на двух местах) собирают один и тот
+    же ролик одновременно; общий `.<pid>.part` портился, и камера обрывала RTSP (CI 11.11).
+    """
+    return path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.part")
+
+
 def test_video() -> bytes | None:
     """Annex-B H.264 с разделителями кадров (AUD); None — ffmpeg не найден."""
     ffmpeg = find_ffmpeg()
@@ -67,7 +76,7 @@ def test_video() -> bytes | None:
     path = CACHE / f"mock-{key}.h264"
     if not path.exists():
         CACHE.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".part")
+        tmp = _part(path)
         subprocess.run(
             [
                 ffmpeg,
@@ -136,7 +145,7 @@ def imaging_video(picture: dict[str, float]) -> bytes | None:
     if p["noise"] > 0:
         chain.append(f"noise=alls={round(30 * p['noise'])}:allf=t")
     CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{os.getpid()}.part")
+    tmp = _part(path)
     subprocess.run(
         [ffmpeg, "-loglevel", "error", "-y", "-f", "lavfi"]
         + ["-i", f"testsrc2=size={WIDTH}x{HEIGHT}:rate={FPS}:duration=0.1"]
@@ -248,7 +257,7 @@ def codec_video(codec: str, kbps: float, quality_kbps: float | None = None) -> b
     if path.exists():
         return path.read_bytes()
     CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{os.getpid()}.part")
+    tmp = _part(path)
     target = quality
     try:
         # кодировщики промахиваются по битрейту на 10–70 %: перебор снижает цель, пока ролик

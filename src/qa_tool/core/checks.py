@@ -89,9 +89,14 @@ class CheckResult:
         return cls(Status.SKIPPED, reason=reason)
 
     @classmethod
-    def stand_error(cls, reason: str) -> "CheckResult":
-        """Проверку не удалось довести до конца по вине стенда, а не камеры."""
-        return cls(Status.STAND_ERROR, reason=reason)
+    def stand_error(cls, reason: str, evidence: list[Evidence] | None = None) -> "CheckResult":
+        """Проверку не удалось довести до конца по вине стенда, а не камеры.
+
+        Args:
+            reason: причина для протокола.
+            evidence: обмен с камерой до сбоя, если он есть.
+        """
+        return cls(Status.STAND_ERROR, reason=reason, evidence=evidence or [])
 
 
 @dataclass
