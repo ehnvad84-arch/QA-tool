@@ -137,6 +137,27 @@ def test_bitrate_off_fails_with_measured_value(camera_with):
 
 
 @needs_vmaf
+@pytest.mark.parametrize(
+    "camera", [{"encoder_cbr": False}, {"media2_absent": True}], ids=["без CBR", "Media1"]
+)
+def test_variable_bitrate_below_ceiling_passes_with_note(camera_with, camera):
+    # B1: переменный битрейт на тихой сцене законно ниже потолка — это не «битрейт мимо»
+    cam = camera_with(encoder_kbps_factor=0.4, encoder_codecs=("H264",), **camera)
+    row = rows(run(cam))["CODEC-H264-1"].result
+    assert row.status is Status.PASSED, row.reason
+    assert "потолок переменного битрейта" in row.reason
+    record = json.loads(next(e.content for e in row.evidence if e.name == "measure.json"))
+    assert record["режим битрейта"] == "потолок переменного битрейта"
+
+
+@needs_vmaf
+def test_constant_bitrate_below_target_still_fails(camera_with):
+    cam = camera_with(encoder_kbps_factor=0.4, encoder_codecs=("H264",))
+    row = rows(run(cam))["CODEC-H264-1"].result
+    assert row.status is Status.FAILED and "±20 %" in row.reason, row.reason
+
+
+@needs_vmaf
 def test_quality_not_growing_with_bitrate_fails(camera_with):
     # качество ролика — на минимуме камеры: 32 кбит/с для 320×240 — заметно хуже эталона
     cam = camera_with(

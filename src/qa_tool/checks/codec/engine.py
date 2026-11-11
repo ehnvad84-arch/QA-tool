@@ -66,7 +66,9 @@ from qa_tool.core.taboo import TabooViolation
 from qa_tool.core.tempfiles import CODEC_PREFIX
 from qa_tool.core.write_journal import CODEC, PendingWrite
 from qa_tool.drivers.camera.encoder import (
+    CEILING,
     CODECS,
+    CONSTANT,
     BadRange,
     CodecOptions,
     EncoderConfig,
@@ -565,7 +567,7 @@ class Engine:
                 codec,
                 plan.config.settings.width or 0,
                 plan.config.settings.height or 0,
-                constant=True,
+                constant=_constant(taken, codec),
                 scene=scene,
             )
             top = taken.top.get(codec)
@@ -641,9 +643,14 @@ class Engine:
             reason = f"{reason}: {'; '.join(dict.fromkeys(errors))}"
         floor = limit(self.ctx, _floor_key(codec, curve.height)).value
         pct = limit(self.ctx, "codec.bitrate_pct").value
+        allowed = f"в пределах ±{pct:g} % заданного"
+        if not curve.constant:
+            # спека: без постоянного битрейта ступень — потолок переменного, пометка в строке
+            reason = f"{reason}; {CEILING}: постоянного камера не даёт"
+            allowed = f"не выше заданного более чем на {pct:g} %"
         expected = (
             f"VMAF не ниже {num(found.threshold.value)} на ступенях от {rate(floor)}; битрейт "
-            f"в потоке — в пределах ±{pct:g} % заданного; качество растёт с битрейтом"
+            f"в потоке — {allowed}; качество растёт с битрейтом"
         )
         record["итог"] = {"статус": found.status.value, "причина": reason}
         evidence = self._evidence(plan, codec, taken, found.status is Status.FAILED, record)
@@ -696,6 +703,7 @@ class Engine:
                 "почему": why,
             },
             "предел замера": _stat(repeat_q),
+            "режим битрейта": CONSTANT if curve.constant else CEILING,
             "яркость сцены": lumas,
             "ступени": [
                 {
@@ -950,6 +958,13 @@ class Engine:
 
 def _named(codec: str, kbps: int) -> str:
     return f"{codec_title(codec)} · {rate(kbps)}"
+
+
+def _constant(taken: Taken, codec: str) -> bool:
+    """Битрейт кодека ушёл постоянным; драйвер ставит потолок переменного у Media1 и у камер
+    без `ConstantBitRateSupported`, и тогда поток ниже заданного — норма, а не дефект."""
+    shots = [taken.top.get(codec), *taken.steps.get(codec, [])]
+    return all(s.form != CEILING for s in shots if s is not None)
 
 
 def _threshold(found: Threshold) -> dict:
