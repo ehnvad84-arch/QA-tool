@@ -14,6 +14,7 @@ from qa_tool.core.taboo import (
     is_logout_label,
     is_static_asset,
     is_web_action,
+    is_web_approved_read,
     is_write_message,
     web_danger_word,
 )
@@ -226,3 +227,35 @@ def test_danger_ignores_credentials_only_inside_window():
     check_web_danger("POST", CAM + "/api/auth/login", body, ("admin", "resetNew1"))
     with pytest.raises(WebDangerViolation):
         check_web_danger("POST", CAM + "/cmd", '{"action": "reboot"}', ("admin", "x"))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        CAM + "/api/auth/create_session",  # «Рувер» .100 при загрузке страницы
+        CAM + "/SDK/activateStatus",  # Hikvision .112 при загрузке страницы
+        CAM + "/SDK/activateStatus?_=1731300000000",  # метка времени против кэша
+    ],
+)
+def test_reads_of_login_pages_approved_by_director_pass(url):
+    assert is_web_approved_read("GET", url)
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [
+        ("POST", CAM + "/api/auth/create_session"),
+        ("PUT", CAM + "/SDK/activateStatus"),
+        ("GET", CAM + "/SDK/activateStatus?password=new1"),
+        ("GET", CAM + "/SDK/activateStatus?_=1&user=admin"),
+        ("GET", CAM + "/SDK/activateStatus#x"),
+        ("GET", CAM + "/SDK/activateStatus?"),
+        ("GET", CAM + "/SDK/activate"),
+        ("GET", CAM + "/sdk/activatestatus"),
+        ("GET", CAM + "/SDK/activateStatus;/../users"),
+        ("GET", CAM + "/api/auth/create_session/../../users/set_password"),
+        ("GET", CAM + "/api/auth/create_user"),
+    ],
+)
+def test_only_exact_approved_reads_are_excepted(method, url):
+    assert not is_web_approved_read(method, url)

@@ -422,6 +422,36 @@ def is_camera_login(method: str, url: str) -> bool:
     return plain and (method.upper(), parts.path) in CAMERA_LOGIN_REQUESTS
 
 
+# Решение директора 2026-11-11: живые камеры не дают веб-обходу войти. Страница «Рувер» .100 при
+# загрузке сама запрашивает сессию (слово «create» — признак записи), Hikvision .112 читает
+# состояние активации (слово «activate»). Оба запроса ничего не меняют, а без ответа форма входа
+# не работает. Исключение — только для браузера и только эти адреса буквально.
+WEB_APPROVED_READS = frozenset(
+    {
+        ("GET", "/api/auth/create_session"),
+        ("GET", "/SDK/activateStatus"),
+    }
+)
+
+
+def is_web_approved_read(method: str, url: str) -> bool:
+    """Разрешённое директором чтение страницы входа: адрес буквально, без фрагмента.
+
+    Параметры допускаются только числовые: страницы добавляют к адресу метку времени против
+    кэша (`?_=1731300000000`), а словом в параметре можно было бы протащить запись.
+    """
+    parts = urlsplit(url)
+    if parts.fragment or url.endswith(("?", "#")):
+        return False
+    if (method.upper(), parts.path) not in WEB_APPROVED_READS:
+        return False
+    try:
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
+    except ValueError:
+        return False
+    return all(value.isdigit() for _, value in pairs)
+
+
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:
     """Не пропустить изменяющий запрос к сети, учётным записям, сертификатам или сбросу.
 

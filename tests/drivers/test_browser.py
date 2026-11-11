@@ -78,6 +78,16 @@ def visit(page, window=None, **kwargs):
         return camera, list(session.stopped)
 
 
+def test_login_page_reads_approved_by_director_reach_camera():
+    # «Рувер» .100 и Hikvision .112 шлют эти запросы при загрузке страницы входа, ещё до окна
+    # входа; без ответа форма не работает (решение директора 11.11)
+    page = fire("/api/auth/create_session", "GET", "") + fire("/SDK/activateStatus?_=1", "GET", "")
+    camera, stopped = visit(page)
+    assert ("GET", "/api/auth/create_session") in camera.arrived
+    assert ("GET", "/SDK/activateStatus?_=1") in camera.arrived
+    assert stopped == []
+
+
 def test_taboo_stops_even_in_write_window():
     camera, stopped = visit(fire("/api/users/delete"), lambda s: s.write_window())
     assert camera.writes() == []
