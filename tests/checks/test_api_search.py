@@ -198,6 +198,38 @@ def test_onvif_fault_on_one_setting_is_not_found_and_search_goes_on(run, tmp_pat
     assert api.state.imaging_xml.count("<tt:Brightness>50</tt:Brightness>") == 1
 
 
+def test_onvif_fault_on_read_stops_search_but_keeps_map(run, tmp_path, monkeypatch):
+    # ревью, круг 3, W4: разовый Fault на чтении после записи уносил всю API-MAP-1
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    original_write, original_read = imaging.ImagingWriter.write, imaging.ImagingWriter.read
+    armed = {"fault": False}
+
+    def write(self, key, value, persist=False):
+        if key == "sharpness":
+            armed["fault"] = True
+        return original_write(self, key, value, persist)
+
+    def read(self):
+        if armed["fault"]:
+            armed["fault"] = False
+            raise OnvifFault("ter:Action")
+        return original_read(self)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "read", read)
+    api = hikvision(password=SECRET)
+    result, camera = run(api)
+    found = rows(result)
+    assert {"API-MAP-1", "API-SEARCH-1", "API-RESTORE-1", "API-MATCH-1"} <= set(found)
+    search = found["API-SEARCH-1"].result
+    assert search.status is Status.STAND_ERROR and "сбой ONVIF на чтении" in search.reason
+    assert found["API-RESTORE-1"].result.status is Status.PASSED
+    assert 1 in pairs_of(result)  # пара, найденная до сбоя, не потеряна
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None
+
+
 def test_camera_lost_for_a_moment_stops_search_and_returns(run, tmp_path, monkeypatch):
     # обрыв посреди записи, к возврату камера снова на связи: возврат сверен, журнал закрыт
     from qa_tool.drivers.camera import imaging

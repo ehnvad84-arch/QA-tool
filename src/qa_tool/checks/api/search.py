@@ -335,6 +335,7 @@ class Outcome:
     attempts: list[Any] = field(default_factory=list)  # `restore.Attempt` возврата родным API
     lost: str = ""  # камера пропадала посреди поиска: что случилось
     unchecked: str = ""  # возврат не сверен (камера не вернулась) — почему; журнал остаётся
+    stand: str = ""  # поиск прерван сбоем ONVIF на чтении — «ошибка стенда», не дефект камеры
 
 
 def _leaf(param_id: str) -> str:
@@ -655,6 +656,14 @@ class Search:
             except UNREACHABLE as error:
                 self.out.lost = f"{LOST}: {error}"
                 verdict, pair = f"остановлен: {LOST}", None
+            except OnvifFault as error:
+                # ревью, круг 3, W4: разовый Fault на чтении (GetImagingSettings после записи)
+                # уносил всю API-MAP-1. Это итог настройки и стоп поиска с возвратом; отказ
+                # пароля по-прежнему не итог — вход больше не пробуем (S8)
+                if credentials_rejected(error):
+                    raise
+                self.out.stand = f"сбой ONVIF на чтении: {error}"
+                verdict, pair = f"ошибка стенда: {self.out.stand}", None
             except Exception:
                 # непредвиденный сбой: вернуть по ONVIF что получится; журнал остаётся
                 # открытым — следующий прогон увидит незакрытую запись
@@ -676,11 +685,13 @@ class Search:
                 self.out.left, self.out.native_left = left, native_left
                 if self.out.stop is None:
                     self.out.stop = SideEffect(entry, native_left, left, [])
-            if self.out.stop is not None or self.out.lost or self.out.unchecked:
+            if self.out.stop is not None or self.out.lost or self.out.unchecked or self.out.stand:
                 if self.out.lost:
                     why = f"прерван на п. {entry.n}: {LOST}"
                 elif self.out.unchecked:
                     why = f"прерван на п. {entry.n}: возврат не сверен"
+                elif self.out.stand:
+                    why = f"прерван на п. {entry.n}: сбой ONVIF на чтении"
                 else:
                     why = f"остановлен на п. {entry.n}"
                 n = self.knobs.index(knob)

@@ -88,6 +88,13 @@ def _search_row(outcome: Outcome, label: str, restored: bool) -> ChildResult:
         result = CheckResult(
             Status.FAILED, reason=LOST, expected=expected, actual=f"{outcome.lost}; {tail}"
         )
+    elif outcome.stand and outcome.stop is None:
+        result = CheckResult(
+            Status.STAND_ERROR,
+            reason=outcome.stand,
+            expected=expected,
+            actual=f"найдено пар {found} из {outcome.tried} настроек до сбоя",
+        )
     elif outcome.stop is not None:
         tail = "после возврата всё вернулось" if restored else "вернулось не всё — см. возврат"
         result = CheckResult(
