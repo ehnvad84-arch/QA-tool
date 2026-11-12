@@ -1,8 +1,9 @@
 """Единственная точка, через которую программа шлёт камерам HTTP-запросы (AD-7).
 
-Любой драйвер, адаптер производителя и веб-обход ходят к камере только через `request()`:
-здесь стоит табу — запрещённый запрос не уходит в сеть. Архитектурный тест
-tests/test_architecture.py не даёт импортировать httpx, requests и сокеты в обход этого модуля.
+Любой драйвер и адаптер производителя ходят к камере только через `request()`: здесь стоит
+табу — запрещённый запрос не уходит в сеть. У браузера веб-обхода свой выход под теми же
+проверками — `drivers/camera/browser.py`. Архитектурный тест tests/test_architecture.py
+не даёт импортировать httpx, requests и сокеты в обход этих модулей.
 """
 
 import functools
@@ -36,7 +37,7 @@ def _tls_context() -> ssl.SSLContext:
 _ENVELOPE = re.compile(r"<\s*(?:[\w.-]+:)?Envelope\b")
 
 
-def _is_soap(headers: dict[str, str], text: str) -> bool:
+def is_soap(headers: dict[str, str], text: str) -> bool:
     """SOAP — по Content-Type или по настоящему элементу Envelope, а не по слову в JSON."""
     content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
     return "soap" in content_type.lower() or bool(_ENVELOPE.search(text))
@@ -74,7 +75,7 @@ def request(
     text = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
     check_http(method, url)
     check_onvif(text)  # и в «не SOAP»: операцию нельзя протащить без конверта
-    if not _is_soap(headers, text):
+    if not is_soap(headers, text):
         # в SOAP-конверте всегда есть Username и Password — по словам его не судим
         check_web_request(method, url, text)
     return httpx.request(

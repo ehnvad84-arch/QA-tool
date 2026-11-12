@@ -24,6 +24,7 @@ MODULE_TITLES = {
     "analytics": "Аналитика",
 }
 SEVERITY_ORDER = {"блокер": 0, "серьёзная": 1, "мелкая": 2}
+WEB_ROW_PREFIX = "WEB-"
 
 
 @dataclass
@@ -103,6 +104,27 @@ def verdict(counts: dict[str, int]) -> tuple[str, str]:
     return "Соответствует проверенным требованиям", "ok"
 
 
+def _without_repeats(failed: list[Row]) -> list[tuple[Row, list[str]]]:
+    """Задачи без дублей: кнопка из шапки веб-интерфейса падает одинаково на каждой странице.
+
+    Сводятся только строки веб-обхода: у остальных модулей одинаковый текст — разные проверки.
+
+    Returns:
+        Первая строка и номера таких же строк.
+    """
+    groups: dict[tuple[str, str, str], tuple[Row, list[str]]] = {}
+    out = []
+    for row in failed:
+        key = (row.title, row.reason, row.actual)
+        if row.check_id.startswith(WEB_ROW_PREFIX) and key in groups:
+            groups[key][1].append(row.check_id)
+            continue
+        entry = (row, [])
+        groups[key] = entry
+        out.append(entry)
+    return out
+
+
 def build_protocol(store: RunStore, slot: int) -> Protocol:
     """Собрать протокол камеры из базы прогона; задачи — только из «не прошла»."""
     run = store.run_info()
@@ -131,9 +153,11 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
     )
     failed = [r for r in rows if r.status == Status.FAILED.value]
     failed.sort(key=lambda r: (SEVERITY_ORDER.get(r.severity, 9), r.number))
-    for number, row in enumerate(failed, start=1):
+    for number, (row, same) in enumerate(_without_repeats(failed), start=1):
         firmware = passport["firmware"] or "?"
         title = f"[{row.check_id}] {row.title}" + (f": {row.reason}" if row.reason else "")
+        if same:
+            title += f" (то же: {', '.join(same)})"
         tasks.append(
             Task(
                 number=number,

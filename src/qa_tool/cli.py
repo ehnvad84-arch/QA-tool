@@ -101,6 +101,19 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _browser_works() -> bool:
+    """Запустить браузер веб-обхода на пустой странице: сборка без него не годна (S23)."""
+    from qa_tool.drivers.camera.browser import BrowserMissing, BrowserSession
+
+    try:
+        with BrowserSession("about:blank", frozenset()) as session:
+            print(f"браузер: работает, песочница {'да' if session.sandboxed else 'нет'}")
+    except BrowserMissing as e:
+        print(f"браузер: {e}")
+        return False
+    return True
+
+
 def cmd_doctor() -> int:
     """Проверить установку: версия, ffmpeg и ffprobe, справка, шрифты окна.
 
@@ -126,6 +139,7 @@ def cmd_doctor() -> int:
         print(f"{name}: {path} — {first.splitlines()[0] if first else 'нет ответа'}")
     topics = load_topics()
     print(f"справка: {manual_dir()} — разделов {len(topics)}")
+    ok = _browser_works() and ok
     ok = ok and "index" in topics
     print(f"хранилище паролей: {storage_name()}")
     missing = font_files_missing()

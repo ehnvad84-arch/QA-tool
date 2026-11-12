@@ -15,8 +15,6 @@
 
 import base64
 import contextlib
-import hashlib
-import os
 import re
 import select
 import socket
@@ -29,6 +27,7 @@ from enum import Enum
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from qa_tool.core.taboo import check_rtsp
+from qa_tool.drivers.camera.digest import digest_header, parse_challenge, uses_qop
 
 # Пределы ответа камеры — недоверенных данных (security.md): строка заголовка, число строк и
 # тело (SDP, текст ошибки) у настоящих камер на порядки меньше; больше — сбой или атака
@@ -219,22 +218,9 @@ class RtspClient:
             self.basic_used = True
             token = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
             return f"Basic {token}"
-        realm, nonce = self._challenge.get("realm", ""), self._challenge.get("nonce", "")
-        # MD5 задан RFC 2617 для Digest; камеры другого алгоритма в RTSP не предлагают
-        ha1 = hashlib.md5(f"{self.user}:{realm}:{self.password}".encode()).hexdigest()  # noqa: S324
-        ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()  # noqa: S324
-        header = f'Digest username="{self.user}", realm="{realm}", nonce="{nonce}", uri="{uri}"'
-        if "auth" in self._challenge.get("qop", "").split(","):
+        if uses_qop(self._challenge):
             self._nc += 1
-            nc, cnonce = f"{self._nc:08x}", os.urandom(8).hex()
-            digest = f"{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}"
-            header += f', qop=auth, nc={nc}, cnonce="{cnonce}"'
-        else:
-            digest = f"{ha1}:{nonce}:{ha2}"
-        response = hashlib.md5(digest.encode()).hexdigest()  # noqa: S324
-        if "opaque" in self._challenge:
-            header += f', opaque="{self._challenge["opaque"]}"'
-        return f'{header}, response="{response}"'
+        return digest_header(self.user, self.password, self._challenge, method, uri, self._nc)
 
     def _compose(self, method: str, uri: str, headers: dict[str, str]) -> bytes:
         self._cseq += 1
@@ -267,7 +253,7 @@ class RtspClient:
         """
         ok = 200 <= response.status < 300
         if response.status == RTSP_UNAUTHORIZED:
-            self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
+            self._challenge = parse_challenge(response.headers.get("www-authenticate", ""))
         elif not ok:
             self._ping_method = "OPTIONS"
         if response.status in PASSWORD_REFUSED_CODES:
@@ -391,7 +377,7 @@ class RtspClient:
         check_rtsp(method)
         response = self._send(method, uri, headers or {})
         if response.status == RTSP_UNAUTHORIZED and self.user:
-            self._challenge = _parse_challenge(response.headers.get("www-authenticate", ""))
+            self._challenge = parse_challenge(response.headers.get("www-authenticate", ""))
             response = self._send(method, uri, headers or {})
         self.exchanges.append(f"{method} {uri} → {response.status} {response.reason}".strip())
         refused = response.status == RTSP_UNAUTHORIZED or (
@@ -613,11 +599,6 @@ def _offer_rank(header: str) -> int:
         return 0
     algorithm = re.search(r'algorithm\s*=\s*"?([\w-]+)', offer)
     return 2 if algorithm is None or algorithm[1] == "md5" else 1
-
-
-def _parse_challenge(header: str) -> dict[str, str]:
-    scheme = "basic" if header.lower().startswith("basic") else "digest"
-    return {"scheme": scheme, **dict(re.findall(r'(\w+)="?([^",]*)"?', header))}
 
 
 def _rtp_packet(channel: int, packet: bytes, arrived: float = 0.0) -> RtpPacket:

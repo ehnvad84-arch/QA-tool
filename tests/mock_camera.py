@@ -78,8 +78,10 @@ class MockCamera:
         username: str = "admin",
         password: str = "admin",
         state: OnvifState | None = None,
+        web_pages: dict[str, str] | None = None,
     ):
         self.passport = passport
+        self.web_pages = web_pages or {}  # веб-страницы камеры: проверка сборки с браузером
         self.state = state or OnvifState()
         self.username = username
         self.password = password
@@ -205,6 +207,18 @@ class MockCamera:
         camera = self
 
         class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 — имя задаёт http.server
+                page = camera.web_pages.get(self.path.split("?")[0])
+                if page is None:
+                    self.send_error(404)
+                    return
+                data = page.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_POST(self):  # noqa: N802 — имя задаёт http.server
                 payload = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 code, response = camera.answer(payload)
