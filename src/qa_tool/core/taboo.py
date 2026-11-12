@@ -422,6 +422,45 @@ def is_camera_login(method: str, url: str) -> bool:
     return plain and (method.upper(), parts.path) in CAMERA_LOGIN_REQUESTS
 
 
+# Решение директора 2026-11-11: живые камеры не дают веб-обходу войти. Страница «Рувер» .100 при
+# загрузке сама запрашивает сессию (слово «create» — признак записи), Hikvision .112 читает
+# состояние активации (слово «activate»). Оба запроса ничего не меняют, а без ответа форма входа
+# не работает. Исключение — только для браузера и только эти адреса буквально.
+WEB_APPROVED_READS = frozenset(
+    {
+        ("GET", "/api/auth/create_session"),
+        ("GET", "/SDK/activateStatus"),
+    }
+)
+
+
+# Имена параметров-меток против кэша, которые страницы добавляют к адресу. Другое имя — даже
+# с числом (`?reboot=1`, `?factoryReset=1`) — уже не «чтение буквально» (ревью, круг 3, B3).
+WEB_APPROVED_QUERY_NAMES = frozenset({"_", "t", "ts", "timestamp"})
+
+
+def is_web_approved_read(method: str, url: str) -> bool:
+    """Разрешённое директором чтение страницы входа: адрес буквально, без фрагмента.
+
+    Параметры допускаются только метки времени против кэша (`?_=1731300000000`): имя из
+    `WEB_APPROVED_QUERY_NAMES`, значение из цифр ASCII. Иначе через разрешённый адрес можно было
+    бы протащить действие или запись.
+    """
+    parts = urlsplit(url)
+    if parts.fragment or url.endswith(("?", "#")):
+        return False
+    if (method.upper(), parts.path) not in WEB_APPROVED_READS:
+        return False
+    try:
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
+    except ValueError:
+        return False
+    return all(
+        name in WEB_APPROVED_QUERY_NAMES and value.isascii() and value.isdigit()
+        for name, value in pairs
+    )
+
+
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:
     """Не пропустить изменяющий запрос к сети, учётным записям, сертификатам или сбросу.
 
@@ -726,6 +765,53 @@ def check_logout_window(method: str, url: str, body: str | None) -> None:
 def is_logout_label(label: str) -> bool:
     """Подпись выхода из системы; «Тревожный выход» и просто «Выход» не подходят."""
     return " ".join(label.lower().split()) in LOGOUT_LABELS
+
+
+# --- Чтение родного API (api-discovery, решение директора 09.11) --------------------------------
+# Сборщики карты родного API только читают, но у Dahua CGI и запись, и перезагрузка — тоже GET
+# (`configManager.cgi?action=setConfig`, `magicBox.cgi?action=reboot`). Глаголы записи ловит
+# `is_write_request`, перезагрузку и стирание — `check_web_danger`; здесь — то, что опасно именно
+# при чтении: выгрузка конфигурации с паролями, заводской сброс, бесконечные подписки на события.
+
+NATIVE_READ_METHODS = frozenset({"GET", "HEAD"})
+# по началу слова: «upgrader.cgi», «exportConfig»; «configurationdata» — выгрузка Hikvision целиком
+NATIVE_DANGER_PREFIXES = (
+    "export",
+    "backup",
+    "factory",
+    "attach",
+    "firmware",
+    "upgrad",
+    "configurationdata",
+)
+
+
+def check_native_read(method: str, url: str) -> None:
+    """Пропустить только безопасное чтение родного API камеры (Hikvision ISAPI, Dahua CGI и др.).
+
+    Args:
+        method: метод запроса.
+        url: адрес запроса на камере.
+
+    Raises:
+        TabooViolation: не GET/HEAD, путь из запрещённых, глагол записи, опасное действие или
+            признак выгрузки конфигурации, заводского сброса, обновления прошивки, подписки.
+    """
+    if method.upper() not in NATIVE_READ_METHODS:
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: родной API только читается")
+    check_http(method, url)
+    if is_write_request(method, url):
+        raise TabooViolation(f"{method.upper()} {url} не отправлен: похоже на запись (глагол)")
+    check_web_danger(method, url)
+    path, query = _target(url)
+    whole = _WORD.findall(f"{path} {query}".lower())  # «configurationData» без разбора camelCase
+    found = next(
+        (w for w in words(path, query) + whole if w.startswith(NATIVE_DANGER_PREFIXES)), None
+    )
+    if found:
+        raise TabooViolation(
+            f"{method.upper()} {url} не отправлен: опасно и при чтении (признак «{found}»)"
+        )
 
 
 # --- RTSP ---------------------------------------------------------------------------------------

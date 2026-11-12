@@ -25,6 +25,7 @@ from urllib.parse import urlencode
 
 from jsonschema import Draft7Validator
 
+from qa_tool.checks.rtsp_refusal import refused_password, remember_native_refusal
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -819,6 +820,10 @@ def api_ruver(ctx: CheckContext) -> CheckResult:
     Вход не удался — одна строка `API-RUVER-1`: операции не вызывались, строка на каждую
     только повторила бы причину 300 раз.
     """
+    refused = refused_password(ctx)
+    if refused:
+        # одна попытка входа на камеру и прогон: пароль уже отвергли RTSP, веб или родной API
+        return CheckResult.skipped(f"{refused}: новых попыток входа нет")
     api = load_map()
     start = time.monotonic()
     deadline = start + float(ctx.extra.get("api_budget_s", budget_s(api)))
@@ -837,6 +842,8 @@ def api_ruver(ctx: CheckContext) -> CheckResult:
             walk = Walk(ctx, client, api, deadline, deadline + RESERVE_S)
             rows = walk.run()
     except LoginRejected as e:
+        # отказ видят карта API (API-MAP-1), «Картинка», «Кодеки» и стресс: второй попытки нет
+        remember_native_refusal(ctx, str(e))
         return CheckResult.skipped(f"{e}: новых попыток входа нет")
     except (NoFreeSession, LoginFailed) as e:
         return CheckResult.stand_error(str(e))

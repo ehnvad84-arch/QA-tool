@@ -8,6 +8,7 @@ from qa_tool.core.checks import Status
 from qa_tool.core.models import Place
 from qa_tool.core.secrets import redact
 from qa_tool.core.store import RunStore
+from qa_tool.report.api_map import ApiAppendix, build_api_appendix
 from qa_tool.report.codec import CodecAppendix, build_codec_appendix
 from qa_tool.report.codec_history import attach_history
 from qa_tool.report.image import ImageAppendix, build_image_appendix
@@ -87,6 +88,7 @@ class Protocol:
     profiles: dict = field(default_factory=dict)  # матрица RUV-PROFILES-1: declared, matrix
     image: ImageAppendix | None = None  # Приложение 1 «Картинка»; None — строк IMAGE-* нет
     codec: CodecAppendix | None = None  # «Кодеки» — после «Картинки»; None — строк CODEC-* нет
+    api: ApiAppendix | None = None  # «API камеры» — после «Кодеков»; None — нет строки API-MAP-1
 
     @property
     def appendices(self) -> list[tuple[int, str]]:
@@ -96,6 +98,8 @@ class Protocol:
             found.append((1, "Картинка: снимки и замеры"))
         if self.codec:
             found.append((self.codec.number, "Кодеки: качество на битрейт"))
+        if self.api:
+            found.append((self.api.number, "API камеры: карта и сверка с ONVIF"))
         return found
 
 
@@ -201,6 +205,14 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
     codec = build_codec_appendix(rows, store.run_dir, allowed, 2 if image else 1)
     if codec is not None:
         attach_history(codec, store.run_dir, passport)
+    api = build_api_appendix(
+        rows,
+        store.run_dir,
+        allowed,
+        1 + bool(image) + bool(codec),
+        document=f"Карта API {store.run_id}-{slot}",
+        document_file=f"api_map_{slot}.html",
+    )
     return Protocol(
         protocol_id=store.protocol_id(slot),
         run_id=store.run_id,
@@ -223,6 +235,7 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         profiles=_profiles_matrix(store, rows),
         image=image,
         codec=codec,
+        api=api,
     )
 
 

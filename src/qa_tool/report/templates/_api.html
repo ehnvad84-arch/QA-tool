@@ -1,0 +1,90 @@
+{% set a = p.api %}
+<div class="page"></div>
+<h2>Приложение {{ a.number }}. API камеры: карта и сверка с ONVIF</h2>
+
+{% if a.alarm %}
+<table border="2" cellspacing="0" cellpadding="6" class="alarm"><tr><td>
+<b>{{ a.alarm }}.</b><br>{{ a.alarm_how }}
+{% if a.left %}
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>Параметр</th><th>Где</th><th>Было</th><th>Осталось</th><th>Как вернуть</th></tr></thead>
+  {% for l in a.left %}<tr><td>{{ l.param }}</td><td>{{ l.where }}</td><td>{{ l.was }}</td><td class="bad">{{ l.now }}</td><td>{{ l.how }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+</td></tr></table>
+{% endif %}
+{% for status, reason in a.lost %}
+{% if status == "не прошла" %}
+<table border="2" cellspacing="0" cellpadding="6" class="alarm"><tr><td>
+<b>Прошлый прогон оставил запись незакрытой — проверьте вручную.</b><br>{{ reason }}
+</td></tr></table>
+{% else %}
+<p>Журнал прошлого прогона · API-WRITE-LOST · <span class="st-{{ status | replace(' ', '-') }}">{{ status }}</span>: {{ reason }}</p>
+{% endif %}
+{% endfor %}
+
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+<b>Как читать.</b> <b>Родной API</b> — собственный интерфейс производителя (у Hikvision — ISAPI, у Dahua — CGI), через него работает веб-интерфейс камеры. <b>ONVIF</b> — общий стандарт, через него камеру видят регистраторы и программы видеонаблюдения.
+Одна и та же настройка есть в обоих; <b>пара</b> — «настройка ONVIF ↔ параметр родного API» и правило перевода шкалы. <b>Расхождение</b> значит, что камера сообщает одно и то же по-разному: один из ответов неверен, и регистратор по ONVIF увидит не то, что показывает веб-интерфейс.<br>
+{% if a.traffic %}Карта снята по трафику веб-обхода: значения — только те, что видела страница, поэтому сверки и автопоиска нет.
+{% elif a.allowed %}Изменяющие проверки разрешены: автопоиск менял настройки изображения и кодировщика по ONVIF и возвращал их.
+{% else %}Изменяющие проверки запрещены: пары взяты из библиотеки и таблиц программы, автопоиска не было.{% endif %}
+</td></tr></table>
+
+<h3>1. Сводка</h3>
+<table border="1" cellspacing="0" cellpadding="3">
+{% for title, value in a.summary %}<tr><th width="26%">{{ title }}</th><td>{{ value }}</td></tr>{% endfor %}
+{% if a.map_document %}<tr><th>Документ карты</th><td>{% if a.map_document_file %}<a href="{{ a.map_document_file }}">{{ a.map_document }}</a>{% else %}{{ a.map_document }}{% endif %} — экран «Протоколы», строка «Карта API»</td></tr>{% endif %}
+</table>
+
+<p>2. Возврат · API-RESTORE-1: {{ a.restore }}.</p>
+
+{% if not a.traffic %}
+<div class="page"></div>
+<h3>3. Сверка ONVIF ↔ родной API</h3>
+{% if a.matches %}
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>ID и настройка</th><th>ONVIF</th><th>Родной API</th><th>Шкала</th><th>Итог</th><th>Откуда пара</th></tr></thead>
+  {% for m in a.matches %}
+  <tr>
+    <td>{{ m.check_id }}<br>{{ m.title }}</td>
+    <td>{{ m.onvif_path }}{% if m.onvif_value %} = <span{% if m.bad %} class="bad"{% endif %}>{% if m.bad %}! {% endif %}{{ m.onvif_value }}</span>{% endif %}{% if m.onvif_range %}<br><span class="muted">{{ m.onvif_range }}</span>{% endif %}</td>
+    <td>{{ m.native_api }} {{ m.native_path }}{% if m.native_value %} = <span{% if m.bad %} class="bad"{% endif %}>{% if m.bad %}! {% endif %}{{ m.native_value }}</span>{% endif %}{% if m.native_allowed %}<br><span class="muted">{{ m.native_allowed }}</span>{% endif %}</td>
+    <td>{{ m.scale }}</td>
+    <td class="st-{{ m.status | replace(' ', '-') }}">{{ m.status }}{% if m.reason %}: {{ m.reason }}{% endif %}</td>
+    <td>{{ m.source }}{% if m.other_firmware %} <b>другая прошивка</b>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>API-MATCH-0: {{ a.no_pairs or "пар для сверки нет" }}</p>
+{% endif %}
+{% if a.without_pair %}<p class="muted">Без пары: {{ a.without_pair }} — см. п. 4.</p>{% endif %}
+<p class="muted">Подтвердить или исправить пару — правкой confirmed.json в папке библиотеки (F1: api-map-library).</p>
+
+<h3>4. Автопоиск · API-SEARCH-1{% if a.search_status %} · <span class="st-{{ a.search_status | replace(' ', '-') }}">{{ a.search_status }}</span>{% endif %}</h3>
+{% if a.searches %}
+<p>На каждую настройку — две записи по ONVIF, снимки родного API до и после, затем возврат и сверка всей карты с исходной. Известные пары заново не ищутся. {{ a.search_reason }}</p>
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>№</th><th>Настройка ONVIF</th><th>Записи</th><th>Что сдвинулось</th><th>Пара</th><th>Возврат</th></tr></thead>
+  {% for s in a.searches %}
+  <tr><td>{{ s.n if s.n is not none else "" }}</td><td>{{ s.title }}</td><td>{{ s.writes }}</td>
+    <td>{% for m in s.moved %}{% if m.startswith("!") %}<span class="bad">{{ m }}</span>{% else %}{{ m }}{% endif %}<br>{% endfor %}</td>
+    <td{% if s.bad %} class="bad"{% endif %}>{{ s.pair }}</td><td>{{ s.restored }}</td></tr>
+  {% endfor %}
+</table>
+{% elif a.allowed %}
+<p>{{ a.search_reason or "Автопоиск не запускался." }}</p>
+{% else %}
+<p class="muted">Автопоиск не запускался: изменяющие проверки запрещены сценарием.</p>
+{% endif %}
+{% endif %}
+
+<h3>{% if a.traffic %}3{% else %}5{% endif %}. Разделы карты</h3>
+<table border="1" cellspacing="0" cellpadding="2" style="font-size: 8pt">
+  <thead><tr><th>Раздел</th><th>Класс</th><th>Параметров</th><th>В парах</th><th>Расхождений</th><th>Примечание</th></tr></thead>
+  {% for s in a.sections %}
+  <tr><td>{{ s.section }}</td><td>{{ s.cls }}</td><td>{{ s.params }}</td><td>{{ s.paired }}</td><td{% if s.mismatched %} class="bad"{% endif %}>{{ s.mismatched }}</td><td>{{ s.note }}</td></tr>
+  {% endfor %}
+</table>
+<p class="muted">{% if a.sections_more %}Ещё разделов: {{ a.sections_more }}. {% endif %}Параметры, допустимые и текущие значения — в документе «{{ a.map_document or "Карта API" }}» (экран «Протоколы», строка «Карта API»).</p>

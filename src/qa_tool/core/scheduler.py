@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
+from qa_tool.core.api_map import LIBRARY_DIR, LIBRARY_KEY
 from qa_tool.core.checks import CheckResult, Phase, Status
 from qa_tool.core.models import Scenario, Stand, Threshold
 from qa_tool.core.secrets import get_password, redact
@@ -128,6 +129,8 @@ class Runner:
                 extra={
                     **self.extra,
                     **{j.folder_key: str(j.folder(self.stand.runs_dir)) for j in JOURNALS},
+                    # библиотека карт и пар родного API живёт рядом с прогонами (api-discovery, S7)
+                    LIBRARY_KEY: str(self.stand.runs_dir / LIBRARY_DIR),
                     RUN_ID_KEY: self.store.run_id,
                 },
                 allow_writes=self.scenario.allow_writes,
