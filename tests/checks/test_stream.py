@@ -51,7 +51,7 @@ def test_profile_token_from_camera_is_escaped():
     try:
         camera = ctx_for(cam).camera
         soap = SoapClient("admin", "admin", timeout=5)
-        profile, uri = stream.first_stream(soap, service_urls(soap, camera))
-        assert profile == "a&b" and uri.startswith("rtsp://")
+        profile, uri, source = stream.first_stream(soap, service_urls(soap, camera))
+        assert profile == "a&b" and uri.startswith("rtsp://") and source == "vs-1"
     finally:
         cam.stop()

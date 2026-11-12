@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>Сравнение картинки {{ c.run_id }}</title>
+{% include "_style.html" %}
+</head><body>
+<h1>СРАВНЕНИЕ КАРТИНКИ КАМЕР · ПРОГОН № {{ c.run_id }}</h1>
+<p class="muted">Все камеры снимали одну сцену одновременно. Камеры обозначены М1…М8 — номерами мест стенда.
+Камеры с разными диапазонами настроек сравниваются по процентам диапазона: 0 %, 50 %, 100 %.</p>
+<p>{% for slot, name in c.cameras %}<b>М{{ slot }}</b> — {{ name }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+<h2>Матрица: настройка × камера</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Настройка</th>{% for slot, name in c.cameras %}<th>М{{ slot }}</th>{% endfor %}</tr></thead>
+  {% for check_id, title, results in c.matrix %}
+  <tr><td><b>{{ title }}</b><br><span class="muted">{{ check_id }}</span></td>
+    {% for slot, name in c.cameras %}{% set st = results.get(slot, "—") %}
+    <td class="st-{{ st.split(':')[0] | replace(' ', '-') }}">{{ st }}</td>{% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+
+{% for s in c.sheets %}
+<div class="page"></div>
+<h2>{{ s.title }} <span class="muted">{{ s.check_id }}</span></h2>
+<p>Величина: {{ s.metric }}{% if s.unit %}, {{ s.unit }}{% endif %}.</p>
+<table border="1" cellspacing="0" cellpadding="3">
+  <tr><th>Положение</th>{% for cell in s.cells %}<th>М{{ cell.slot }}</th>{% endfor %}</tr>
+  {% for label in s.labels %}{% set i = loop.index0 %}
+  <tr><td><b>{{ label }}</b></td>
+    {% for cell in s.cells %}
+    <td align="center">{% if cell.thumbs[i] is defined %}<a href="{{ cell.fulls[i] }}"><img src="{{ cell.thumbs[i] }}" width="110"></a><br>{% endif %}{{ cell.values[i] if cell.values[i] is defined else "—" }}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+  <tr><td><b>Итог</b></td>{% for cell in s.cells %}<td class="st-{{ cell.status | replace(' ', '-') }}">{{ cell.status }}{% if cell.effect %}<br>эффект {{ cell.effect }}{% endif %}</td>{% endfor %}</tr>
+</table>
+{% if s.chart %}<p><img src="{{ s.chart }}" width="700"></p>{% endif %}
+{% endfor %}
+</body></html>

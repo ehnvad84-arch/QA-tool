@@ -17,6 +17,61 @@ if sys.platform.startswith("linux"):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # тесты окна и PDF без экрана
 
 
+_real_stderr_fd: int | None = None
+
+
+def pytest_configure(config):
+    """Копия настоящего stderr для сторожа: на время теста pytest подменяет fd 2 своим файлом,
+    и после `os._exit` перехваченное не печатается. В pytest_configure перехват ещё снят."""
+    global _real_stderr_fd
+    if os.environ.get("QA_TOOL_TEST_WATCHDOG_S"):
+        _real_stderr_fd = os.dup(sys.__stderr__.fileno())
+
+
+def _dump_and_exit(nodeid: str, limit_s: float) -> None:
+    """Напечатать зависший тест и стеки всех потоков и greenlet, затем снять прогон."""
+    import faulthandler
+    import gc
+    import traceback
+
+    fd = _real_stderr_fd if _real_stderr_fd is not None else sys.__stderr__.fileno()
+    out = os.fdopen(fd, "w", closefd=False)
+    print(f"\n!!! тест висит дольше {limit_s:.0f} с: {nodeid}", file=out, flush=True)
+    faulthandler.dump_traceback(file=out, all_threads=True)
+    try:
+        from greenlet import greenlet
+    except ImportError:
+        greenlet = None
+    if greenlet is not None:
+        for item in gc.get_objects():
+            if isinstance(item, greenlet) and item.gr_frame is not None:
+                print("--- greenlet:", file=out)
+                traceback.print_stack(item.gr_frame, file=out)
+    out.flush()
+    os._exit(3)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """Сторож CI: тест дольше QA_TOOL_TEST_WATCHDOG_S снимает прогон и называет себя.
+
+    faulthandler показывает только поток, а Playwright ждёт ответа драйвера в своём greenlet,
+    и стек самого теста не виден; без сторожа зависание съедало час задания CI.
+    """
+    limit = float(os.environ.get("QA_TOOL_TEST_WATCHDOG_S", "0"))
+    if limit <= 0:
+        return (yield)
+    import threading
+
+    timer = threading.Timer(limit, _dump_and_exit, (item.nodeid, limit))
+    timer.daemon = True
+    timer.start()
+    try:
+        return (yield)
+    finally:
+        timer.cancel()
+
+
 class MemoryKeyring(KeyringBackend):
     """Хранилище паролей в памяти: тесты не трогают системное."""
 

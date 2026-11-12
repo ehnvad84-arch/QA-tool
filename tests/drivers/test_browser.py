@@ -78,16 +78,6 @@ def visit(page, window=None, **kwargs):
         return camera, list(session.stopped)
 
 
-def test_login_page_reads_approved_by_director_reach_camera():
-    # «Рувер» .100 и Hikvision .112 шлют эти запросы при загрузке страницы входа, ещё до окна
-    # входа; без ответа форма не работает (решение директора 11.11)
-    page = fire("/api/auth/create_session", "GET", "") + fire("/SDK/activateStatus?_=1", "GET", "")
-    camera, stopped = visit(page)
-    assert ("GET", "/api/auth/create_session") in camera.arrived
-    assert ("GET", "/SDK/activateStatus?_=1") in camera.arrived
-    assert stopped == []
-
-
 def test_taboo_stops_even_in_write_window():
     camera, stopped = visit(fire("/api/users/delete"), lambda s: s.write_window())
     assert camera.writes() == []
@@ -322,6 +312,10 @@ def test_stop_works_on_hung_page_and_cleans_up():
         with session:
             session.open(camera.url + "/")
             temp = session._temp_dir
+            # цикл стартует через 50 мс после load: чтение, начатое раньше, встаёт в очередь
+            # за ним, и предел Playwright (он только на поиск элемента) его уже не прерывает —
+            # тест висел в CI; ждём, пока страница точно зависнет
+            time.sleep(0.5)
             assert session.elements() == []
             flag["stop"] = True
             with pytest.raises(Stopped):

@@ -29,6 +29,10 @@
   {% endfor %}
 </table>
 
+{% if s.image_compare %}
+<p><b>Сравнение картинки:</b> снимки всех камер рядом в положениях 0, 50 и 100 % и график по каждой настройке — <a href="image_compare.html">image_compare.html</a> (а также .pdf и .xlsx).</p>
+{% endif %}
+
 <h2>3. Задачи программистам по камерам</h2>
 <table border="1" cellspacing="0" cellpadding="4">
   <thead><tr><th>Место</th><th>Камера</th><th>Задач</th><th>Из них блокеров</th></tr></thead>

@@ -10,6 +10,7 @@ from qa_tool.checks.onvif.excluded import EXCLUDED
 from qa_tool.core.checks import REGISTRY, CheckContext, Status, run_check
 from qa_tool.core.models import Camera, Place
 from qa_tool.core.taboo import FORBIDDEN_ONVIF
+from qa_tool.drivers.camera.taboo_proxy import TabooProxy
 from tests.mock_camera import start_fleet
 
 load_all()
@@ -225,3 +226,16 @@ def test_every_changing_doorcontrol_test_is_excluded():
         if impl.requires_writes and i.startswith("DOORCONTROL")
     }
     assert changing and changing <= set(EXCLUDED)  # новая версия onvif-tt — сверить
+
+
+def test_report_without_any_test_is_a_stand_error(monkeypatch):
+    def fake(_ctx, _proxy, report, _timeout, _writes):
+        report.write_text('{"results": [], "summary": {"total": 0}}', encoding="utf-8")
+        return "нет связи"
+
+    monkeypatch.setattr(onvif_tt, "run_onvif_tt", fake)
+    camera = Camera(slot=1, address="127.0.0.1", username="admin")
+    ctx = CheckContext(camera, "admin", Place.COLOR_BOX)
+    result = onvif_tt._run(ctx, TabooProxy("127.0.0.1", 1), False)
+    assert result.status is Status.STAND_ERROR
+    assert not result.children

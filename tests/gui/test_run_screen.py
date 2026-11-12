@@ -269,3 +269,23 @@ def test_s13_run_ended_while_question_was_open(qtbot, tmp_path, fleet):  # noqa:
     window.ask_stop = finished_meanwhile
     assert window.close() is True
     assert not window.close_after_run
+
+
+def test_sync_notice_and_progress_line_are_shown(qtbot, tmp_path, fleet):  # noqa: F811
+    from qa_tool.core.scheduler import Event
+    from qa_tool.gui.help import HELP_ID
+
+    window = make_window(qtbot, tmp_path, fleet[:1], registry_ref=FAKE, checks=["FAKE-PASSPORT-1"])
+    run = screen(window, RunScreen)
+    window.menu.setCurrentRow(3)
+    assert not run.notice.isVisibleTo(window)
+    run._on_event(Event("phase", title="синхронная стенда", phase=2))
+    assert run.notice.isVisibleTo(window)
+    assert run.notice.property(HELP_ID) == "run-sync" and run.notice.toolTip()
+    run._on_event(Event("started", 1, "IMAGE-EFFECT-1", "Картинка: эффект настроек"))
+    run._on_event(Event("progress", 1, "IMAGE-EFFECT-1", detail="Контраст · 50 % · 2 из 9"))
+    run.card.show_view(run.view.slots[1])
+    texts = [w.text() for w in run.card.steps.body.findChildren(type(run.notice))]
+    assert any(t.startswith("Контраст · 50 % · 2 из 9 · 0:0") for t in texts), texts
+    run._on_event(Event("finished", detail="QA-1"))
+    assert not run.notice.isVisibleTo(window)

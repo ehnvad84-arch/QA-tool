@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from tests.mock_onvif import ENVELOPE_NS, OnvifServices, OnvifState
-from tests.mock_rtsp import MockRtspServer
+from tests.mock_onvif import ENVELOPE_NS, IMAGING_FULL, OnvifServices, OnvifState
+from tests.mock_rtsp import MockRtspServer, imaging_video
 
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
@@ -54,11 +54,12 @@ def _envelope(body: str) -> bytes:
     ).encode()
 
 
-def _fault(reason: str, subcode: str = "ter:NotAuthorized") -> bytes:
+def _fault(reason: str, subcode: str = "ter:NotAuthorized", detail: str = "") -> bytes:
     return _envelope(
         "<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode>"
         f"<s:Value>{subcode}</s:Value></s:Subcode></s:Code>"
-        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason></s:Fault>'
+        f'<s:Reason><s:Text xml:lang="en">{reason}</s:Text></s:Reason>'
+        f"{f'<s:Detail>{detail}</s:Detail>' if detail else ''}</s:Fault>"
     )
 
 
@@ -92,8 +93,13 @@ class MockCamera:
             require_unsupported=self.state.replay_require_unsupported,
             udp=self.state.rtsp_udp,
             udp_blackhole=self.state.rtsp_udp_blackhole,
+            range_silent=self.state.replay_range_silent,
+            picture=self._picture if self.state.imaging_video else None,
         )
         self._threads: list[threading.Thread] = []
+
+    def _picture(self) -> bytes | None:
+        return imaging_video(self.state.picture())
 
     @property
     def port(self) -> int:
@@ -198,10 +204,13 @@ class MockCamera:
         services = OnvifServices(
             self.state, f"http://127.0.0.1:{self.port}/onvif", f"rtsp://127.0.0.1:{self.rtsp_port}"
         )
+        services.envelope = root
         answer = services.handle(operation, body[0])
         if answer is not None:
             return 200, _envelope(answer)
-        return 400, _fault(f"Action not supported: {operation}")
+        if services.fault:
+            return 500, _fault(services.fault, services.fault, services.fault_detail)
+        return 400, _fault(f"Action not supported: {operation}", "ter:ActionNotSupported")
 
     def _handler(self):
         camera = self
@@ -292,7 +301,9 @@ class DiscoveryResponder:
         ).encode()
 
 
-def start_fleet(count: int, with_discovery: bool = False):
+def start_fleet(count: int, with_discovery: bool = False, imaging: bool = False):
+    """Запустить `count` виртуальных камер; `imaging` — с полными настройками картинки и видео,
+    которое от них зависит (проверка картинки, этап 7)."""
     cameras = [
         MockCamera(
             Passport(
@@ -300,7 +311,8 @@ def start_fleet(count: int, with_discovery: bool = False):
                 model=f"MOCK-{i + 1}",
                 firmware=f"0.{i + 1}.0",
                 serial=f"SN{i + 1:04d}",
-            )
+            ),
+            state=OnvifState(imaging_xml=IMAGING_FULL, imaging_video=True) if imaging else None,
         ).start()
         for i in range(count)
     ]
@@ -324,7 +336,7 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=8)
     parser.add_argument("--write-stand", type=Path, help="записать stand.yaml для первых 8 камер")
     args = parser.parse_args()
-    cameras, responder = start_fleet(args.count, with_discovery=True)
+    cameras, responder = start_fleet(args.count, with_discovery=True, imaging=True)
     for cam in cameras:
         p = cam.passport
         print(f"{p.manufacturer:<10} {p.model:<8} {cam.xaddr}  rtsp:{cam.rtsp_port}")

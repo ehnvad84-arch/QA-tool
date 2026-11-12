@@ -1,0 +1,174 @@
+<!doctype html>
+<!-- Макет отчёта сравнения камер по картинке image_compare.html / .pdf (ui-designer, этап 1).
+     Только таблицы и атрибуты width/height: этот же HTML печатает в PDF QTextDocument.
+     Серые ячейки — заглушки миниатюр; график здесь нарисован SVG только для макета, в отчёте — PNG из report/charts.py.
+     Пример — 8 камер, лист A4 альбомный, поле 273 × 186 мм. Данные выдуманы.
+
+     Геометрия PDF (поле 273 × 186 мм; колонка подписей 16 мм, на камеры 257 мм):
+       ширина рамки миниатюры = min(45 мм, 257 мм / N − 3 мм), высота — 16:9 от ширины;
+       2–5 камер: 45 × 25 мм, сетка ≈ 103 мм; 6 камер: 39 × 22 мм, ≈ 94 мм; 8 камер: 29 × 16 мм, ≈ 76 мм;
+       + заголовок и строка величины ≈ 18 мм, график 55 мм, подпись под графиком ≈ 6 мм → лист 155–182 мм;
+       разрыв страницы перед каждой настройкой: 1 лист матрицы + 9 листов настроек = 10 листов;
+       миниатюра 480 px на 29 мм при 150 точках на дюйм (≈ 170 px) — с запасом;
+       кадр вписывается в рамку с сохранением пропорций, атрибуты width и height считает report/image.py
+       (QTextDocument не знает max-width и object-fit); нет кадра — серая рамка того же размера, сетка не сдвигается.
+     График (PNG, report/charts.py, QPainter, шрифт PT Sans из gui/fonts):
+       1500 × 330 px (≈ 255 × 55 мм), в HTML — до 1000 px;
+       X — «0 %», «50 %», «100 %» диапазона камеры; у «вкл/выкл» точки на 0 и 100 % с подписями «выкл»/«вкл»;
+       Y — величина с единицей; у относительных — «% от значения в 0 %» и опорная линия на 100 %;
+       порог не рисуется (у абсолютных величин разная точка отсчёта) — он в строке над сеткой;
+       нет значения — нет точки, линия обрывается; камера без данных — без линии, причина под графиком.
+     HTML-вариант (флаг media="html"): миниатюры 150 px (8 камер ≈ 1300 px), снимок — ссылка на превью,
+       ячейка матрицы — якорь на лист настройки, широкая сетка прокручивается внутри обёртки (overflow-x: auto). -->
+<html lang="ru"><head><meta charset="utf-8">
+<title>Макет: сравнение камер, картинка</title>
+<style>
+  body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #111; }
+  h1 { font-size: 15pt; margin: 0 0 4pt 0; }
+  h2 { font-size: 12pt; margin: 14pt 0 4pt 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #e8e8e8; text-align: left; }
+  td, th { vertical-align: top; }
+  .muted { color: #555; }
+  .thumb { background: #2b2824; color: #b1a99d; text-align: center; vertical-align: middle; font-size: 7pt; }
+  .noimg { background: #eeeeee; color: #555; text-align: center; vertical-align: middle; font-size: 7pt; }
+  /* ячейки матрицы: фон — те же заливки, что в Excel-протоколе, текст — те же цвета статусов */
+  .c-прошла { background: #d9ead3; color: #11632a; }
+  .c-не-прошла { background: #f4cccc; color: #a11212; font-weight: bold; }
+  .c-ошибка-стенда { background: #fce5cd; color: #8a5a00; }
+  .c-пропущена { background: #eeeeee; color: #555; }
+  .pagebreak { page-break-before: always; }
+  .val { font-size: 8pt; }
+</style>
+</head><body>
+
+<!-- ============ Лист 1: шапка, камеры, матрица итогов ============ -->
+<h1>СРАВНЕНИЕ КАМЕР: КАРТИНКА · прогон QA-20261120-002</h1>
+<p class="muted">Начат 20.11.2026 10:02 · место стенда: цветовой бокс · сцена: обычная · изменяющие проверки разрешены · qa-tool 0.7.0</p>
+<p>Каждая настройка ставилась в 0 %, 50 % и 100 % диапазона, который объявила сама камера. Камеры с разным диапазоном сравниваются по процентам диапазона, а не по числам.
+Обозначения М1…М8 — места стенда.</p>
+
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th width="6%">Место</th><th>Камера</th><th>Прошивка</th><th>Протокол</th><th>Режим экспозиции</th><th>Кадр</th></tr></thead>
+  <tr><td>М1</td><td>Рувер IPC-2M</td><td>1.4.2</td><td>QA-20261120-002-1</td><td>автоматический</td><td>1920 × 1080, H.264</td></tr>
+  <tr><td>М2</td><td>Hikvision DS-2CD2043</td><td>5.7.3</td><td>QA-20261120-002-2</td><td>автоматический</td><td>2688 × 1520, H.265</td></tr>
+  <tr><td>М3</td><td>Dahua IPC-HFW2431</td><td>2.820</td><td>QA-20261120-002-3</td><td>не сообщает (считается автоматическим)</td><td>2560 × 1440, H.264</td></tr>
+  <tr><td colspan="6" class="muted">… М4–М8 …</td></tr>
+</table>
+
+<h2>Итоги: настройка × камера</h2>
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th width="16%">Настройка</th><th>М1</th><th>М2</th><th>М3</th><th>М4</th><th>М5</th><th>М6</th><th>М7</th><th>М8</th></tr></thead>
+  <tr><td>Яркость</td>
+    <td class="c-прошла">прошла<br>эффект есть</td><td class="c-прошла">прошла<br>эффект есть</td><td class="c-не-прошла">не прошла<br>эффекта нет</td>
+    <td class="c-прошла">прошла<br>эффект есть</td><td class="c-прошла">прошла<br>эффект есть</td><td class="c-пропущена">пропущена<br>автоэкспозиция</td>
+    <td class="c-прошла">прошла<br>упор в пределы</td><td class="c-ошибка-стенда">ошибка стенда<br>сцена менялась</td></tr>
+  <tr><td>Контраст</td>
+    <td class="c-пропущена">пропущена<br>автоэкспозиция</td><td class="c-прошла">прошла<br>эффект есть</td><td class="c-не-прошла">не прошла<br>обратный</td>
+    <td class="c-прошла">прошла<br>эффект есть</td><td class="c-не-прошла">не прошла<br>неровный</td><td class="c-прошла">прошла<br>эффект есть</td>
+    <td class="c-не-прошла">не прошла<br>на части диапазона</td><td class="c-пропущена">пропущена<br>не поддерживается</td></tr>
+  <tr><td colspan="9" class="muted">… остальные 7 настроек …</td></tr>
+  <tr><td><b>Итого «прошла»</b></td><td>6 из 9</td><td>8 из 9</td><td>3 из 9</td><td>7 из 9</td><td>5 из 9</td><td>6 из 9</td><td>5 из 9</td><td>4 из 9</td></tr>
+</table>
+<p class="muted">«Пропущена» и «ошибка стенда» — не дефект камеры. Подробности по каждой камере — в её протоколе, Приложение 1.</p>
+
+<!-- ============ Лист на настройку: сетка снимков + график ============ -->
+<h2 class="pagebreak">Яркость · IMAGE-BRIGHT-1</h2>
+<p>Величина: средняя яркость кадра, уровни 0–255. Ожидается рост на каждом шаге не меньше чем на 3,0 (стартовое значение: уточнить по эталонным камерам).</p>
+
+<!-- Колонка подписи 16 мм + 8 колонок по 32 мм; миниатюра вписана в рамку 29 × 16 мм с сохранением пропорций -->
+<table border="1" cellspacing="0" cellpadding="2">
+  <thead><tr><th width="6%"></th>
+    <th>М1 · Рувер IPC-2M</th><th>М2 · Hikvision DS-2CD2043</th><th>М3 · Dahua IPC-HFW2431</th><th>М4 · …</th>
+    <th>М5 · …</th><th>М6 · …</th><th>М7 · …</th><th>М8 · …</th></tr></thead>
+  <tr><th>0 %</th>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М1 · 0 %</td></tr></table><span class="val">82,4 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М2 · 0 %</td></tr></table><span class="val">70,1 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М3 · 0 %</td></tr></table><span class="val">120,3 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М4 · 0 %</td></tr></table><span class="val">64,0 · знач. −50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М5 · 0 %</td></tr></table><span class="val">90,2 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М6 · 0 %</td></tr></table><span class="val">118,0 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М7 · 0 %</td></tr></table><span class="val">101,7 · знач. 1</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="104" height="58">не снимался:<br>сцена менялась</td></tr></table><span class="val">—</span></td>
+  </tr>
+  <tr><th>50 %</th>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М1 · 50 %</td></tr></table><span class="val">121,0 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М2 · 50 %</td></tr></table><span class="val">118,6 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М3 · 50 %</td></tr></table><span class="val">120,9 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М4 · 50 %</td></tr></table><span class="val">112,5 · знач. 0</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М5 · 50 %</td></tr></table><span class="val">128,8 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М6 · 50 %</td></tr></table><span class="val">118,4 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М7 · 50 %</td></tr></table><span class="val">190,3 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="104" height="58">не снимался</td></tr></table><span class="val">—</span></td>
+  </tr>
+  <tr><th>100 %</th>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М1 · 100 %</td></tr></table><span class="val">163,5 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М2 · 100 %</td></tr></table><span class="val">170,2 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М3 · 100 %</td></tr></table><span class="val">121,2 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М4 · 100 %</td></tr></table><span class="val">160,9 · знач. 50</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М5 · 100 %</td></tr></table><span class="val">166,0 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М6 · 100 %</td></tr></table><span class="val">119,0 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="104" height="58">М7 · 100 %</td></tr></table><span class="val">236,0 · знач. 100</span></td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="104" height="58">не снимался</td></tr></table><span class="val">—</span></td>
+  </tr>
+  <tr><th>Итог</th>
+    <td class="c-прошла">прошла</td><td class="c-прошла">прошла</td><td class="c-не-прошла">не прошла: эффекта нет</td><td class="c-прошла">прошла</td>
+    <td class="c-прошла">прошла</td><td class="c-пропущена">пропущена: автоэкспозиция</td><td class="c-прошла">прошла: упор в пределы сцены</td><td class="c-ошибка-стенда">ошибка стенда: сцена менялась</td>
+  </tr>
+</table>
+
+<!-- График: PNG 1500 × 330 px (≈ 255 × 55 мм при 150 точек на дюйм). Здесь — SVG-набросок только для макета. -->
+<p><b>Средняя яркость кадра по положениям настройки</b> <span class="muted">· ось X — положение в диапазоне камеры, ось Y — величина как есть</span></p>
+<svg width="1000" height="230" viewBox="0 0 1000 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Arial" font-size="12">
+  <rect x="0" y="0" width="1000" height="230" fill="#ffffff"/>
+  <!-- оси и сетка -->
+  <line x1="70" y1="200" x2="820" y2="200" stroke="#555"/><line x1="70" y1="20" x2="70" y2="200" stroke="#555"/>
+  <line x1="70" y1="110" x2="820" y2="110" stroke="#e8e8e8"/><line x1="70" y1="20" x2="820" y2="20" stroke="#e8e8e8"/>
+  <text x="62" y="204" text-anchor="end">50</text><text x="62" y="114" text-anchor="end">150</text><text x="62" y="24" text-anchor="end">250</text>
+  <text x="90" y="220" text-anchor="middle">0 %</text><text x="445" y="220" text-anchor="middle">50 %</text><text x="800" y="220" text-anchor="middle">100 %</text>
+  <text x="14" y="110" transform="rotate(-90 14 110)" text-anchor="middle">уровни 0–255</text>
+  <!-- М1: синий, круг, сплошная -->
+  <polyline points="90,170 445,135 800,97" fill="none" stroke="#0072B2" stroke-width="2.5"/>
+  <circle cx="90" cy="170" r="5" fill="#0072B2"/><circle cx="445" cy="135" r="5" fill="#0072B2"/><circle cx="800" cy="97" r="5" fill="#0072B2"/>
+  <text x="812" y="101" fill="#0072B2">М1</text>
+  <!-- М2: тёмная киноварь, квадрат, сплошная -->
+  <polyline points="90,182 445,138 800,92" fill="none" stroke="#B84A00" stroke-width="2.5"/>
+  <rect x="85" y="177" width="10" height="10" fill="#B84A00"/><rect x="440" y="133" width="10" height="10" fill="#B84A00"/><rect x="795" y="87" width="10" height="10" fill="#B84A00"/>
+  <text x="812" y="86" fill="#B84A00">М2</text>
+  <!-- М3: зелёный, треугольник, сплошная — эффекта нет -->
+  <polyline points="90,137 445,137 800,136" fill="none" stroke="#007F5F" stroke-width="2.5"/>
+  <polygon points="90,131 95,141 85,141" fill="#007F5F"/><polygon points="445,131 450,141 440,141" fill="#007F5F"/><polygon points="800,130 805,140 795,140" fill="#007F5F"/>
+  <text x="812" y="140" fill="#007F5F">М3 — эффекта нет</text>
+  <!-- М7: серый, «плюс», штрих — упор в пределы сцены -->
+  <polyline points="90,153 445,74 800,32" fill="none" stroke="#6E6E6E" stroke-width="2.5" stroke-dasharray="8 4"/>
+  <text x="812" y="36" fill="#6E6E6E">М7</text>
+  <text x="600" y="190" fill="#555">… М4–М6 — свои цвет, значок и штрих</text>
+</svg>
+<p class="muted">Нет линии: М6 — пропущена (автоэкспозиция), М8 — ошибка стенда (сцена менялась).
+Линии различаются цветом, значком точки и штрихом, у конца каждой — подпись места: график читается и в чёрно-белой печати.</p>
+
+<!-- ============ Вариант без галочки «изменяющие» (S7) ============ -->
+<h2 class="pagebreak">Вариант без галочки «изменяющие»: текущие кадры и значения</h2>
+<table border="1" cellspacing="0" cellpadding="6"><tr><td class="c-пропущена">
+  Изменяющие проверки были запрещены сценарием: настройки камер не менялись, эффект настроек не проверялся.
+  Ниже — текущий кадр каждой камеры и текущие значения настроек в процентах их диапазона.
+</td></tr></table>
+<br>
+<table border="1" cellspacing="0" cellpadding="2">
+  <tr>
+    <td width="25%"><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">М1 · текущий кадр</td></tr></table>М1 · Рувер IPC-2M</td>
+    <td width="25%"><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">М2 · текущий кадр</td></tr></table>М2 · Hikvision DS-2CD2043</td>
+    <td width="25%"><table border="0" cellspacing="0" cellpadding="0"><tr><td class="thumb" width="230" height="129">М3 · текущий кадр</td></tr></table>М3 · Dahua IPC-HFW2431</td>
+    <td><table border="0" cellspacing="0" cellpadding="0"><tr><td class="noimg" width="230" height="129">кадр не получен:<br>нет ключевого кадра за 12 с</td></tr></table>М4 · …</td>
+  </tr>
+  <tr><td colspan="4" class="muted">… вторая строка: М5–М8 …</td></tr>
+</table>
+<br>
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th width="16%">Настройка</th><th>М1</th><th>М2</th><th>М3</th><th>М4</th><th>М5…М8</th></tr></thead>
+  <tr><td>Яркость</td><td>50 <span class="muted">(50 % от 0–100)</span></td><td>50 <span class="muted">(50 %)</span></td><td>58 <span class="muted">(58 %)</span></td><td>0 <span class="muted">(50 % от −50…50)</span></td><td>…</td></tr>
+  <tr><td>WDR</td><td>выкл</td><td>вкл, 30 <span class="muted">(30 %)</span></td><td>не объявлена</td><td>выкл</td><td>…</td></tr>
+  <tr><td colspan="6" class="muted">…</td></tr>
+</table>
+
+</body></html>

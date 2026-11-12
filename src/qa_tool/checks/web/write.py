@@ -22,9 +22,9 @@ from qa_tool.checks.web.limits import limit
 from qa_tool.checks.web.login import Entry, login_for_restore
 from qa_tool.checks.web.probe import Row
 from qa_tool.core.checks import CheckContext, CheckResult, Severity, Status
-from qa_tool.core.web_journal import (
-    FOLDER_KEY,
+from qa_tool.core.write_journal import (
     RUN_ID_KEY,
+    WEB,
     PendingWrite,
     clear,
     load,
@@ -102,7 +102,7 @@ class Writer:
         self.ctx = ctx
         self.session = session
         self.reopen = reopen
-        self.folder = Path(ctx.extra[FOLDER_KEY]) if FOLDER_KEY in ctx.extra else None
+        self.folder = Path(ctx.extra[WEB.folder_key]) if WEB.folder_key in ctx.extra else None
         self.done = 0
         self.restored = 0
         self.halted = ""

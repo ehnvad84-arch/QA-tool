@@ -213,3 +213,27 @@ def test_api_step_counts_operations():
 def test_stream_step_counts_rows():
     step = Step("09:12", "STREAM-PARAMS-1", "Параметры потоков", parts=["прошла"] * 6)
     assert step.label == "Параметры потоков: 6 строк"
+
+
+def test_image_progress_line_and_sync_phase():
+    from datetime import timedelta
+
+    view = RunView(2)
+    view.reset(1, Camera(slot=1, address="10.0.0.5", username="admin"), 2)
+    start = datetime(2026, 11, 9, 10, 0, 0)
+    view.apply(Event("phase", title="синхронная стенда", phase=2), start)
+    assert view.sync_phase
+    view.apply(Event("started", 1, "IMAGE-EFFECT-1", "Картинка: эффект настроек"), start)
+    later = start + timedelta(minutes=1, seconds=40)
+    view.apply(Event("progress", 1, "IMAGE-EFFECT-1", detail="Контраст · 50 % · 2 из 9"), later)
+    step = view.slots[1].steps[0]
+    assert step.progress == "Контраст · 50 % · 2 из 9 · 1:40"
+    view.apply(Event("progress", 1, "OTHER-1", detail="чужая"), later)
+    assert step.progress.startswith("Контраст")  # ход чужой проверки не подменяет строку
+    view.apply(Event("finished"), later)
+    assert not view.sync_phase
+
+
+def test_image_step_counts_rows():
+    step = Step("09:12", "IMAGE-EFFECT-1", "Картинка: эффект настроек", parts=["прошла"] * 11)
+    assert step.label == "Картинка: эффект настроек: 11 строк"

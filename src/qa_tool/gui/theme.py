@@ -223,6 +223,9 @@ QFrame[role="panel"] {{
 QFrame[role="task"] {{
     background: {p.list}; border: 1px solid {p.border}; border-radius: 8px; }}
 QLabel[role="muted"] {{ color: {p.muted}; }}
+QLabel[role="progress"] {{ color: {p.muted}; font-size: 12px; }}
+QLabel[role="notice"] {{
+    background: {p.stand_bg}; border-radius: 8px; padding: 8px 12px; font-weight: bold; }}
 QLabel[role="h1"] {{ font-size: 24px; font-weight: bold; }}
 QLabel[role="h2"] {{ font-size: 16px; font-weight: bold; }}
 QLabel[role="time"] {{ font-family: "{MONO}"; font-size: 12px; color: {p.muted}; }}

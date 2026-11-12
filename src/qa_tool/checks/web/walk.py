@@ -25,9 +25,9 @@ from qa_tool.core.checks import (
     Status,
     scrub,
 )
-from qa_tool.core.web_journal import (
-    FOLDER_KEY,
+from qa_tool.core.write_journal import (
     RUN_ID_KEY,
+    WEB,
     PendingWrite,
     load,
     lost_write_result,
@@ -97,7 +97,7 @@ class _Walk:
         return True
 
     def _journal(self) -> PendingWrite | None:
-        folder = self.ctx.extra.get(FOLDER_KEY)
+        folder = self.ctx.extra.get(WEB.folder_key)
         camera = self.ctx.camera
         return load(Path(folder), camera.address, camera.port) if folder else None
 

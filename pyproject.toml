@@ -19,6 +19,8 @@ dependencies = [
     "jsonschema>=4",
     # Браузер веб-обхода (этап 5): строгая версия, потому что ревизия Chromium привязана к пакету.
     "playwright==1.64.0",
+    "lxml>=5",
+    "numpy>=2",
 ]
 
 [project.scripts]
