@@ -11,6 +11,10 @@ export QA_FFMPEG_BIN="$(uv run python packaging/fetch.py ffmpeg-linux)"
 appimagetool="$(uv run python packaging/fetch.py appimagetool)"
 runtime="$(uv run python packaging/fetch.py appimage-runtime)"
 
+# ревизия браузера привязана к версии пакета playwright; до PyInstaller — он берёт папку целиком
+PLAYWRIGHT_BROWSERS_PATH="$root/build/browser" uv run playwright install --only-shell chromium
+packaging/linux/browser_libs.sh "$root/build/browser" "$root/build/browser-libs"
+
 uv run python packaging/make_icon.py build/icon
 cp build/icon/icon.ico packaging/icon.ico 2>/dev/null || true
 uv run pyinstaller --noconfirm --clean --distpath build/pyinstaller --workpath build/work packaging/qa-tool.spec

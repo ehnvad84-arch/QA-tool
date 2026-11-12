@@ -16,6 +16,7 @@ MODULES = [
     "qa_tool.checks.stream.params",
     "qa_tool.checks.stream.network",
     "qa_tool.checks.stream.stress",
+    "qa_tool.checks.web.walk",
 ]
 
 

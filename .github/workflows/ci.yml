@@ -29,6 +29,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Windows ]; then target=ffmpeg-windows; else target=ffmpeg-linux; fi
           uv run python packaging/fetch.py "$target" >> "$GITHUB_PATH"
+      - name: Браузер для тестов веб-обхода
+        run: uv run playwright install --with-deps --only-shell chromium
       - name: Линтер
         run: uv run ruff check . && uv run ruff format --check .
       - name: Правила комментирования (docs/rules/comments.md)
@@ -69,6 +71,10 @@ jobs:
           "$app" --appimage-extract-and-run doctor
       - name: Модуль ONVIF собранной программой против виртуальной камеры
         run: uv run python packaging/smoke_onvif.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
+      - name: Веб-обход собранной программой без скачиваний
+        run: uv run python packaging/smoke_web.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
+      - name: Размер установщика
+        run: du -h dist/*.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: QA-tool-linux-AppImage
@@ -89,6 +95,11 @@ jobs:
           build\pyinstaller\qa-tool\qa-tool-cli.exe doctor
       - name: Модуль ONVIF собранной программой против виртуальной камеры
         run: uv run python packaging/smoke_onvif.py build\pyinstaller\qa-tool\qa-tool-cli.exe
+      - name: Веб-обход собранной программой без скачиваний
+        run: uv run python packaging/smoke_web.py build\pyinstaller\qa-tool\qa-tool-cli.exe
+      - name: Размер установщика
+        shell: pwsh
+        run: Get-Item dist\*-setup.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB)}}
       - uses: actions/upload-artifact@v4
         with:
           name: QA-tool-windows-setup

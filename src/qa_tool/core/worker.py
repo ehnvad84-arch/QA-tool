@@ -12,6 +12,7 @@ import importlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.core.checks import (
     CREDENTIALS_REJECTED,
     FIRST_CHECK,
@@ -105,6 +106,8 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
 
     def send_result(check_id: str, result: CheckResult, started: str) -> None:
         outbox.put(("result", slot, check_id, result, started))
+        if PASSPORT_KEY in result.data:
+            ctx.extra[PASSPORT_KEY] = result.data[PASSPORT_KEY]  # веб-обходу нужен производитель
         rows = [(c.check_id, c.result) for c in result.children] or [(check_id, result)]
         for row_id, row in rows:
             previous[row_id] = (row.status.value, row.reason)

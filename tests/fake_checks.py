@@ -6,6 +6,7 @@ from pathlib import Path
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Severity, Status
+from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, PendingWrite, save
 
 REGISTRY = Registry()
 
@@ -42,6 +43,34 @@ _register("FAKE-SLOW-1", 1.0)
 _register("FAKE-SLOW-2", 1.0)
 _register("FAKE-SLOW-3", 1.0)
 _register("FAKE-HANG-1", 30, timeout_s=1)
+
+
+@REGISTRY.check(
+    "FAKE-WRITE-HANG",
+    module="web",
+    title="Запись и зависание",
+    description="",
+    phase=Phase.NETWORK,
+    timeout_s=1,
+)
+def write_and_hang(ctx):
+    """Записать журнал и зависнуть: планировщик снимет процесс посреди записи."""
+    entry = PendingWrite(
+        ctx.extra[RUN_ID_KEY],
+        ctx.camera.slot,
+        ctx.camera.address,
+        ctx.camera.port,
+        "generic",
+        "http://admin:x@cam/image?token=abc#/video",
+        "Яркость",
+        "range",
+        "50",
+        "60",
+        "sent",
+    )
+    save(Path(ctx.extra[FOLDER_KEY]), entry)
+    time.sleep(30)
+    return CheckResult.skipped("сюда процесс не дойдёт")
 
 
 def _fails_after(seconds: float):

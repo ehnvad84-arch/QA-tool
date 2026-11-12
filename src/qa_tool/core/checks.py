@@ -270,8 +270,31 @@ def run_check(spec: CheckSpec, ctx: CheckContext, skip: str | None = None) -> Ch
                 child.result = CheckResult.stand_error("проверка не сохранила доказательство")
     elif result.status is Status.PASSED and not result.evidence:
         result = CheckResult.stand_error("проверка не сохранила доказательство")
+    scrub(result, [ctx.password])
     result.duration_s = time.monotonic() - start
     return result
+
+
+def scrub(result: CheckResult, known_secrets: list[str]) -> None:
+    """Вырезать известные секреты из текстов результата, строк и текстовых доказательств.
+
+    `RunStore` знает только общие признаки секретов, а камера может вывести пароль как есть:
+    например, в консоль браузера. Известный пароль есть только здесь.
+
+    Args:
+        result: результат проверки; меняется на месте.
+        known_secrets: пароль камеры, куки сессии.
+    """
+    known = [secret for secret in known_secrets if secret]
+    for item in (result, *(child.result for child in result.children)):
+        item.reason = redact(item.reason, known)
+        item.expected = redact(item.expected, known)
+        item.actual = redact(item.actual, known)
+        for evidence in item.evidence:
+            if isinstance(evidence.content, str):
+                evidence.content = redact(evidence.content, known)
+    for child in result.children:
+        child.title = redact(child.title, known)
 
 
 REGISTRY = Registry()

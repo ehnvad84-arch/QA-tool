@@ -1,6 +1,6 @@
 [project]
 name = "qa-tool"
-version = "0.4.1"
+version = "0.5.0"
 description = "Стенд проверки IP-камер: ONVIF, API, веб, интерфейсы, картинка — до 8 камер одновременно"
 readme = "AGENTS.md"
 requires-python = ">=3.12,<3.13"
@@ -17,6 +17,8 @@ dependencies = [
     "onvif-tt @ git+https://github.com/OpenIPC/onvif-tt@8866b251bc63a3c746ca3f9b6544bdfcfcfa90df",
     "pytest>=8",
     "jsonschema>=4",
+    # Браузер веб-обхода (этап 5): строгая версия, потому что ревизия Chromium привязана к пакету.
+    "playwright==1.64.0",
 ]
 
 [project.scripts]
