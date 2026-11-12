@@ -127,6 +127,17 @@ def test_stress_duration_chosen_from_ten_minute_steps(qtbot, tmp_path, fleet):
     assert load_scenario(tmp_path / "scenario.yaml").stress_minutes == 40
 
 
+def test_stress_checkbox_unlocks_duration_and_is_saved(qtbot, tmp_path, fleet):
+    window = make_window(qtbot, tmp_path, fleet[:1], registry_ref="tests.fake_checks:REGISTRY")
+    scenario = screen(window, ScenarioScreen)
+    assert not scenario.allow_stress.isChecked()
+    assert not scenario.stress.isEnabled()
+    assert scenario.allow_stress.toolTip()
+    scenario.allow_stress.setChecked(True)
+    assert scenario.stress.isEnabled()
+    assert load_scenario(tmp_path / "scenario.yaml").allow_stress
+
+
 def test_onvif_groups_tooltips_and_f1(qtbot, tmp_path, fleet):
     from qa_tool.checks import registry
     from qa_tool.gui.help import HELP_ID

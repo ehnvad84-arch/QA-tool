@@ -20,6 +20,7 @@ from xml.sax.saxutils import escape
 from defusedxml import ElementTree
 
 from qa_tool.checks.onvif.profiles import declared_profiles
+from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -34,6 +35,7 @@ from qa_tool.drivers.camera.onvif_generic import service_urls
 from qa_tool.drivers.camera.rtsp import RtpPacket, RtspClient, RtspError
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
+RTSP_DEFAULT_PORT = 554  # адрес без порта идёт сюда; стенд с другим портом — за NAT или туннелем
 CHECK_METADATA = "RUV-M-METADATA-1"
 CHECK_STREAM = "RUV-M-STREAM-1"
 CHECK_ANALYTICS = "RUV-M-ANALYTICS-1"
@@ -103,12 +105,20 @@ def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     """Адрес потока на хосте камеры со стенда (security.md: только адреса стенда).
 
     Камера за NAT или с несколькими интерфейсами отдаёт свой внутренний адрес; ходить по нему
-    нельзя — подставляем адрес камеры из стенда, порт — из ответа или из стенда.
+    нельзя — подставляем адрес камеры из стенда. Порт стенда заменяет только порт по умолчанию.
     """
     parts = urlsplit(uri)
-    if parts.hostname == address:
+    try:
+        port = parts.port
+    except ValueError:  # камера написала порт за пределами 0–65535
+        port = 0
+    if parts.hostname == address and rtsp_port == RTSP_DEFAULT_PORT and port != 0:
         return uri
-    return urlunsplit(parts._replace(netloc=f"{address}:{parts.port or rtsp_port}"))
+    # за NAT и туннелем камера не знает внешнего порта, но свой особый порт (архив) называет верно
+    if rtsp_port != RTSP_DEFAULT_PORT and port in (None, 0, RTSP_DEFAULT_PORT):
+        port = rtsp_port
+    host = f"[{address}]" if ":" in address else address
+    return urlunsplit(parts._replace(netloc=f"{host}:{port or rtsp_port}"))
 
 
 def documents(packets: list[RtpPacket], channel: int) -> list[str]:
@@ -232,6 +242,8 @@ def metadata_stream(ctx: CheckContext) -> CheckResult:
             evidence=evidence,
             threshold=wait,
         )
+    if refused_password(ctx):
+        return CheckResult.skipped(refused_password(ctx))
     client = RtspClient(
         to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
         ctx.camera.username,
@@ -254,9 +266,9 @@ def metadata_stream(ctx: CheckContext) -> CheckResult:
                 )
             client.setup(track, channel=0)
             client.play()
-            docs = documents(client.read_packets(wait.value), channel=0)
+            docs = documents(client.read_packets(wait.value), channel=client.rtp_channel)
     except (OSError, RtspError) as e:
-        return CheckResult(
+        return refusal_result(ctx, e) or CheckResult(
             Status.FAILED,
             reason=f"поток метаданных не открывается: {e}",
             expected=expected,

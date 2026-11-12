@@ -52,6 +52,7 @@ class WorkerArgs:
     extra: dict[str, Any] = field(default_factory=dict)
     allow_writes: bool = False
     allow_destructive: bool = False
+    stress_minutes: int = 60
 
 
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
@@ -88,6 +89,7 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
         dict(args.extra),
         allow_writes=args.allow_writes,
         allow_destructive=args.allow_destructive,
+        stress_minutes=args.stress_minutes,
         stop_requested=stop_event.is_set,
     )
     by_phase: dict[Phase, list[tuple[str, str | None]]] = {}

@@ -6,10 +6,9 @@ Authorization, адрес потока — на хосте камеры из с�
 Глубокий разбор потока (потери, частота кадров, битрейт) — модуль «Поток» этапа 4.
 """
 
-from xml.sax.saxutils import escape
-
 from qa_tool.checks.onvif.metadata import to_stand_address
 from qa_tool.checks.onvif.replay import play, soap_evidence
+from qa_tool.checks.rtsp_refusal import refusal_result, refused_password
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -20,7 +19,7 @@ from qa_tool.core.checks import (
     Status,
 )
 from qa_tool.core.models import Threshold
-from qa_tool.drivers.camera.onvif_generic import service_urls
+from qa_tool.drivers.camera.onvif_generic import service_urls, stream_uri
 from qa_tool.drivers.camera.rtsp import RtspClient, RtspError
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClient
 
@@ -39,28 +38,15 @@ def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str]:
     Raises:
         OnvifFault: нет службы медиа или медиапрофилей.
     """
-    if "media2" in services:
-        url, prefix, setup = services["media2"], "tr2", "<tr2:Protocol>RTSP</tr2:Protocol>"
-    elif "media" in services:
-        url, prefix = services["media"], "trt"
-        setup = (
-            "<trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport>"
-            "<tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup>"
-        )
-    else:
+    media2 = "media2" in services
+    if not media2 and "media" not in services:
         raise OnvifFault("камера не объявляет службу медиа (Media или Media2)")
+    url, prefix = (services["media2"], "tr2") if media2 else (services["media"], "trt")
     answer = soap.call(url, f"<{prefix}:GetProfiles/>")
     profile = next((e.get("token", "") for e in answer.iter() if _local(e.tag) == "Profiles"), "")
     if not profile:
         raise OnvifFault("GetProfiles не вернул ни одного медиапрофиля")
-    answer = soap.call(
-        url,
-        f"<{prefix}:GetStreamUri>{setup}"
-        f"<{prefix}:ProfileToken>{escape(profile)}</{prefix}:ProfileToken>"
-        f"</{prefix}:GetStreamUri>",
-    )
-    uri = next(((e.text or "").strip() for e in answer.iter() if _local(e.tag) == "Uri"), "")
-    return profile, uri
+    return profile, stream_uri(soap, url, media2, profile)
 
 
 @REGISTRY.check(
@@ -100,6 +86,8 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             evidence=evidence,
             threshold=minimum,
         )
+    if refused_password(ctx):
+        return CheckResult.skipped(refused_password(ctx))
     client = RtspClient(
         to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port),
         ctx.camera.username,
@@ -111,7 +99,7 @@ def video_stream(ctx: CheckContext) -> CheckResult:
             sdp, stats = play(client, minimum.value, None)
         evidence.append(Evidence("sdp.txt", sdp))
     except (OSError, RtspError, ValueError) as e:
-        return CheckResult(
+        return refusal_result(ctx, e) or CheckResult(
             Status.FAILED,
             reason=f"поток профиля {profile} не открывается: {e}",
             expected=expected,

@@ -60,8 +60,12 @@ class Step:
         """Название для экрана; у составной — с числом строк («onvif-tt: 161 тест»)."""
         if not self.parts:
             return self.title
-        forms = ("операция", "операции", "операций") if self.check_id.startswith("API-") else None
-        return f"{self.title}: {plural(len(self.parts), *(forms or ('тест', 'теста', 'тестов')))}"
+        forms = ("тест", "теста", "тестов")
+        if self.check_id.startswith("API-"):
+            forms = ("операция", "операции", "операций")
+        elif self.check_id.startswith("STREAM-"):
+            forms = ("строка", "строки", "строк")
+        return f"{self.title}: {plural(len(self.parts), *forms)}"
 
 
 @dataclass

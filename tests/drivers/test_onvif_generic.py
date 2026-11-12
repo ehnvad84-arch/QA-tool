@@ -1,12 +1,24 @@
 import time
+import xml.etree.ElementTree as ET
 
 import pytest
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.discovery import discover
-from qa_tool.drivers.camera.onvif_generic import OnvifCamera
-from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
-from tests.mock_camera import start_fleet
+from qa_tool.drivers.camera.onvif_generic import (
+    OnvifCamera,
+    media_profiles,
+    parse_encoder,
+    service_urls,
+)
+from qa_tool.drivers.camera.soap import (
+    CameraUnreachable,
+    OnvifFault,
+    SoapClient,
+    credentials_rejected,
+)
+from tests.mock_camera import MockCamera, Passport, start_fleet
+from tests.mock_onvif import MockStream, OnvifState
 
 
 @pytest.fixture
@@ -100,3 +112,70 @@ def test_username_with_xml_characters_is_escaped():
 )
 def test_only_codes_decide_that_credentials_were_rejected(fault, rejected):
     assert credentials_rejected(fault) is rejected
+
+
+def read_profiles(state):
+    mock = MockCamera(Passport("X", "M", "1", "S1"), state=state).start()
+    try:
+        soap = SoapClient("admin", "admin", timeout=5)
+        return media_profiles(soap, service_urls(soap, as_camera(mock)))
+    finally:
+        mock.stop()
+
+
+MAIN = MockStream("main", kbps=2048, constant=True, gop=50, width=1920, height=1080, fps=25)
+SUB = MockStream("sub", path="/live-sub", encoding="H265", width=640, height=360, fps=12.5)
+
+
+def test_all_profiles_with_settings_from_media2():
+    main, sub = read_profiles(OnvifState(streams=(MAIN, SUB)))
+    assert main.uri.endswith("/live") and sub.uri.endswith("/live-sub")
+    encoder = main.encoder
+    assert (encoder.encoding, encoder.width, encoder.height) == ("H264", 1920, 1080)
+    assert (encoder.fps, encoder.kbps, encoder.constant, encoder.gop) == (25, 2048, True, 50)
+    assert (sub.encoder.encoding, sub.encoder.fps, sub.encoder.constant) == ("H265", 12.5, False)
+
+
+def test_empty_media1_is_not_a_problem_when_media2_knows():
+    (main,) = read_profiles(OnvifState(streams=(MAIN,), media1_empty=True))
+    assert main.encoder.encoding == "H264"
+
+
+def test_settings_come_from_media1_when_media2_has_none():
+    (main,) = read_profiles(OnvifState(streams=(MAIN,), media2_empty=True))
+    encoder = main.encoder
+    assert (encoder.encoding, encoder.fps, encoder.gop) == ("H264", 25, 50)
+    assert encoder.constant is None  # Media1 этого не сообщает
+
+
+def test_camera_without_media2_uses_media1():
+    (main,) = read_profiles(OnvifState(streams=(MAIN,), media2_absent=True))
+    assert main.uri.endswith("/live")
+    assert main.encoder.kbps == 2048
+
+
+def test_no_settings_anywhere_leaves_profile_with_address():
+    (main,) = read_profiles(OnvifState(streams=(MAIN,), media1_empty=True, media2_empty=True))
+    assert main.encoder is None
+    assert main.uri.endswith("/live")
+
+
+def test_one_broken_uri_does_not_lose_other_profiles():
+    main, sub = read_profiles(OnvifState(streams=(MAIN, SUB), uri_fault_for="sub"))
+    assert main.uri
+    assert not sub.uri and "GetStreamUri" in sub.problem
+
+
+def test_no_media_service_is_a_fault():
+    with pytest.raises(OnvifFault, match="службу медиа"):
+        media_profiles(SoapClient("admin", "admin"), {"device": "http://127.0.0.1:1/"})
+
+
+def test_encoding_interval_divides_frame_rate_and_hevc_is_h265():
+    root = ET.fromstring(
+        '<c xmlns:tt="urn:t"><tt:Encoding>HEVC</tt:Encoding><tt:RateControl>'
+        "<tt:FrameRateLimit>30</tt:FrameRateLimit><tt:EncodingInterval>2</tt:EncodingInterval>"
+        "</tt:RateControl></c>"
+    )
+    encoder = parse_encoder(root)
+    assert (encoder.encoding, encoder.fps) == ("H265", 15)

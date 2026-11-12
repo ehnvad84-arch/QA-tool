@@ -36,12 +36,15 @@ CHECKS = [
 ]
 MUST_PASS = ["CORE-CONNECT-1", "RUV-S-STREAM-1", "RUV-M-METADATA-1", "RUV-M-STREAM-1", "RUV-SD-1"]
 MIN_OTT_ROWS = 30  # у закреплённой onvif-tt по виртуальной камере ~100 строк; 30 — «запустился»
+STREAM_PASSWORD = "smoke-S3cret-pw"  # отличается от логина: поиск по файлам прогона честный
 MIN_API_ROWS = 250  # в карте 300 операций; меньше — карта в сборке не та или обход сорвался
 
 
-def run_app(app: list[str], folder: Path) -> dict[str, tuple[str, str]] | None:
+def run_app(
+    app: list[str], folder: Path, password: str = "admin"
+) -> dict[str, tuple[str, str]] | None:
     """Прогнать `stand.yaml` из папки; строки протокола {ID: (статус, причина)} или None."""
-    env = {**os.environ, "QA_TOOL_PASSWORD_1": "admin"}
+    env = {**os.environ, "QA_TOOL_PASSWORD_1": password}
     done = subprocess.run(
         [*app, "run", "--stand", str(folder / "stand.yaml")],
         cwd=folder,
@@ -88,6 +91,37 @@ def smoke_api(app: list[str]) -> list[str]:
     return [] if len(api_rows) >= MIN_API_ROWS else [f"строк API {len(api_rows)} < {MIN_API_ROWS}"]
 
 
+def smoke_stream(app: list[str]) -> list[str]:
+    """Модуль «Поток» в сборке: нити, ffmpeg из сборки, UDP; пароля нет ни в одном файле прогона."""
+    cam = MockCamera(Passport("Smoke", "M1", "1.0", "SN1"), password=STREAM_PASSWORD).start()
+    os.environ["QA_TOOL_STREAM_SAMPLE_S"] = "3"
+    try:
+        with tempfile.TemporaryDirectory(prefix="qa-tool-smoke-stream-") as tmp:
+            folder = Path(tmp)
+            (folder / "stand.yaml").write_text(stand_yaml([cam]), encoding="utf-8")
+            (folder / "scenario.yaml").write_text(
+                "checks: [CORE-CONNECT-1, STREAM-PARAMS-1, STREAM-NET-1, STREAM-STRESS-1]\n"
+                "allow_stress: true\nstress_minutes: 1\n",
+                encoding="utf-8",
+            )
+            rows = run_app(app, folder, STREAM_PASSWORD)
+            leaked = [
+                str(path)
+                for path in (folder / "runs").rglob("*")
+                if path.is_file() and STREAM_PASSWORD.encode() in path.read_bytes()
+            ]
+    finally:
+        cam.stop()
+    if rows is None:
+        return ["поток: прогон не создал папку результатов"]
+    problems = [f"пароль в файле {path}" for path in leaked]
+    for row in ("STREAM-PARAMS-1", "STREAM-DECODE-1", "STREAM-NET-1", "STREAM-STRESS-1"):
+        if rows.get(row, ("",))[0] != "прошла":
+            problems.append(f"{row}: {rows.get(row, ('нет строки', ''))}")
+    print(f"строк потока: {sum(i.startswith('STREAM-') for i in rows)}")
+    return problems
+
+
 def main(app: list[str]) -> int:
     """Прогнать сценарий собранной программой и проверить строки протокола."""
     if Path(app[0]).exists():  # прогон идёт во временной папке — относительный путь не найдётся
@@ -120,6 +154,7 @@ def main(app: list[str]) -> int:
         problems.append(f"строк onvif-tt {len(ott_rows)} < {MIN_OTT_ROWS}")
     print(f"строк протокола: {len(rows)}, из них onvif-tt: {len(ott_rows)}")
     problems += smoke_api(app)
+    problems += smoke_stream(app)
     for problem in problems:
         print("ПРОВАЛ:", problem)
     return 1 if problems else 0
