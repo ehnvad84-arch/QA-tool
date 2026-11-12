@@ -56,11 +56,10 @@ class CameraUnreachable(ConnectionError):
 class OnvifFault(RuntimeError):
     """Камера ответила SOAP Fault или не SOAP: `status` — код HTTP, `code` — подкод SOAP."""
 
-    def __init__(self, message: str, status: int = 0, code: str = "", detail: str = ""):
+    def __init__(self, message: str, status: int = 0, code: str = ""):
         super().__init__(message)
         self.status = status
         self.code = code
-        self.detail = detail  # имена элементов внутри Detail: их камера не подставляет текстом
 
 
 # ter:NotAuthorized — код ONVIF, wsse:FailedAuthentication — код WS-Security (камеры на gSOAP,
@@ -130,13 +129,12 @@ class SoapClient:
             "</wsse:UsernameToken></wsse:Security>"
         )
 
-    def call(self, url: str, body: str, soap_header: str = "") -> Element:
+    def call(self, url: str, body: str) -> Element:
         """Вызвать операцию ONVIF.
 
         Args:
             url: адрес сервиса ONVIF.
             body: тело `<s:Body>` с одной операцией.
-            soap_header: дополнительные элементы `<s:Header>`, например WS-Addressing.
 
         Returns:
             Первый элемент Body ответа.
@@ -149,37 +147,33 @@ class SoapClient:
         """
         check_onvif(body)  # табу: сеть, логины, пароли — запрос не уходит
         try:
-            return self._post(url, self._secured(url, body, soap_header))
+            return self._post(url, self._secured(url, body))
         except OnvifFault as fault:
             if _FAILED_AUTHENTICATION not in fault.code.lower() or not self._camera_clock_differs(
                 url
             ):
                 raise
-        return self._post(url, self._secured(url, body, soap_header))
+        return self._post(url, self._secured(url, body))
 
-    def _secured(self, url: str, body: str, soap_header: str = "") -> str:
-        header = f"<s:Header>{self._security_header(url)}{soap_header}</s:Header>"
+    def _secured(self, url: str, body: str) -> str:
+        header = f"<s:Header>{self._security_header(url)}</s:Header>"
         return f"<s:Envelope {_ENVELOPE_XMLNS}>{header}<s:Body>{body}</s:Body></s:Envelope>"
 
     def _camera_clock_differs(self, url: str) -> bool:
-        """Сверить часы с камерой; True — поправка изменилась, вход стоит повторить.
+        """Сверить часы с камерой один раз; True — поправка новая, вход стоит повторить.
 
         wsse:FailedAuthentication приходит и на верный пароль, если часы камеры ушли: она
         считает отметку времени просроченной. GetSystemDateAndTime пароля не требует (ONVIF
-        Core), поэтому сверка не тратит попытку входа. Сверяем при каждом отказе: часы камеры
-        могут сдвинуться и после первой поправки — перезагрузка сбрасывает их (TMID-018 — на
-        1970 год), снимок настроек возвращает время. Повтор входа — только при таком сдвиге,
-        поэтому неверный пароль стоит одной лишней попытки на сдвиг, а не на каждый вызов.
+        Core), поэтому сверка не тратит попытку входа.
         """
         host = urlsplit(url).netloc
+        if host in _clock_offsets:
+            return False
         difference = self.camera_clock_difference_s(url)
         if difference is None:
             return False
-        applied = _clock_offsets.get(host, datetime.timedelta()).total_seconds()
-        if abs(difference - applied) <= CLOCK_TOLERANCE_S:
-            return False
         _clock_offsets[host] = datetime.timedelta(seconds=difference)
-        return True
+        return abs(difference) > CLOCK_TOLERANCE_S
 
     def camera_clock_difference_s(self, url: str) -> float | None:
         """На сколько секунд часы камеры впереди часов стенда; None — камера не сказала.
@@ -220,11 +214,7 @@ class SoapClient:
         if fault is not None:
             reason = fault.findtext(".//s:Text", default="", namespaces=NS)
             code = fault.findtext(".//s:Subcode/s:Value", default="", namespaces=NS)
-            block = fault.find("s:Detail", NS)
-            names = [] if block is None else [e.tag.split("}")[-1] for e in block.iter()]
-            raise OnvifFault(
-                f"{code} {reason}".strip(), response.status_code, code, " ".join(names)
-            )
+            raise OnvifFault(f"{code} {reason}".strip(), response.status_code, code)
         # SOAP 1.1 и страницы ошибок веб-сервера: разбираются как XML, но это не SOAP 1.2. Код и
         # статус нужны и здесь: иначе опечатка в пароле выглядит дефектом, и проверки камеры
         # продолжают тратить попытки входа до блокировки.

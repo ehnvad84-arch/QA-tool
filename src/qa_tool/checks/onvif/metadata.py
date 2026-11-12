@@ -99,35 +99,16 @@ def stream_uri(soap: SoapClient, media2_url: str, profile: str) -> str:
     return next(((e.text or "").strip() for e in answer.iter() if _local(e.tag) == "Uri"), "")
 
 
-DEFAULT_RTSP_PORT = 554
-
-
-def well_formed(uri: str) -> bool:
-    """Разбирается ли адрес от камеры: порт в пределах, скобки IPv6 верные."""
-    try:
-        return urlsplit(uri).port is not None or bool(urlsplit(uri).hostname)
-    except ValueError:
-        return False
-
-
 def to_stand_address(uri: str, address: str, rtsp_port: int) -> str:
     """Адрес потока на хосте камеры со стенда (security.md: только адреса стенда).
 
     Камера за NAT или с несколькими интерфейсами отдаёт свой внутренний адрес; ходить по нему
-    нельзя — подставляем адрес камеры из стенда. Порт из стенда, если он задан не по умолчанию:
-    это проброшенный порт, а в ответе камеры — её внутренний. Иначе порт из ответа: камера может
-    вещать на нестандартном порту, а в стенде остался 554.
+    нельзя — подставляем адрес камеры из стенда, порт — из ответа или из стенда.
     """
     parts = urlsplit(uri)
-    if rtsp_port != DEFAULT_RTSP_PORT:
-        return urlunsplit(parts._replace(netloc=f"{address}:{rtsp_port}"))
-    try:
-        port = parts.port
-    except ValueError:  # камера написала порт за пределами 0–65535
-        return urlunsplit(parts._replace(netloc=f"{address}:{rtsp_port}"))
     if parts.hostname == address:
         return uri
-    return urlunsplit(parts._replace(netloc=f"{address}:{port or rtsp_port}"))
+    return urlunsplit(parts._replace(netloc=f"{address}:{parts.port or rtsp_port}"))
 
 
 def documents(packets: list[RtpPacket], channel: int) -> list[str]:
@@ -243,7 +224,7 @@ def metadata_stream(ctx: CheckContext) -> CheckResult:
             threshold=wait,
         )
     evidence = _soap_evidence(soap)
-    if not uri.startswith("rtsp://") or not well_formed(uri):
+    if not uri.startswith("rtsp://"):
         return CheckResult(
             Status.FAILED,
             reason=f"GetStreamUri профиля {profile} вернул не RTSP-адрес: {uri!r}",

@@ -4,7 +4,8 @@ import json
 import time
 from pathlib import Path
 
-from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Status
+from qa_tool.checks.core.connect import PASSPORT_KEY
+from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Severity, Status
 
 REGISTRY = Registry()
 
@@ -71,7 +72,10 @@ def _composite(ctx):
         children=[
             ChildResult("SUB-1", "первая", ok),
             ChildResult(
-                "SUB-2", "вторая", CheckResult(Status.FAILED, reason="password=s3cret отказ")
+                "SUB-2",
+                "вторая",
+                CheckResult(Status.FAILED, reason="password=s3cret отказ"),
+                severity=Severity.BLOCKER,
             ),
             ChildResult("SUB-3", "без доказательства", CheckResult(Status.PASSED)),
         ],
@@ -79,3 +83,16 @@ def _composite(ctx):
 
 
 REGISTRY.check("FAKE-COMPOSITE-1", "fake", "составная", "что делаем")(_composite)
+
+
+def _passport(ctx):
+    passport = {"manufacturer": "Фейк", "model": "<b>FK-1</b>", "firmware": "1.0"}
+    return CheckResult(
+        Status.PASSED,
+        evidence=[Evidence("passport.txt", "ok")],
+        data={PASSPORT_KEY: passport},
+    )
+
+
+# первой (order 1), как CORE-CONNECT-1: паспорт нужен окну до остальных результатов
+REGISTRY.check("FAKE-PASSPORT-1", "fake", "паспорт", "", order=1)(_passport)

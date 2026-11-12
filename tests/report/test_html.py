@@ -127,3 +127,15 @@ def test_camera_text_never_becomes_excel_formula(store):
         if isinstance(c.value, str) and c.value.startswith("=")
     ]
     assert cells and all(c.data_type == "s" for c in cells)
+
+
+def test_control_characters_from_camera_do_not_break_excel(tmp_path):
+    from openpyxl import Workbook, load_workbook
+
+    from qa_tool.report.xlsx import _table
+
+    book = Workbook()
+    _table(book.active, ["Причина"], [["отказ\x01 камеры\x0b"]])
+    path = tmp_path / "x.xlsx"
+    book.save(path)
+    assert load_workbook(path).active["A2"].value == "отказ камеры"

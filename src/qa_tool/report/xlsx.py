@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -53,7 +54,8 @@ def _table(
         cell.font = Font(bold=True)
         cell.fill = _HEADER_FILL
     for row in rows:
-        ws.append(row)
+        # управляющий символ из ответа камеры иначе обрывает выпуск всех протоколов прогона
+        ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in row])
     for column in ws.iter_cols(min_row=2):
         for cell in column:
             if isinstance(cell.value, str):

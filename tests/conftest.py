@@ -34,6 +34,15 @@ class MemoryKeyring(KeyringBackend):
 
 
 @pytest.fixture(autouse=True)
+def user_settings(tmp_path):
+    """Настройки пользователя (тема окна) — во временной папке, а не в профиле."""
+    from PySide6.QtCore import QSettings
+
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
 def memory_keyring(monkeypatch):
     backend = MemoryKeyring()
     previous = keyring.get_keyring()

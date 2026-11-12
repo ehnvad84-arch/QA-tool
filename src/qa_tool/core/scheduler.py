@@ -11,7 +11,7 @@ from typing import Any
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.core.checks import CheckResult, Phase, Status
 from qa_tool.core.models import Scenario, Stand, Threshold
-from qa_tool.core.secrets import get_password
+from qa_tool.core.secrets import get_password, redact
 from qa_tool.core.store import RunStore
 from qa_tool.core.worker import STOPPED, WorkerArgs, resolve_registry, worker_main
 
@@ -23,7 +23,7 @@ FREEZE_GAP_S = 2.0  # цикл координатора крутится каж�
 class Event:
     """Событие прогона для окна и командной строки: фаза, старт и итог проверки, потеря камеры."""
 
-    kind: str  # вид события: phase, started, result, done, lost, finished
+    kind: str  # вид события: phase, passport, started, result, done, lost, finished
     slot: int = 0
     check_id: str = ""
     title: str = ""
@@ -31,6 +31,9 @@ class Event:
     detail: str = ""
     phase: int = 0
     part: bool = False  # строка составной проверки: считается в итогах, но не в прогрессе
+    severity: str = ""  # важность для задач программистам: та же, что уходит в протокол
+    module: str = ""  # модуль проверки: окно упорядочивает задачи как протокол
+    passport: dict[str, str] = field(default_factory=dict)  # только у события passport
 
 
 @dataclass
@@ -89,7 +92,6 @@ class Runner:
         Raises:
             ConfigError: не задан пароль камеры.
             OSError, sqlite3.Error: не создать папку или базу прогона.
-            keyring.errors.KeyringError: недоступно системное хранилище паролей.
         """
         passwords = {
             cam.slot: get_password(cam) for cam in self.stand.cameras
@@ -209,7 +211,12 @@ class Runner:
         spec = self.registry.get(check_id)
         self.store.add_result(c.slot, spec, result, started)
         if PASSPORT_KEY in result.data:
-            self.store.set_passport(c.slot, result.data[PASSPORT_KEY])
+            passport = result.data[PASSPORT_KEY]
+            self.store.set_passport(c.slot, passport)
+            # паспорт — ответ камеры, недоверенный текст: в окно идёт так же вычищенным
+            clean = {k: redact(str(v)) for k, v in passport.items()}
+            self.on_event(Event("passport", c.slot, check_id, spec.title, passport=clean))
+        # причины в событиях вычищаются так же, как в базе: окно показывает их сразу
         if result.children:
             for child in result.children:
                 self.on_event(
@@ -219,14 +226,27 @@ class Runner:
                         child.check_id,
                         child.title,
                         child.result.status.value,
-                        child.result.reason,
+                        redact(child.result.reason),
                         part=True,
+                        severity=(child.severity or spec.severity).value,
+                        module=spec.module,
+                        phase=int(spec.phase),
                     )
                 )
             self.on_event(Event("done", c.slot, check_id, spec.title))
         else:
             self.on_event(
-                Event("result", c.slot, check_id, spec.title, result.status.value, result.reason)
+                Event(
+                    "result",
+                    c.slot,
+                    check_id,
+                    spec.title,
+                    result.status.value,
+                    redact(result.reason),
+                    severity=spec.severity.value,
+                    module=spec.module,
+                    phase=int(spec.phase),
+                )
             )
 
     # --- ресурсы и барьеры --------------------------------------------------------------------

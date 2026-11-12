@@ -11,22 +11,34 @@ class Screen(QWidget):
     hint = ""  # подсказка пункта меню
     intro = ""  # строка под заголовком
 
+    full_height = False  # экран сам занимает всю высоту: без заголовка, пояснения и отступов
+
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
         self.setProperty(HELP_ID, self.help_id)
         self.layout_ = QVBoxLayout(self)
-        heading = QLabel(f"<h2>{self.title}</h2>")
+        if self.full_height:
+            self.layout_.setContentsMargins(0, 0, 0, 0)
+            self.build()
+            return
+        self.layout_.setContentsMargins(28, 22, 28, 22)
+        heading = QLabel(self.title)
+        heading.setProperty("role", "h1")
         self.layout_.addWidget(heading)
         if self.intro:
             intro = QLabel(self.intro)
             intro.setWordWrap(True)
+            intro.setProperty("role", "muted")
             self.layout_.addWidget(intro)
         self.build()
         self.layout_.addStretch(1)
 
     def build(self) -> None:
         """Содержимое экрана — в наследниках."""
+
+    def bind_run(self, control) -> None:
+        """Подписаться на общий пульт прогона окна; нужен только экрану «Прогон»."""
 
     def refresh(self) -> None:
         """Обновить данные при показе экрана."""

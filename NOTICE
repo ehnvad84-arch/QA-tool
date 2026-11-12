@@ -14,4 +14,7 @@ ONVIF Test Specifications — https://github.com/onvif/testspecs
 ffmpeg и ffprobe (в установщиках) — сборки BtbN FFmpeg-Builds, вариант LGPL 2.1.
   Лицензия — в папке ffmpeg установленной программы (LICENSE.txt).
 
+Шрифты PT Sans и PT Mono — ParaType, лицензия SIL Open Font License 1.1.
+  Тексты лицензий — рядом со шрифтами, в папке gui/fonts программы.
+
 Прочие зависимости Python перечислены в pyproject.toml и uv.lock; их лицензии — в пакетах.
