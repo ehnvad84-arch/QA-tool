@@ -1,0 +1,6772 @@
+{
+ "version": "0.6.7_p4",
+ "operations": [
+  {
+   "id": "API-AUTH-1",
+   "method": "GET",
+   "path": "/api/auth/create_session",
+   "title": "Создание сессии",
+   "kind": "не вызывается",
+   "reason": "служебный адрес входа: вызывается только при открытии сеанса"
+  },
+  {
+   "id": "API-AUTH-2",
+   "method": "POST",
+   "path": "/api/auth/login",
+   "title": "Вход пользователя",
+   "kind": "не вызывается",
+   "reason": "служебный адрес входа: вызывается только при открытии сеанса"
+  },
+  {
+   "id": "API-AUTH-3",
+   "method": "POST",
+   "path": "/api/auth/logout",
+   "title": "Выход из системы",
+   "kind": "не вызывается",
+   "reason": "служебный адрес входа: вызывается только при открытии сеанса"
+  },
+  {
+   "id": "API-AUTH-4",
+   "method": "POST",
+   "path": "/api/auth/validate_session",
+   "title": "Проверка валидности сессии",
+   "kind": "не вызывается",
+   "reason": "служебный адрес входа: вызывается только при открытии сеанса"
+  },
+  {
+   "id": "API-AUTH-5",
+   "method": "GET",
+   "path": "/api/auth/permissions",
+   "title": "Получение разрешений пользователя",
+   "kind": "не вызывается",
+   "reason": "служебный адрес входа: вызывается только при открытии сеанса"
+  },
+  {
+   "id": "API-CONFIGURATION-1",
+   "method": "GET",
+   "path": "/api/configuration",
+   "title": "Конфигурация камеры в строковом виде",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "configuration": {
+      "type": "string"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-MANIFEST-1",
+   "method": "GET",
+   "path": "/api/manifest",
+   "title": "Файл с информацией о сборке прошивки",
+   "kind": "чтение",
+   "binary": true
+  },
+  {
+   "id": "API-HARDWARE-1",
+   "method": "GET",
+   "path": "/api/hardware",
+   "title": "Информация об аппаратном обеспечении",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "ptzSupport",
+     "flashCardSupport",
+     "audioSupport",
+     "glonassSupport",
+     "lightSupport",
+     "shockSensorSupport",
+     "hdrSupport",
+     "httpsSupport",
+     "irisSupport",
+     "performanceSupport",
+     "lteSupport",
+     "spectreSupport",
+     "recorderSupport",
+     "manufacturer",
+     "firmwareType",
+     "pelcoSupport"
+    ],
+    "properties": {
+     "ptzSupport": {
+      "type": "boolean"
+     },
+     "flashCardSupport": {
+      "type": "boolean"
+     },
+     "audioSupport": {
+      "type": "boolean"
+     },
+     "glonassSupport": {
+      "type": "boolean"
+     },
+     "lightSupport": {
+      "type": "boolean"
+     },
+     "shockSensorSupport": {
+      "type": "boolean"
+     },
+     "hdrSupport": {
+      "type": "boolean"
+     },
+     "httpsSupport": {
+      "type": "boolean"
+     },
+     "irisSupport": {
+      "type": "boolean"
+     },
+     "performanceSupport": {
+      "type": "boolean"
+     },
+     "lteSupport": {
+      "type": "boolean"
+     },
+     "spectreSupport": {
+      "type": "boolean"
+     },
+     "recorderSupport": {
+      "type": "boolean"
+     },
+     "manufacturer": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "firmwareType": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "pelcoSupport": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-INFO-1",
+   "method": "GET",
+   "path": "/api/info",
+   "title": "Информация о камере",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "cameraManufacturer",
+     "cameraModel",
+     "cameraName",
+     "cameraNameMaxSymbols",
+     "firmwareVersion",
+     "macAddress",
+     "serialNumber",
+     "hostName"
+    ],
+    "properties": {
+     "cameraManufacturer": {
+      "type": "string"
+     },
+     "cameraModel": {
+      "type": "string"
+     },
+     "cameraName": {
+      "type": "string"
+     },
+     "cameraNameMaxSymbols": {
+      "type": "integer"
+     },
+     "firmwareVersion": {
+      "type": "string"
+     },
+     "macAddress": {
+      "type": "string"
+     },
+     "serialNumber": {
+      "type": "string"
+     },
+     "hostName": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-INFO-2",
+   "method": "POST",
+   "path": "/api/info",
+   "title": "Установка информации камеры",
+   "kind": "не вызывается",
+   "reason": "название камеры может менять имя хоста (AD-7)"
+  },
+  {
+   "id": "API-SNMP-1",
+   "method": "GET",
+   "path": "/api/snmp",
+   "title": "Список SNMP аккаунтов",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "smtpAccounts",
+     "trapVersions",
+     "maxSNMPAccounts",
+     "maxTrapVersions"
+    ],
+    "properties": {
+     "smtpAccounts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "username",
+        "snmpVersion",
+        "authProtocol",
+        "privateProtocol",
+        "securityLevel",
+        "authPassword",
+        "privatePassword"
+       ],
+       "properties": {
+        "username": {
+         "type": "string"
+        },
+        "snmpVersion": {
+         "type": "integer",
+         "enum": [
+          1,
+          2
+         ]
+        },
+        "authProtocol": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2
+         ]
+        },
+        "privateProtocol": {
+         "type": "integer",
+         "enum": [
+          0,
+          1
+         ]
+        },
+        "securityLevel": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2
+         ]
+        },
+        "authPassword": {
+         "type": "string"
+        },
+        "privatePassword": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "trapVersions": {
+      "type": "array",
+      "required": [
+       "id",
+       "trapVersion",
+       "ip",
+       "port",
+       "trapCommunity"
+      ],
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "integer"
+        },
+        "trapVersion": {
+         "type": "integer",
+         "enum": [
+          0
+         ]
+        },
+        "ip": {
+         "type": "string"
+        },
+        "port": {
+         "type": "integer"
+        },
+        "trapCommunity": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "maxSNMPAccounts": {
+      "type": "integer"
+     },
+     "maxTrapVersions": {
+      "type": "integer"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-2",
+   "method": "POST",
+   "path": "/api/snmp/add_account",
+   "title": "Добавить SNMP аккаунт",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-3",
+   "method": "POST",
+   "path": "/api/snmp/delete_account",
+   "title": "Удалить SNMP аккаунт",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-4",
+   "method": "POST",
+   "path": "/api/snmp/edit_account",
+   "title": "Редактировать параметры SNMP аккаунта",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-5",
+   "method": "POST",
+   "path": "/api/snmp/delete_all_accounts",
+   "title": "Удалить все SNMP аккаунты",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-6",
+   "method": "POST",
+   "path": "/api/snmp/edit_trap_verion",
+   "title": "Редактировать параметры TRAP версии",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-7",
+   "method": "POST",
+   "path": "/api/snmp/max_snmp_accounts",
+   "title": "Максимальное количество допустимых SNMP аккаунтов",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-SNMP-8",
+   "method": "POST",
+   "path": "/api/snmp/max_trap_versions",
+   "title": "Максимальное количество допустимых TRAP версий",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-1",
+   "method": "GET",
+   "path": "/api/users",
+   "title": "Список пользователей",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "users"
+    ],
+    "properties": {
+     "users": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "username": {
+         "type": "string"
+        },
+        "userRole": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-2",
+   "method": "GET",
+   "path": "/api/users/auth_users",
+   "title": "Авторизованные пользователи",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "sessions"
+    ],
+    "properties": {
+     "sessions": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "username": {
+         "type": "string"
+        },
+        "userRole": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2
+         ]
+        },
+        "ip": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   },
+   "sensitive": true,
+   "live": true
+  },
+  {
+   "id": "API-USERS-3",
+   "method": "POST",
+   "path": "/api/users/set_username",
+   "title": "Имя пользователя",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-4",
+   "method": "GET",
+   "path": "/api/users/get_password",
+   "title": "Получение пароля",
+   "kind": "не вызывается",
+   "reason": "запрос пароля: программа пароли не читает (AD-7)",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-5",
+   "method": "POST",
+   "path": "/api/users/set_password",
+   "title": "Установка пароля",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-6",
+   "method": "POST",
+   "path": "/api/users/reset_password",
+   "title": "Сброс пароля",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-7",
+   "method": "POST",
+   "path": "/api/users/set_role",
+   "title": "Установка прав доступа",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-8",
+   "method": "POST",
+   "path": "/api/users/add_user",
+   "title": "Добавить пользователя",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-9",
+   "method": "POST",
+   "path": "/api/users/delete_user",
+   "title": "Удалить пользователя",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-10",
+   "method": "GET",
+   "path": "/api/users/access_rights",
+   "title": "Получение разрешений",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "accessRights"
+    ],
+    "properties": {
+     "accessRights": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "userPermissions": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "required": [
+           "permission",
+           "allow"
+          ],
+          "properties": {
+           "permission": {
+            "type": "integer",
+            "enum": [
+             0,
+             1,
+             2,
+             3,
+             4,
+             5,
+             6,
+             7,
+             8,
+             9,
+             10,
+             11,
+             12,
+             13,
+             14,
+             15,
+             16,
+             17,
+             18,
+             19,
+             20,
+             21,
+             22,
+             23,
+             24,
+             25,
+             26,
+             27,
+             28,
+             29,
+             30,
+             31,
+             32,
+             33,
+             34,
+             35,
+             36
+            ]
+           },
+           "allow": {
+            "type": "boolean"
+           }
+          }
+         }
+        },
+        "userRole": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-11",
+   "method": "POST",
+   "path": "/api/users/set_permission",
+   "title": "Редактировать права доступа",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-USERS-12",
+   "method": "POST",
+   "path": "/api/users/set_permissions",
+   "title": "Установка прав доступа для группы пользователей",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-PTZ-1",
+   "method": "GET",
+   "path": "/api/ptz",
+   "title": "PTZ",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "autofocusEnable",
+     "focus",
+     "focusRange",
+     "zoom",
+     "zoomRange",
+     "calibratingState",
+     "focusingState",
+     "position",
+     "tours",
+     "namedPresets",
+     "moveSpeedPresetRange",
+     "timeoutPresetRange",
+     "wiper"
+    ],
+    "properties": {
+     "autofocusEnable": {
+      "type": "boolean"
+     },
+     "focus": {
+      "type": "integer"
+     },
+     "focusRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "zoom": {
+      "type": "integer"
+     },
+     "zoomRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "calibratingState": {
+      "type": "boolean"
+     },
+     "focusingState": {
+      "type": "boolean"
+     },
+     "tourState": {
+      "type": "integer"
+     },
+     "position": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer"
+       },
+       "y": {
+        "type": "integer"
+       }
+      }
+     },
+     "tours": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "presets": {
+         "type": "object",
+         "required": [
+          "point",
+          "speed",
+          "timeout"
+         ],
+         "properties": {
+          "point": {
+           "oneOf": [
+            {
+             "type": "object",
+             "properties": {
+              "pan": {
+               "type": "integer"
+              },
+              "tilt": {
+               "type": "integer"
+              },
+              "focus": {
+               "type": "integer"
+              },
+              "zoom": {
+               "type": "integer"
+              }
+             }
+            },
+            {
+             "type": "string"
+            }
+           ]
+          },
+          "speed": {
+           "type": "integer"
+          },
+          "timeout": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "namedPresets": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "point": {
+         "type": "object",
+         "properties": {
+          "pan": {
+           "type": "integer"
+          },
+          "tilt": {
+           "type": "integer"
+          },
+          "focus": {
+           "type": "integer"
+          },
+          "zoom": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "moveSpeedRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "moveSpeedPresetRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "timeoutPresetRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "wiper": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-2",
+   "method": "GET",
+   "path": "/api/ptz/zoom",
+   "title": "Регулировка зума",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "zoom",
+     "zoomRange"
+    ],
+    "properties": {
+     "zoom": {
+      "type": "integer"
+     },
+     "zoomRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-3",
+   "method": "POST",
+   "path": "/api/ptz/zoom",
+   "title": "Регулировка зума",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-4",
+   "method": "POST",
+   "path": "/api/ptz/zoom_start",
+   "title": "Запуск зумирования",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-5",
+   "method": "POST",
+   "path": "/api/ptz/zoom_stop",
+   "title": "Остановка зума",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-6",
+   "method": "GET",
+   "path": "/api/ptz/focus",
+   "title": "Регулировка фокуса",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "focus",
+     "focusRange"
+    ],
+    "properties": {
+     "focus": {
+      "type": "integer"
+     },
+     "focusRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-7",
+   "method": "POST",
+   "path": "/api/ptz/focus",
+   "title": "Регулировка фокуса",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-8",
+   "method": "POST",
+   "path": "/api/ptz/focus_start",
+   "title": "Запуск фокусировки",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-9",
+   "method": "POST",
+   "path": "/api/ptz/focus_stop",
+   "title": "Остановка фокуса",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-10",
+   "method": "POST",
+   "path": "/api/ptz/calibrate",
+   "title": "Калибровка",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-11",
+   "method": "GET",
+   "path": "/api/ptz/calibrating_state",
+   "title": "Статус калибровки",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "calibratingState"
+    ],
+    "properties": {
+     "calibratingState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-12",
+   "method": "POST",
+   "path": "/api/ptz/autofocus",
+   "title": "Фокусировка",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-13",
+   "method": "GET",
+   "path": "/api/ptz/focusing_state",
+   "title": "Статус фокусировки",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "focusingState"
+    ],
+    "properties": {
+     "focusingState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-14",
+   "method": "GET",
+   "path": "/api/ptz/autofocus_enable",
+   "title": "Режим автофокусировки",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "autofocusEnable"
+    ],
+    "properties": {
+     "autofocusEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-PTZ-15",
+   "method": "POST",
+   "path": "/api/ptz/autofocus_enable",
+   "title": "Режим автофокусировки",
+   "kind": "запись",
+   "setting": "autofocusEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-PTZ-16",
+   "method": "POST",
+   "path": "/api/ptz/move",
+   "title": "Управление движением камеры",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-17",
+   "method": "POST",
+   "path": "/api/ptz/move_stop",
+   "title": "Остановка движения камеры",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-18",
+   "method": "POST",
+   "path": "/api/ptz/named_presets",
+   "title": "Установить именоваынные пресеты",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-PTZ-19",
+   "method": "POST",
+   "path": "/api/ptz/tours",
+   "title": "Установить траектории перемещения камеры",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-PTZ-20",
+   "method": "POST",
+   "path": "/api/ptz/run_tour",
+   "title": "Проиграть траекторию пресетов",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-21",
+   "method": "GET",
+   "path": "/api/ptz/running_tour_state",
+   "title": "Статус воспроизведения тура",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "runningTourState"
+    ],
+    "properties": {
+     "runningTourState": {
+      "type": "integer"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-PTZ-22",
+   "method": "POST",
+   "path": "/api/ptz/goto_preset",
+   "title": "Переход в заданную позицию пресета",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-PTZ-23",
+   "method": "GET",
+   "path": "/api/ptz/wiper",
+   "title": "Состояние стеклоочистителя",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "state"
+    ],
+    "properties": {
+     "state": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-PTZ-24",
+   "method": "POST",
+   "path": "/api/ptz/wiper",
+   "title": "Включение стеклоочистителя",
+   "kind": "не вызывается",
+   "reason": "движение объектива и механики нельзя вернуть точно"
+  },
+  {
+   "id": "API-AUDIO-1",
+   "method": "GET",
+   "path": "/api/audio",
+   "title": "Получение всех параметров аудио",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "audioInputChannel",
+     "audioInputChannels",
+     "audioMuteEnable",
+     "audioVolume",
+     "audioVolumeRange",
+     "codec",
+     "codecs"
+    ],
+    "properties": {
+     "audioInputChannel": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "audioInputChannels": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "audioMuteEnable": {
+      "type": "boolean"
+     },
+     "audioVolume": {
+      "type": "integer"
+     },
+     "audioVolumeRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "codec": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     },
+     "codecs": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-AUDIO-2",
+   "method": "GET",
+   "path": "/api/audio/volume",
+   "title": "Получение уровня громкости",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "audioVolume",
+     "audioVolumeRange"
+    ],
+    "properties": {
+     "audioVolume": {
+      "type": "integer"
+     },
+     "audioVolumeRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-AUDIO-3",
+   "method": "POST",
+   "path": "/api/audio/volume",
+   "title": "Установка уровня громкости",
+   "kind": "запись",
+   "setting": "audioVolume",
+   "range_field": "audioVolumeRange"
+  },
+  {
+   "id": "API-AUDIO-4",
+   "method": "GET",
+   "path": "/api/audio/codec",
+   "title": "Получение текущего аудиокодека",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "codec"
+    ],
+    "properties": {
+     "codec": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-AUDIO-5",
+   "method": "POST",
+   "path": "/api/audio/codec",
+   "title": "Установка аудиокодека",
+   "kind": "запись",
+   "setting": "codec",
+   "values": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  {
+   "id": "API-AUDIO-6",
+   "method": "GET",
+   "path": "/api/audio/input_channel",
+   "title": "Получение текущего аудиовхода",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "audioInputChannel"
+    ],
+    "properties": {
+     "audioInputChannel": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-AUDIO-7",
+   "method": "POST",
+   "path": "/api/audio/input_channel",
+   "title": "Установка аудиовхода",
+   "kind": "запись",
+   "setting": "audioInputChannel",
+   "values": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": "API-AUDIO-8",
+   "method": "GET",
+   "path": "/api/audio/mute_enable",
+   "title": "Получение статуса отключения звука",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "audioMuteEnable"
+    ],
+    "properties": {
+     "audioMuteEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-AUDIO-9",
+   "method": "POST",
+   "path": "/api/audio/mute_enable",
+   "title": "Установка отключения звука",
+   "kind": "запись",
+   "setting": "audioMuteEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-1",
+   "method": "GET",
+   "path": "/api/image",
+   "title": "Все параметры изображения",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "antiflickerMode",
+     "blcEnable",
+     "blcStrength",
+     "blcStrengthRange",
+     "brightness",
+     "brightnessRange",
+     "contrast",
+     "contrastRange",
+     "defogStrength",
+     "defogMode",
+     "defogStrengthRange",
+     "isDefogSupported",
+     "denoise2DNREnable",
+     "denoise3DNREnable",
+     "irisEnable",
+     "exposureMode",
+     "exposureModes",
+     "hdrEnable",
+     "hdrOverPerfomance",
+     "hlcEnable",
+     "hlcStrength",
+     "hlcStrengthRange",
+     "manualGain",
+     "manualGainRange",
+     "manualShutter",
+     "manualShutterList",
+     "autoBrightness",
+     "autoBrightnessRange",
+     "autoGainLow",
+     "autoGainHigh",
+     "autoGainRange",
+     "autoShutterLow",
+     "autoShutterHigh",
+     "autoShutterRange",
+     "presetMode",
+     "saturation",
+     "saturationRange",
+     "sharpness",
+     "sharpnessRange",
+     "timeDay",
+     "transform",
+     "wdrStrength",
+     "wdrMode",
+     "wdrStrengthRange",
+     "whiteBalanceMode",
+     "whiteBalanceTemperature",
+     "whiteBalanceTemperatureList",
+     "denoiseSupport",
+     "compensationCompatible"
+    ],
+    "properties": {
+     "antiflickerMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "blcEnable": {
+      "type": "boolean"
+     },
+     "blcStrength": {
+      "type": "integer"
+     },
+     "blcStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "brightness": {
+      "type": "integer"
+     },
+     "brightnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "contrast": {
+      "type": "integer"
+     },
+     "contrastRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "corridorModeEnable": {
+      "type": "boolean"
+     },
+     "isDefogSupported": {
+      "type": "boolean"
+     },
+     "defogStrength": {
+      "type": "integer"
+     },
+     "defogMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "defogStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "denoise2DNREnable": {
+      "type": "boolean"
+     },
+     "denoise3DNREnable": {
+      "type": "boolean"
+     },
+     "irisEnable": {
+      "type": "boolean"
+     },
+     "exposureMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "exposureModes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "hdrEnable": {
+      "type": "boolean"
+     },
+     "hdrOverPerfomance": {
+      "type": "boolean"
+     },
+     "hlcEnable": {
+      "type": "boolean"
+     },
+     "hlcStrength": {
+      "type": "integer"
+     },
+     "hlcStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "manualGain": {
+      "type": "integer"
+     },
+     "manualGainRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "manualShutter": {
+      "type": "integer"
+     },
+     "manualShutterList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "val": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "autoBrightness": {
+      "type": "integer"
+     },
+     "autoBrightnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "autoGainLow": {
+      "type": "integer"
+     },
+     "autoGainHigh": {
+      "type": "integer"
+     },
+     "autoGainRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "autoShutterLow": {
+      "type": "integer"
+     },
+     "autoShutterHigh": {
+      "type": "integer"
+     },
+     "autoShutterRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "presetMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       3,
+       4
+      ]
+     },
+     "saturation": {
+      "type": "integer"
+     },
+     "saturationRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "sharpness": {
+      "type": "integer"
+     },
+     "sharpnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "timeDay": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "transform": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3
+      ]
+     },
+     "wdrStrength": {
+      "type": "integer"
+     },
+     "wdrMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "wdrStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "whiteBalanceMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "whiteBalanceTemperature": {
+      "type": "integer"
+     },
+     "whiteBalanceTemperatureList": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "denoiseSupport": {
+      "type": "boolean"
+     },
+     "irisSensitivity": {
+      "type": "integer"
+     },
+     "compensationCompatible": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-2",
+   "method": "POST",
+   "path": "/api/image/reset_parameters",
+   "title": "Сброс заданных настроек изображения",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-IMAGE-3",
+   "method": "POST",
+   "path": "/api/image/reset_all_parameters",
+   "title": "Сброс всех настроек изображения",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-IMAGE-4",
+   "method": "GET",
+   "path": "/api/image/mode",
+   "title": "Режим дня",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "timeDay"
+    ],
+    "properties": {
+     "timeDay": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-5",
+   "method": "POST",
+   "path": "/api/image/mode",
+   "title": "Режим дня",
+   "kind": "запись",
+   "setting": "timeDay",
+   "values": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": "API-IMAGE-6",
+   "method": "GET",
+   "path": "/api/image/preset_mode",
+   "title": "Предустановка",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "presetMode"
+    ],
+    "properties": {
+     "presetMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       3,
+       4
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-7",
+   "method": "POST",
+   "path": "/api/image/preset_mode",
+   "title": "Предустановка",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-8",
+   "method": "GET",
+   "path": "/api/image/brightness",
+   "title": "Яркость",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "brightness",
+     "brightnessRange"
+    ],
+    "properties": {
+     "brightness": {
+      "type": "integer"
+     },
+     "brightnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-9",
+   "method": "POST",
+   "path": "/api/image/brightness",
+   "title": "Яркость",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "brightness",
+   "range_field": "brightnessRange"
+  },
+  {
+   "id": "API-IMAGE-10",
+   "method": "GET",
+   "path": "/api/image/contrast",
+   "title": "Контрастность",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "contrast",
+     "contrastRange"
+    ],
+    "properties": {
+     "contrast": {
+      "type": "integer"
+     },
+     "contrastRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-11",
+   "method": "POST",
+   "path": "/api/image/contrast",
+   "title": "Контрастность",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "contrast",
+   "range_field": "contrastRange"
+  },
+  {
+   "id": "API-IMAGE-12",
+   "method": "GET",
+   "path": "/api/image/saturation",
+   "title": "Насыщенность",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "saturation",
+     "saturationRange"
+    ],
+    "properties": {
+     "saturation": {
+      "type": "integer"
+     },
+     "saturationRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-13",
+   "method": "POST",
+   "path": "/api/image/saturation",
+   "title": "Насыщенность",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "saturation",
+   "range_field": "saturationRange"
+  },
+  {
+   "id": "API-IMAGE-14",
+   "method": "GET",
+   "path": "/api/image/sharpness",
+   "title": "Резкость",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "sharpness",
+     "sharpnessRange"
+    ],
+    "properties": {
+     "sharpness": {
+      "type": "integer"
+     },
+     "sharpnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-15",
+   "method": "POST",
+   "path": "/api/image/sharpness",
+   "title": "Резкость",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "sharpness",
+   "range_field": "sharpnessRange"
+  },
+  {
+   "id": "API-IMAGE-16",
+   "method": "GET",
+   "path": "/api/image/compensation/wdr_mode",
+   "title": "Режим WDR",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "wdrMode"
+    ],
+    "properties": {
+     "wdrMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-17",
+   "method": "POST",
+   "path": "/api/image/compensation/wdr_mode",
+   "title": "Режим WDR",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "wdrMode",
+   "values": [
+    0,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-IMAGE-18",
+   "method": "GET",
+   "path": "/api/image/compensation/wdr_strength",
+   "title": "Усиление WDR",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "wdrStrength",
+     "wdrStrengthRange"
+    ],
+    "properties": {
+     "wdrStrength": {
+      "type": "integer"
+     },
+     "wdrStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-19",
+   "method": "POST",
+   "path": "/api/image/compensation/wdr_strength",
+   "title": "Усиление WDR",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "wdrStrength",
+   "range_field": "wdrStrengthRange"
+  },
+  {
+   "id": "API-IMAGE-20",
+   "method": "GET",
+   "path": "/api/image/compensation/hlc_enable",
+   "title": "HLC вкл./выкл.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "hlcEnable"
+    ],
+    "properties": {
+     "hlcEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-21",
+   "method": "POST",
+   "path": "/api/image/compensation/hlc_enable",
+   "title": "HLC вкл./выкл.",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "hlcEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-22",
+   "method": "GET",
+   "path": "/api/image/compensation/hlc_strength",
+   "title": "Усиление HLC",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "hlcStrength",
+     "hlcStrengthRange"
+    ],
+    "properties": {
+     "hlcStrength": {
+      "type": "integer"
+     },
+     "hlcStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-23",
+   "method": "POST",
+   "path": "/api/image/compensation/hlc_strength",
+   "title": "Усиление HLC",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "hlcStrength",
+   "range_field": "hlcStrengthRange"
+  },
+  {
+   "id": "API-IMAGE-24",
+   "method": "GET",
+   "path": "/api/image/compensation/blc_enable",
+   "title": "BLC вкл./выкл.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "blcEnable"
+    ],
+    "properties": {
+     "blcEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-25",
+   "method": "POST",
+   "path": "/api/image/compensation/blc_enable",
+   "title": "BLC вкл./выкл.",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "blcEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-26",
+   "method": "GET",
+   "path": "/api/image/compensation/blc_strength",
+   "title": "Усиление BLC",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "blcStrength",
+     "blcStrengthRange"
+    ],
+    "properties": {
+     "blcStrength": {
+      "type": "integer"
+     },
+     "blcStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-27",
+   "method": "POST",
+   "path": "/api/image/compensation/blc_strength",
+   "title": "Усиление BLC",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "blcStrength",
+   "range_field": "blcStrengthRange"
+  },
+  {
+   "id": "API-IMAGE-28",
+   "method": "GET",
+   "path": "/api/image/compensation/hdr_enable",
+   "title": "HDR вкл./выкл.",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "hdrEnable"
+    ],
+    "properties": {
+     "hdrEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-29",
+   "method": "POST",
+   "path": "/api/image/compensation/hdr_enable",
+   "title": "HDR вкл./выкл.",
+   "kind": "запись",
+   "setting": "hdrEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-30",
+   "method": "GET",
+   "path": "/api/image/compensation/denoise_3dnr_enable",
+   "title": "Шумоподавление 3DNR",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "denoise3DNREnable"
+    ],
+    "properties": {
+     "denoise3DNREnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-31",
+   "method": "POST",
+   "path": "/api/image/compensation/denoise_3dnr_enable",
+   "title": "Шумоподавление 3DNR",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "denoise3DNREnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-32",
+   "method": "GET",
+   "path": "/api/image/compensation/denoise_2dnr_enable",
+   "title": "Шумоподавление 2DNR",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "denoise2DNREnable"
+    ],
+    "properties": {
+     "denoise2DNREnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-33",
+   "method": "POST",
+   "path": "/api/image/compensation/denoise_2dnr_enable",
+   "title": "Шумоподавление 2DNR",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "denoise2DNREnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-34",
+   "method": "GET",
+   "path": "/api/image/compensation/defog_mode",
+   "title": "Противотуманный режим",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "defogMode"
+    ],
+    "properties": {
+     "defogMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-35",
+   "method": "POST",
+   "path": "/api/image/compensation/defog_mode",
+   "title": "Противотуманный режим",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "defogMode",
+   "values": [
+    0,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-IMAGE-36",
+   "method": "GET",
+   "path": "/api/image/compensation/defog_strength",
+   "title": "Противотуманный уровень",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "defogStrength",
+     "defogStrengthRange"
+    ],
+    "properties": {
+     "defogStrength": {
+      "type": "integer"
+     },
+     "defogStrengthRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-37",
+   "method": "POST",
+   "path": "/api/image/compensation/defog_strength",
+   "title": "Уровень Антитумана",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "defogStrength",
+   "range_field": "defogStrengthRange"
+  },
+  {
+   "id": "API-IMAGE-38",
+   "method": "GET",
+   "path": "/api/image/exposure/iris_enable",
+   "title": "Получение режима Iris",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "irisEnable"
+    ],
+    "properties": {
+     "irisEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-39",
+   "method": "POST",
+   "path": "/api/image/exposure/iris_enable",
+   "title": "Установка режима Iris",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "irisEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-40",
+   "method": "GET",
+   "path": "/api/image/exposure/exposure_mode",
+   "title": "Режим Экспозиции",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "exposureMode"
+    ],
+    "properties": {
+     "exposureMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-41",
+   "method": "POST",
+   "path": "/api/image/exposure/exposure_mode",
+   "title": "Режим Экспозиции",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "exposureMode",
+   "values": [
+    0,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-IMAGE-42",
+   "method": "GET",
+   "path": "/api/image/exposure/exposure_modes",
+   "title": "Список режимом экспозиции",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "exposureModes"
+    ],
+    "properties": {
+     "exposureModes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-43",
+   "method": "GET",
+   "path": "/api/image/exposure/manual_shutter",
+   "title": "Ручная настройка выдержки",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "manualShutter"
+    ],
+    "properties": {
+     "manualShutter": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-44",
+   "method": "POST",
+   "path": "/api/image/exposure/manual_shutter",
+   "title": "Ручная настройка выдержки",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-45",
+   "method": "GET",
+   "path": "/api/image/exposure/manual_gain",
+   "title": "Ручное усиление выдержки",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "manualGain",
+     "manualGainRange"
+    ],
+    "properties": {
+     "manualGain": {
+      "type": "integer"
+     },
+     "manualGainRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-46",
+   "method": "POST",
+   "path": "/api/image/exposure/manual_gain",
+   "title": "Ручное усиление выдержки",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "manualGain",
+   "range_field": "manualGainRange"
+  },
+  {
+   "id": "API-IMAGE-47",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_brightness",
+   "title": "Получение целевой яркости для автоматического режимы выдержки.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoBrightness",
+     "autoBrightnessRange"
+    ],
+    "properties": {
+     "autoBrightness": {
+      "type": "integer"
+     },
+     "autoBrightnessRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-48",
+   "method": "POST",
+   "path": "/api/image/exposure/auto_brightness",
+   "title": "Установка целевой яркости для автоматического режимы выдержки.",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "autoBrightness",
+   "range_field": "autoBrightnessRange"
+  },
+  {
+   "id": "API-IMAGE-49",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_gain",
+   "title": "Автоматическая настройка выдержки",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoGainLow",
+     "autoGainHigh",
+     "autoGainRange"
+    ],
+    "properties": {
+     "autoGainLow": {
+      "type": "integer"
+     },
+     "autoGainHigh": {
+      "type": "integer"
+     },
+     "autoGainRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-50",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_gain_low",
+   "title": "Возвращение нижнего порога автоматического усиления выдержки.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoGainLow"
+    ],
+    "properties": {
+     "autoGainLow": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-51",
+   "method": "POST",
+   "path": "/api/image/exposure/auto_gain_low",
+   "title": "Установка нижнего порога автоматического усиления выдержки.",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-52",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_gain_high",
+   "title": "Возвращение верхнего порога автоматического усиления выдержки.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoGainHigh"
+    ],
+    "properties": {
+     "autoGainHigh": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-53",
+   "method": "POST",
+   "path": "/api/image/exposure/auto_gain_high",
+   "title": "Установка верхнего порога автоматического усиления выдержки.",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-54",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_shutter",
+   "title": "Автоматическое усиление выдержки",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoShutterLow",
+     "autoShutterHigh",
+     "autoShutterRange"
+    ],
+    "properties": {
+     "autoShutterLow": {
+      "type": "integer"
+     },
+     "autoShutterHigh": {
+      "type": "integer"
+     },
+     "autoShutterRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-55",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_shutter_low",
+   "title": "Возвращение нижнего порога автоматической выдержки.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoShutterLow"
+    ],
+    "properties": {
+     "autoShutterLow": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-56",
+   "method": "POST",
+   "path": "/api/image/exposure/auto_shutter_low",
+   "title": "Установка нижнего порога автоматической выдержки.",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-57",
+   "method": "GET",
+   "path": "/api/image/exposure/auto_shutter_high",
+   "title": "Возвращение верхнего порога автоматической выдержки.",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoShutterHigh"
+    ],
+    "properties": {
+     "autoShutterHigh": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-58",
+   "method": "POST",
+   "path": "/api/image/exposure/auto_shutter_high",
+   "title": "Установка верхнего порога автоматической выдержки.",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-59",
+   "method": "GET",
+   "path": "/api/image/white_balance/mode",
+   "title": "Режим баланса белого",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "whiteBalanceMode"
+    ],
+    "properties": {
+     "whiteBalanceMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-60",
+   "method": "POST",
+   "path": "/api/image/white_balance/mode",
+   "title": "Режим баланса белого",
+   "kind": "запись",
+   "query": {
+    "time_of_day": 0
+   },
+   "setting": "whiteBalanceMode",
+   "values": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": "API-IMAGE-61",
+   "method": "GET",
+   "path": "/api/image/white_balance/temperature",
+   "title": "Баланс белого температура",
+   "kind": "чтение",
+   "query": {
+    "time_of_day": 0
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "whiteBalanceTemperature"
+    ],
+    "properties": {
+     "whiteBalanceTemperature": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-62",
+   "method": "POST",
+   "path": "/api/image/white_balance/temperature",
+   "title": "Баланс белого температура",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать",
+   "query": {
+    "time_of_day": 0
+   }
+  },
+  {
+   "id": "API-IMAGE-63",
+   "method": "GET",
+   "path": "/api/image/video_adjustment/corridor_mode",
+   "title": "Режим коридора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "corridorModeEnable"
+    ],
+    "properties": {
+     "corridorModeEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-64",
+   "method": "POST",
+   "path": "/api/image/video_adjustment/corridor_mode",
+   "title": "Режим коридора",
+   "kind": "запись",
+   "setting": "corridorModeEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-IMAGE-65",
+   "method": "GET",
+   "path": "/api/image/video_adjustment/transform",
+   "title": "Трансформация",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "transform"
+    ],
+    "properties": {
+     "transform": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-66",
+   "method": "POST",
+   "path": "/api/image/video_adjustment/transform",
+   "title": "Трансформация",
+   "kind": "запись",
+   "setting": "transform",
+   "values": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "id": "API-IMAGE-67",
+   "method": "GET",
+   "path": "/api/image/video_adjustment/antiflicker_mode",
+   "title": "Режим антимерцания",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "antiflickerMode"
+    ],
+    "properties": {
+     "antiflickerMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-IMAGE-68",
+   "method": "POST",
+   "path": "/api/image/video_adjustment/antiflicker_mode",
+   "title": "Режим антимерцания",
+   "kind": "запись",
+   "setting": "antiflickerMode",
+   "values": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": "API-VIDEO-1",
+   "method": "GET",
+   "path": "/api/video",
+   "title": "Видео",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "activeMulticast",
+     "bitrate",
+     "bitrateMode",
+     "bitrateModes",
+     "bitrateRange",
+     "channel",
+     "codec",
+     "codecs",
+     "frameInterval",
+     "frameIntervalRange",
+     "framerate",
+     "framerateRange",
+     "multicastEnable",
+     "multicastAudioPort",
+     "multicastVideoPort",
+     "multicastForcedEnable",
+     "multicastIP",
+     "multicastTTL",
+     "profile",
+     "profiles",
+     "isRecordAvailable",
+     "recordEnable",
+     "resolution",
+     "resolutions",
+     "resolutionSize",
+     "roiList",
+     "roiEnable",
+     "streamMode",
+     "portsInUsed",
+     "hdrOverPerfomance",
+     "isROIAvailable"
+    ],
+    "properties": {
+     "activeMulticast": {
+      "type": "boolean"
+     },
+     "bitrate": {
+      "type": "integer"
+     },
+     "bitrateMode": {
+      "type": "integer",
+      "enum": [
+       1,
+       2
+      ]
+     },
+     "bitrateModes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "bitrateRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "channel": {
+      "type": "string"
+     },
+     "codec": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "codecs": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "frameInterval": {
+      "type": "integer"
+     },
+     "frameIntervalRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "framerate": {
+      "type": "integer"
+     },
+     "framerateRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "multicastEnable": {
+      "type": "boolean"
+     },
+     "multicastAudioPort": {
+      "type": "integer"
+     },
+     "multicastVideoPort": {
+      "type": "integer"
+     },
+     "multicastForcedEnable": {
+      "type": "boolean"
+     },
+     "multicastIP": {
+      "type": "string"
+     },
+     "multicastTTL": {
+      "type": "integer"
+     },
+     "profile": {
+      "type": "integer",
+      "enum": [
+       1,
+       2,
+       3
+      ]
+     },
+     "profiles": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "isRecordAvailable": {
+      "type": "boolean"
+     },
+     "recordEnable": {
+      "type": "boolean"
+     },
+     "resolution": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10,
+       11,
+       12,
+       13,
+       14,
+       15,
+       16,
+       17,
+       18,
+       19,
+       20,
+       21,
+       22,
+       23,
+       24,
+       25
+      ]
+     },
+     "resolutions": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "resolution": {
+         "type": "integer"
+        },
+        "size": {
+         "type": "object",
+         "properties": {
+          "height": {
+           "type": "integer"
+          },
+          "width": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "resolutionSize": {
+      "type": "object",
+      "required": [
+       "height",
+       "width"
+      ],
+      "properties": {
+       "height": {
+        "type": "integer"
+       },
+       "width": {
+        "type": "integer"
+       }
+      }
+     },
+     "roiList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "roiEnable": {
+      "type": "boolean"
+     },
+     "streamMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "portsInUsed": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "hdrOverPerfomance": {
+      "type": "boolean"
+     },
+     "isROIAvailable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-2",
+   "method": "GET",
+   "path": "/api/video/stream",
+   "title": "Поток",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "channel"
+    ],
+    "properties": {
+     "channel": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-3",
+   "method": "POST",
+   "path": "/api/video/stream",
+   "title": "Поток",
+   "kind": "не вызывается",
+   "reason": "выбор потока в интерфейсе, а не настройка камеры"
+  },
+  {
+   "id": "API-VIDEO-4",
+   "method": "GET",
+   "path": "/api/video/codec",
+   "title": "Видео-кодек",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "codec"
+    ],
+    "properties": {
+     "codec": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-5",
+   "method": "POST",
+   "path": "/api/video/codec",
+   "title": "Видео-кодек",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "codec",
+   "values": [
+    0,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-VIDEO-6",
+   "method": "GET",
+   "path": "/api/video/codecs",
+   "title": "Список видео-кодеков",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "codecs"
+    ],
+    "properties": {
+     "codecs": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-7",
+   "method": "GET",
+   "path": "/api/video/profile",
+   "title": "Профиль",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "profile"
+    ],
+    "properties": {
+     "profile": {
+      "type": "integer",
+      "enum": [
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-8",
+   "method": "POST",
+   "path": "/api/video/profile",
+   "title": "Профиль",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "profile",
+   "values": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "id": "API-VIDEO-9",
+   "method": "GET",
+   "path": "/api/video/profiles",
+   "title": "Профили",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "profiles"
+    ],
+    "properties": {
+     "profiles": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-10",
+   "method": "GET",
+   "path": "/api/video/bitrate_mode",
+   "title": "Режим сжатия данных",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "bitrateMode"
+    ],
+    "properties": {
+     "bitrateMode": {
+      "type": "integer",
+      "enum": [
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-11",
+   "method": "POST",
+   "path": "/api/video/bitrate_mode",
+   "title": "Режим сжатия данных",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "bitrateMode",
+   "values": [
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-VIDEO-12",
+   "method": "GET",
+   "path": "/api/video/record_available",
+   "title": "Возможность включения записи на данном канале",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "isRecordAvailable"
+    ],
+    "properties": {
+     "isRecordAvailable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-13",
+   "method": "GET",
+   "path": "/api/video/resolutions",
+   "title": "Список разрешений",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "resolutions"
+    ],
+    "properties": {
+     "resolutions": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "resolution": {
+         "type": "integer"
+        },
+        "size": {
+         "type": "object",
+         "properties": {
+          "height": {
+           "type": "integer"
+          },
+          "width": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-14",
+   "method": "GET",
+   "path": "/api/video/resolution",
+   "title": "Разрешение",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "resolution"
+    ],
+    "properties": {
+     "resolution": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10,
+       11,
+       12,
+       13,
+       14,
+       15,
+       16,
+       17,
+       18,
+       19,
+       20,
+       21,
+       22,
+       23,
+       24,
+       25
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-15",
+   "method": "POST",
+   "path": "/api/video/resolution",
+   "title": "Разрешение",
+   "kind": "не вызывается",
+   "reason": "допустимый список зависит от модели и потока",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-16",
+   "method": "GET",
+   "path": "/api/video/resolution_size",
+   "title": "Текущее разрешение",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "resolutionSize"
+    ],
+    "properties": {
+     "resolutionSize": {
+      "type": "object",
+      "required": [
+       "height",
+       "width"
+      ],
+      "properties": {
+       "height": {
+        "type": "integer"
+       },
+       "width": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-17",
+   "method": "GET",
+   "path": "/api/video/framerate",
+   "title": "Частота кадров",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "framerate",
+     "framerateRange"
+    ],
+    "properties": {
+     "framerate": {
+      "type": "integer"
+     },
+     "framerateRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-18",
+   "method": "POST",
+   "path": "/api/video/framerate",
+   "title": "Частота кадров",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "framerate",
+   "range_field": "framerateRange"
+  },
+  {
+   "id": "API-VIDEO-19",
+   "method": "GET",
+   "path": "/api/video/bitrate",
+   "title": "Битрейт",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "bitrate",
+     "bitrateRange"
+    ],
+    "properties": {
+     "bitrate": {
+      "type": "integer"
+     },
+     "bitrateRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-20",
+   "method": "POST",
+   "path": "/api/video/bitrate",
+   "title": "Битрейт",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "bitrate",
+   "range_field": "bitrateRange"
+  },
+  {
+   "id": "API-VIDEO-21",
+   "method": "GET",
+   "path": "/api/video/frame_interval",
+   "title": "Частота опорного кадра",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "frameInterval",
+     "frameIntervalRange"
+    ],
+    "properties": {
+     "frameInterval": {
+      "type": "integer"
+     },
+     "frameIntervalRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-22",
+   "method": "POST",
+   "path": "/api/video/frame_interval",
+   "title": "Частота опорного кадра",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "frameInterval",
+   "range_field": "frameIntervalRange"
+  },
+  {
+   "id": "API-VIDEO-23",
+   "method": "GET",
+   "path": "/api/video/multicast_enable",
+   "title": "Мультикаст вкл./выкл.",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastEnable"
+    ],
+    "properties": {
+     "multicastEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-24",
+   "method": "POST",
+   "path": "/api/video/multicast_enable",
+   "title": "Мультикаст вкл./выкл.",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-25",
+   "method": "GET",
+   "path": "/api/video/multicast_ip",
+   "title": "Мультикаст IP адрес",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastIP"
+    ],
+    "properties": {
+     "multicastIP": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-26",
+   "method": "POST",
+   "path": "/api/video/multicast_ip",
+   "title": "Мультикаст IP адрес",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-27",
+   "method": "GET",
+   "path": "/api/video/multicast_forced_enable",
+   "title": "Принудительный мультикаст",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastForcedEnable"
+    ],
+    "properties": {
+     "multicastForcedEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-28",
+   "method": "POST",
+   "path": "/api/video/multicast_forced_enable",
+   "title": "Принудительный мультикаст",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-29",
+   "method": "GET",
+   "path": "/api/video/multicast_audio_port",
+   "title": "Аудио порт мультикаста",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastAudioPort"
+    ],
+    "properties": {
+     "multicastAudioPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-30",
+   "method": "POST",
+   "path": "/api/video/multicast_audio_port",
+   "title": "Аудио порт мультикаста",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-31",
+   "method": "GET",
+   "path": "/api/video/multicast_video_port",
+   "title": "Видео порт мультикаста",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastVideoPort"
+    ],
+    "properties": {
+     "multicastVideoPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-32",
+   "method": "POST",
+   "path": "/api/video/multicast_video_port",
+   "title": "Видео порт мультикаста",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-33",
+   "method": "POST",
+   "path": "/api/video/multicast_sdp",
+   "title": "Мультикаст SDP",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   },
+   "binary": true
+  },
+  {
+   "id": "API-VIDEO-34",
+   "method": "GET",
+   "path": "/api/video/multicast_ttl",
+   "title": "Мультикаст TTL",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "multicastTTL"
+    ],
+    "properties": {
+     "multicastTTL": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-35",
+   "method": "POST",
+   "path": "/api/video/multicast_ttl",
+   "title": "Мультикаст TTL",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-36",
+   "method": "GET",
+   "path": "/api/video/roi_enable",
+   "title": "вкл./ выкл. ROI",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "roiEnable"
+    ],
+    "properties": {
+     "roiEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-37",
+   "method": "POST",
+   "path": "/api/video/roi_enable",
+   "title": "вкл./ выкл. ROI",
+   "kind": "запись",
+   "query": {
+    "stream_id": "primary"
+   },
+   "setting": "roiEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-VIDEO-38",
+   "method": "GET",
+   "path": "/api/video/roi",
+   "title": "ROI",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "roiList"
+    ],
+    "properties": {
+     "roiList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-39",
+   "method": "POST",
+   "path": "/api/video/roi",
+   "title": "ROI",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-VIDEO-40",
+   "method": "GET",
+   "path": "/api/video/stream_mode",
+   "title": "Режим потока",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "streamMode"
+    ],
+    "properties": {
+     "streamMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-VIDEO-41",
+   "method": "POST",
+   "path": "/api/video/stream_mode",
+   "title": "Режим потока",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-VIDEO-42",
+   "method": "GET",
+   "path": "/api/video/snapshot",
+   "title": "Снимок потока",
+   "kind": "чтение",
+   "binary": true
+  },
+  {
+   "id": "API-VIDEO-43",
+   "method": "POST",
+   "path": "/api/video/snapshot",
+   "title": "Снимок потока",
+   "kind": "чтение",
+   "binary": true
+  },
+  {
+   "id": "API-RECORDER-1",
+   "method": "GET",
+   "path": "/api/recorder",
+   "title": "Получение текущих параметров регистратора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "streams",
+     "recordDuration",
+     "state",
+     "ringWrite",
+     "maxConcurrentRecordings",
+     "space",
+     "mediaDirStatus"
+    ],
+    "properties": {
+     "streams": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "recordDuration": {
+      "type": "number"
+     },
+     "state": {
+      "type": "integer",
+      "enum": [
+       1,
+       2
+      ]
+     },
+     "ringWrite": {
+      "type": "boolean"
+     },
+     "maxConcurrentRecordings": {
+      "type": "number"
+     },
+     "space": {
+      "type": "object",
+      "properties": {
+       "free": {
+        "type": "integer"
+       },
+       "available": {
+        "type": "integer"
+       },
+       "capacity": {
+        "type": "integer"
+       }
+      }
+     },
+     "mediaDirStatus": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-RECORDER-2",
+   "method": "POST",
+   "path": "/api/recorder/enable",
+   "title": "Включить запись регистратора",
+   "kind": "не вызывается",
+   "reason": "чтения на том же адресе нет: записанное значение нечем сверить",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-RECORDER-3",
+   "method": "POST",
+   "path": "/api/recorder/settings",
+   "title": "Настройки записи видео",
+   "kind": "не вызывается",
+   "reason": "чтения на том же адресе нет: записанное значение нечем сверить"
+  },
+  {
+   "id": "API-RECORDER-4",
+   "method": "GET",
+   "path": "/api/recorder/info",
+   "title": "Получение информации о потоках",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "recording",
+     "directories"
+    ],
+    "properties": {
+     "recording": {
+      "type": "boolean"
+     },
+     "directories": {
+      "type": "string"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-RECORDER-5",
+   "method": "POST",
+   "path": "/api/recorder/records",
+   "title": "Получение списка файлов",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   },
+   "missing": [
+    "тело запроса"
+   ]
+  },
+  {
+   "id": "API-RECORDER-6",
+   "method": "POST",
+   "path": "/api/recorder/download",
+   "title": "Загрузка файла",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "binary": true,
+   "missing": [
+    "тело запроса"
+   ]
+  },
+  {
+   "id": "API-RECORDER-7",
+   "method": "POST",
+   "path": "/api/recorder/remove_dir",
+   "title": "Включить запись регистратора",
+   "kind": "разрушающая",
+   "reason": "разрушающая операция",
+   "query": {
+    "stream_id": "primary"
+   },
+   "missing": [
+    "тело запроса"
+   ]
+  },
+  {
+   "id": "API-RECORDER-8",
+   "method": "POST",
+   "path": "/api/recorder/record_details",
+   "title": "Получение информации о файле",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "codecs",
+     "duration",
+     "size"
+    ],
+    "properties": {
+     "codecs": {
+      "type": "string"
+     },
+     "duration": {
+      "type": "number"
+     },
+     "size": {
+      "type": "integer"
+     }
+    }
+   },
+   "missing": [
+    "тело запроса"
+   ]
+  },
+  {
+   "id": "API-OSD-1",
+   "method": "GET",
+   "path": "/api/osd",
+   "title": "OSD",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "cameraNameEnable",
+     "dateEnable",
+     "glonassEnable",
+     "privacyEnable",
+     "metaInfoEnable",
+     "customTextEnable",
+     "privacyList",
+     "overlayBlocks",
+     "resolution",
+     "customTextValue",
+     "customTextMaxLength",
+     "fontSize"
+    ],
+    "properties": {
+     "cameraNameEnable": {
+      "type": "boolean"
+     },
+     "dateEnable": {
+      "type": "boolean"
+     },
+     "glonassEnable": {
+      "type": "boolean"
+     },
+     "privacyEnable": {
+      "type": "boolean"
+     },
+     "metaInfoEnable": {
+      "type": "boolean"
+     },
+     "customTextEnable": {
+      "type": "boolean"
+     },
+     "privacyList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "overlayBlocks": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+         ]
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "height": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "resolution": {
+      "type": "object",
+      "properties": {
+       "height": {
+        "type": "integer"
+       },
+       "width": {
+        "type": "integer"
+       }
+      }
+     },
+     "customTextValue": {
+      "type": "string"
+     },
+     "customTextMaxLength": {
+      "type": "integer"
+     },
+     "fontSize": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-2",
+   "method": "POST",
+   "path": "/api/osd/reset_overlay_object_positions",
+   "title": "Сбросить позиции объектов наложения",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-OSD-3",
+   "method": "GET",
+   "path": "/api/osd/camera_name_enable",
+   "title": "Отображение названия устройства",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "cameraNameEnable"
+    ],
+    "properties": {
+     "cameraNameEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-4",
+   "method": "POST",
+   "path": "/api/osd/camera_name_enable",
+   "title": "Отображение названия устройства",
+   "kind": "запись",
+   "setting": "cameraNameEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-5",
+   "method": "GET",
+   "path": "/api/osd/glonass_enable",
+   "title": "Включение/отключение отображения координат GPS в OSD",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "glonassEnable"
+    ],
+    "properties": {
+     "glonassEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-6",
+   "method": "POST",
+   "path": "/api/osd/glonass_enable",
+   "title": "Включение/отключение отображения координат GPS в OSD",
+   "kind": "запись",
+   "setting": "glonassEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-7",
+   "method": "GET",
+   "path": "/api/osd/date_enable",
+   "title": "Отображение даты",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "dateEnable"
+    ],
+    "properties": {
+     "dateEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-8",
+   "method": "POST",
+   "path": "/api/osd/date_enable",
+   "title": "Отображение даты",
+   "kind": "запись",
+   "setting": "dateEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-9",
+   "method": "GET",
+   "path": "/api/osd/privacy_enable",
+   "title": "Зоны приватности вкл./выкл.",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "privacyEnable"
+    ],
+    "properties": {
+     "privacyEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-10",
+   "method": "POST",
+   "path": "/api/osd/privacy_enable",
+   "title": "Зоны приватности вкл./выкл.",
+   "kind": "запись",
+   "setting": "privacyEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-11",
+   "method": "GET",
+   "path": "/api/osd/meta_info_enable",
+   "title": "Получение значения отображения зоны информации о потоке",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "metaInfoEnable"
+    ],
+    "properties": {
+     "metaInfoEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-12",
+   "method": "POST",
+   "path": "/api/osd/meta_info_enable",
+   "title": "Установить отображение зоны информации о потоке",
+   "kind": "запись",
+   "setting": "metaInfoEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-13",
+   "method": "GET",
+   "path": "/api/osd/custom_text_enable",
+   "title": "Получение значения отображения зоны пользовательского текста",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "customTextEnable"
+    ],
+    "properties": {
+     "customTextEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-14",
+   "method": "POST",
+   "path": "/api/osd/custom_text_enable",
+   "title": "Установить отображение зоны пользовательского текста",
+   "kind": "запись",
+   "setting": "customTextEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-OSD-15",
+   "method": "GET",
+   "path": "/api/osd/privacy_zone",
+   "title": "Зоны приватности",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "privacyList"
+    ],
+    "properties": {
+     "privacyList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-16",
+   "method": "POST",
+   "path": "/api/osd/privacy_zone",
+   "title": "Зоны приватности",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-OSD-17",
+   "method": "POST",
+   "path": "/api/osd/set_block_position",
+   "title": "Получение размещения заданного наложенного блока",
+   "kind": "только возврат",
+   "reason": "вызывается только для возврата сдвинутых надписей",
+   "query": {
+    "stream_id": "primary"
+   }
+  },
+  {
+   "id": "API-OSD-18",
+   "method": "GET",
+   "path": "/api/osd/block_positions",
+   "title": "Получение списка наложенных объектов",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "overlayBlocks"
+    ],
+    "properties": {
+     "overlayBlocks": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "integer",
+         "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+         ]
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "height": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-19",
+   "method": "GET",
+   "path": "/api/osd/resolution",
+   "title": "Разрешение текущего потока",
+   "kind": "чтение",
+   "query": {
+    "stream_id": "primary"
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "resolution"
+    ],
+    "properties": {
+     "resolution": {
+      "type": "object",
+      "properties": {
+       "height": {
+        "type": "integer"
+       },
+       "width": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-20",
+   "method": "GET",
+   "path": "/api/osd/font_size",
+   "title": "Получение размера шрифта OSD зоны",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "fontSize"
+    ],
+    "properties": {
+     "fontSize": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-21",
+   "method": "POST",
+   "path": "/api/osd/font_size",
+   "title": "Установка размера шрифта OSD зоны",
+   "kind": "запись",
+   "setting": "fontSize",
+   "values": [
+    0,
+    1,
+    2
+   ]
+  },
+  {
+   "id": "API-OSD-22",
+   "method": "GET",
+   "path": "/api/osd/custom_text",
+   "title": "Получение пользовательского текста",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "customTextValue",
+     "customTextMaxLength"
+    ],
+    "properties": {
+     "customTextValue": {
+      "type": "string"
+     },
+     "customTextMaxLength": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-OSD-23",
+   "method": "POST",
+   "path": "/api/osd/custom_text",
+   "title": "Установка пользовательского текста",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-SDCARD-1",
+   "method": "GET",
+   "path": "/api/sdcard",
+   "title": "Получение текущих параметров SD карты",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "size",
+     "state",
+     "minLimit",
+     "maxLimit",
+     "busy"
+    ],
+    "properties": {
+     "size": {
+      "type": "number"
+     },
+     "state": {
+      "type": "integer",
+      "enum": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8
+      ]
+     },
+     "minLimit": {
+      "type": "number"
+     },
+     "maxLimit": {
+      "type": "number"
+     },
+     "busy": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-SDCARD-2",
+   "method": "GET",
+   "path": "/api/sdcard/is_busy",
+   "title": "Получение текущих параметров SD карты",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "busy"
+    ],
+    "properties": {
+     "busy": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-SDCARD-3",
+   "method": "POST",
+   "path": "/api/sdcard/prepare",
+   "title": "Подготовка SD карты",
+   "kind": "разрушающая",
+   "reason": "разрушающая операция"
+  },
+  {
+   "id": "API-DATETIME-1",
+   "method": "GET",
+   "path": "/api/datetime",
+   "title": "Получение всех параметров даты и времени",
+   "kind": "чтение",
+   "query": {
+    "format": 1
+   },
+   "schema": {
+    "type": "object",
+    "required": [
+     "dateTime",
+     "source",
+     "ntpAddress",
+     "ntpPort",
+     "syncStateEnable",
+     "syncInterval",
+     "syncIntervalMin",
+     "syncIntervalMax",
+     "timeZone",
+     "timeZoneList"
+    ],
+    "properties": {
+     "dateTime": {
+      "type": "string"
+     },
+     "source": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "ntpAddress": {
+      "type": "string"
+     },
+     "ntpPort": {
+      "type": "integer"
+     },
+     "syncStateEnable": {
+      "type": "boolean"
+     },
+     "syncInterval": {
+      "type": "integer"
+     },
+     "syncIntervalMin": {
+      "type": "integer"
+     },
+     "syncIntervalMax": {
+      "type": "integer"
+     },
+     "timeZone": {
+      "type": "string"
+     },
+     "timeZoneList": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-DATETIME-2",
+   "method": "POST",
+   "path": "/api/datetime",
+   "title": "Установка параметров даты и времени",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-DATETIME-3",
+   "method": "GET",
+   "path": "/api/datetime/timezone",
+   "title": "Получение текущий часовой пояса и списка всех доступных часовых поясов.",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "timeZone"
+    ],
+    "properties": {
+     "timeZone": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DATETIME-4",
+   "method": "POST",
+   "path": "/api/datetime/timezone",
+   "title": "Установка часового пояса",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-SERVICE-1",
+   "method": "POST",
+   "path": "/api/service/reset",
+   "title": "Сброс настроек",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-SERVICE-2",
+   "method": "GET",
+   "path": "/api/service/is_reset",
+   "title": "Сброшены настройки",
+   "kind": "не вызывается",
+   "reason": "фильтр табу не пропускает слово «reset» в адресе (AD-7)"
+  },
+  {
+   "id": "API-SERVICE-3",
+   "method": "POST",
+   "path": "/api/service/reboot",
+   "title": "Перезагрузка",
+   "kind": "разрушающая",
+   "reason": "разрушающая операция"
+  },
+  {
+   "id": "API-SERVICE-4",
+   "method": "POST",
+   "path": "/api/service/need_reboot",
+   "title": "Нужна ли перезагрузка",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "needReboot": {
+      "type": "boolean"
+     }
+    }
+   },
+   "body": {
+    "route": "/api/image/brightness"
+   }
+  },
+  {
+   "id": "API-SERVICE-5",
+   "method": "POST",
+   "path": "/api/service/log",
+   "title": "Лог работы устройства",
+   "kind": "чтение",
+   "binary": true,
+   "sensitive": true
+  },
+  {
+   "id": "API-SERVICE-6",
+   "method": "GET",
+   "path": "/api/service/ports_in_used",
+   "title": "Используемые порты",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "portsInUsed"
+    ],
+    "properties": {
+     "portsInUsed": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-SERVICE-7",
+   "method": "POST",
+   "path": "/api/service/import_settings",
+   "title": "Импорт настроек камеры",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-SERVICE-8",
+   "method": "POST",
+   "path": "/api/service/export_settings",
+   "title": "Экспорт настроек камеры",
+   "kind": "чтение",
+   "binary": true,
+   "sensitive": true
+  },
+  {
+   "id": "API-DAYNIGHT-1",
+   "method": "GET",
+   "path": "/api/daynight",
+   "title": "Получение всех параметров настройки День/Ночь",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "dayTrigger",
+     "nightTrigger",
+     "mode",
+     "dayNightModes",
+     "light",
+     "lightRange",
+     "customLightLow",
+     "customLightHigh",
+     "backlight",
+     "customBacklight",
+     "autoBacklightEnable",
+     "backlightRange",
+     "isBacklightPWM"
+    ],
+    "properties": {
+     "dayTrigger": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     },
+     "nightTrigger": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     },
+     "mode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     },
+     "dayNightModes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "light": {
+      "type": "integer"
+     },
+     "lightRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "customLightLow": {
+      "type": "integer"
+     },
+     "customLightHigh": {
+      "type": "integer"
+     },
+     "backlight": {
+      "type": "integer"
+     },
+     "customBacklight": {
+      "type": "integer"
+     },
+     "autoBacklightEnable": {
+      "type": "boolean"
+     },
+     "backlightRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "isBacklightPWM": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-DAYNIGHT-2",
+   "method": "GET",
+   "path": "/api/daynight/mode",
+   "title": "Получение текущего режима День/Ночь",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "mode"
+    ],
+    "properties": {
+     "mode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DAYNIGHT-3",
+   "method": "POST",
+   "path": "/api/daynight/mode",
+   "title": "Установка режима День/Ночь",
+   "kind": "запись",
+   "setting": "mode",
+   "values": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  {
+   "id": "API-DAYNIGHT-4",
+   "method": "GET",
+   "path": "/api/daynight/modes",
+   "title": "Получение списка доступных режимов День/Ночь",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "dayNightModes"
+    ],
+    "properties": {
+     "dayNightModes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DAYNIGHT-5",
+   "method": "GET",
+   "path": "/api/daynight/day_trigger",
+   "title": "Получение времени переключения в режим День",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "dayTrigger"
+    ],
+    "properties": {
+     "dayTrigger": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DAYNIGHT-6",
+   "method": "POST",
+   "path": "/api/daynight/day_trigger",
+   "title": "Установка времени переключения в режим День",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-DAYNIGHT-7",
+   "method": "GET",
+   "path": "/api/daynight/night_trigger",
+   "title": "Получение времени переключения в режим Ночь",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "nightTrigger"
+    ],
+    "properties": {
+     "nightTrigger": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DAYNIGHT-8",
+   "method": "POST",
+   "path": "/api/daynight/night_trigger",
+   "title": "Установка времени переключения в режим Ночь",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-DAYNIGHT-9",
+   "method": "GET",
+   "path": "/api/daynight/light",
+   "title": "Получение величины освещенности",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "light",
+     "customLightLow",
+     "customLightHigh",
+     "backlight"
+    ],
+    "properties": {
+     "light": {
+      "type": "integer"
+     },
+     "customLightLow": {
+      "type": "integer"
+     },
+     "customLightHigh": {
+      "type": "integer"
+     },
+     "backlight": {
+      "type": "integer"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-DAYNIGHT-10",
+   "method": "POST",
+   "path": "/api/daynight/light_low",
+   "title": "Установка нижнего порога освещенности",
+   "kind": "не вызывается",
+   "reason": "чтения на том же адресе нет: записанное значение нечем сверить"
+  },
+  {
+   "id": "API-DAYNIGHT-11",
+   "method": "POST",
+   "path": "/api/daynight/light_high",
+   "title": "Установка верхнего порога освещенности",
+   "kind": "не вызывается",
+   "reason": "чтения на том же адресе нет: записанное значение нечем сверить"
+  },
+  {
+   "id": "API-DAYNIGHT-12",
+   "method": "GET",
+   "path": "/api/daynight/backlight",
+   "title": "Получение величины подсветки",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "backlight",
+     "customBacklight"
+    ],
+    "properties": {
+     "backlight": {
+      "type": "integer"
+     },
+     "customBacklight": {
+      "type": "integer"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-DAYNIGHT-13",
+   "method": "POST",
+   "path": "/api/daynight/backlight",
+   "title": "Установка подсветки (ручной режим)",
+   "kind": "не вызывается",
+   "reason": "описание не задаёт пределов значения: допустимое значение не подобрать"
+  },
+  {
+   "id": "API-DAYNIGHT-14",
+   "method": "GET",
+   "path": "/api/daynight/auto_backlight_enable",
+   "title": "Получение режима настройки подсветки",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "autoBacklightEnable"
+    ],
+    "properties": {
+     "autoBacklightEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DAYNIGHT-15",
+   "method": "POST",
+   "path": "/api/daynight/auto_backlight_enable",
+   "title": "Установка режима настройки подсветки",
+   "kind": "запись",
+   "setting": "autoBacklightEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-EVENTS-1",
+   "method": "GET",
+   "path": "/api/events",
+   "title": "Получение всех параметров системы событий",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "events",
+     "availableEvents",
+     "availableActions",
+     "osdSymbolsRange"
+    ],
+    "properties": {
+     "events": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "availableEvents": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "availableActions": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "osdSymbolsRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-EVENTS-2",
+   "method": "POST",
+   "path": "/api/events/add",
+   "title": "Добавление нового события",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-EVENTS-3",
+   "method": "GET",
+   "path": "/api/events/get_event",
+   "title": "Получение параметров события по ID",
+   "kind": "чтение",
+   "missing": [
+    "event_id"
+   ],
+   "schema": {
+    "type": "object",
+    "required": [
+     "id",
+     "eventName",
+     "eventTrigger",
+     "filterMode",
+     "filterDays",
+     "timePeriodStart",
+     "timePeriodEnd",
+     "filterWeek",
+     "action",
+     "actionParam"
+    ],
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "eventName": {
+      "type": "string"
+     },
+     "eventTrigger": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2
+      ]
+     },
+     "filterMode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4,
+       5
+      ]
+     },
+     "filterDays": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "timePeriodStart": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     },
+     "timePeriodEnd": {
+      "type": "object",
+      "properties": {
+       "hour": {
+        "type": "integer"
+       },
+       "minute": {
+        "type": "integer"
+       }
+      }
+     },
+     "filterWeek": {
+      "type": "array",
+      "items": {
+       "type": "integer",
+       "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      }
+     },
+     "action": {
+      "type": "integer",
+      "enum": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     },
+     "actionParam": {
+      "type": "object",
+      "required": [
+       "message",
+       "time"
+      ],
+      "properties": {
+       "message": {
+        "type": "string"
+       },
+       "time": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-EVENTS-4",
+   "method": "POST",
+   "path": "/api/events/set_event",
+   "title": "Редактирование существующего события",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-EVENTS-5",
+   "method": "POST",
+   "path": "/api/events/remove",
+   "title": "Удаление события по ID",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-EVENTS-6",
+   "method": "POST",
+   "path": "/api/events/remove_all",
+   "title": "Удаление всех событий",
+   "kind": "не вызывается",
+   "reason": "обратного хода нет: операция перезаписывает другие настройки"
+  },
+  {
+   "id": "API-DETECTOR-1",
+   "method": "GET",
+   "path": "/api/detector",
+   "title": "Получение всех параметров детектора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "detectorEnable",
+     "sensitivity",
+     "sensitivityRange",
+     "mode",
+     "gridWidth",
+     "gridHeight",
+     "fencesDirection",
+     "roiList",
+     "fenceList"
+    ],
+    "properties": {
+     "detectorEnable": {
+      "type": "boolean"
+     },
+     "sensitivity": {
+      "type": "integer"
+     },
+     "sensitivityRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "mode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     },
+     "gridWidth": {
+      "type": "integer"
+     },
+     "gridHeight": {
+      "type": "integer"
+     },
+     "roiList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "fenceList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "beginX": {
+         "type": "integer"
+        },
+        "beginY": {
+         "type": "integer"
+        },
+        "endX": {
+         "type": "integer"
+        },
+        "endY": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "fencesDirection": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-2",
+   "method": "GET",
+   "path": "/api/detector/detector_enable",
+   "title": "Получение состояния детектора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "detectorEnable"
+    ],
+    "properties": {
+     "detectorEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-3",
+   "method": "POST",
+   "path": "/api/detector/detector_enable",
+   "title": "Включение/выключение детектора",
+   "kind": "запись",
+   "setting": "detectorEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-DETECTOR-4",
+   "method": "GET",
+   "path": "/api/detector/sensitivity",
+   "title": "Получение чувствительности детектора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "sensitivity",
+     "sensitivityRange"
+    ],
+    "properties": {
+     "sensitivity": {
+      "type": "integer"
+     },
+     "sensitivityRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-5",
+   "method": "POST",
+   "path": "/api/detector/sensitivity",
+   "title": "Установка чувствительности детектора",
+   "kind": "запись",
+   "setting": "sensitivity",
+   "range_field": "sensitivityRange"
+  },
+  {
+   "id": "API-DETECTOR-6",
+   "method": "GET",
+   "path": "/api/detector/mode",
+   "title": "Получение режима детектора",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "mode"
+    ],
+    "properties": {
+     "mode": {
+      "type": "integer",
+      "enum": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-7",
+   "method": "POST",
+   "path": "/api/detector/mode",
+   "title": "Выбор режима детектора",
+   "kind": "запись",
+   "setting": "mode",
+   "values": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": "API-DETECTOR-8",
+   "method": "GET",
+   "path": "/api/detector/roi",
+   "title": "Получение областей интереса (ROI)",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "roiList"
+    ],
+    "properties": {
+     "roiList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "height": {
+         "type": "integer"
+        },
+        "width": {
+         "type": "integer"
+        },
+        "x": {
+         "type": "integer"
+        },
+        "y": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-9",
+   "method": "POST",
+   "path": "/api/detector/roi",
+   "title": "Установка областей интереса (ROI)",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-DETECTOR-10",
+   "method": "GET",
+   "path": "/api/detector/fence",
+   "title": "Получение линий детектирования пересечения",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "fenceList"
+    ],
+    "properties": {
+     "fenceList": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "beginX": {
+         "type": "integer"
+        },
+        "beginY": {
+         "type": "integer"
+        },
+        "endX": {
+         "type": "integer"
+        },
+        "endY": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-DETECTOR-11",
+   "method": "POST",
+   "path": "/api/detector/fence",
+   "title": "Установка линий детектирования пересечения",
+   "kind": "не вызывается",
+   "reason": "значение — текст или составная структура: подобрать его автоматически нельзя"
+  },
+  {
+   "id": "API-SHOCK-SENSOR-1",
+   "method": "GET",
+   "path": "/api/shock_sensor",
+   "title": "Все параметры датчика удара",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "shockSensorEnable",
+     "sensitivity",
+     "sensitivityRange",
+     "isSensitivitySupport"
+    ],
+    "properties": {
+     "shockSensorEnable": {
+      "type": "boolean"
+     },
+     "isSensitivitySupport": {
+      "type": "boolean"
+     },
+     "sensitivity": {
+      "type": "integer"
+     },
+     "sensitivityRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-SHOCK-SENSOR-2",
+   "method": "GET",
+   "path": "/api/shock_sensor/shock_sensor_enable",
+   "title": "Датчик удара вкл./выкл.",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "shockSensorEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-SHOCK-SENSOR-3",
+   "method": "POST",
+   "path": "/api/shock_sensor/shock_sensor_enable",
+   "title": "Датчик удара вкл./выкл.",
+   "kind": "запись",
+   "setting": "shockSensorEnable",
+   "boolean": true
+  },
+  {
+   "id": "API-SHOCK-SENSOR-4",
+   "method": "GET",
+   "path": "/api/shock_sensor/sensitivity",
+   "title": "Чувствительность датчика удара",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "sensitivity": {
+      "type": "integer"
+     },
+     "sensitivityRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-SHOCK-SENSOR-5",
+   "method": "POST",
+   "path": "/api/shock_sensor/sensitivity",
+   "title": "Чувствительность датчика удара",
+   "kind": "запись",
+   "setting": "sensitivity",
+   "range_field": "sensitivityRange"
+  },
+  {
+   "id": "API-GLONASS-1",
+   "method": "GET",
+   "path": "/api/glonass",
+   "title": "Получение всех параметров GPS/ГЛОНАСС",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "glonassEnable",
+     "intervalSyncEnable",
+     "syncInterval",
+     "syncIntervalRange",
+     "coordinates",
+     "synchronizationState"
+    ],
+    "properties": {
+     "glonassEnable": {
+      "type": "boolean"
+     },
+     "intervalSyncEnable": {
+      "type": "boolean"
+     },
+     "syncInterval": {
+      "type": "integer"
+     },
+     "syncIntervalRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     },
+     "coordinates": {
+      "type": "object",
+      "properties": {
+       "latitude": {
+        "type": "number"
+       },
+       "longitude": {
+        "type": "number"
+       }
+      }
+     },
+     "synchronizationState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-GLONASS-2",
+   "method": "GET",
+   "path": "/api/glonass/glonass_enable",
+   "title": "Получение состояния GPS-приёмника",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "glonassEnable"
+    ],
+    "properties": {
+     "glonassEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-GLONASS-3",
+   "method": "POST",
+   "path": "/api/glonass/glonass_enable",
+   "title": "Включение/выключение GPS-приёмника",
+   "kind": "не вызывается",
+   "reason": "приёмник ГЛОНАСС может быть источником времени камеры (AD-7)"
+  },
+  {
+   "id": "API-GLONASS-4",
+   "method": "GET",
+   "path": "/api/glonass/sync_enable",
+   "title": "Получение состояния периодической синхронизации",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "intervalSyncEnable"
+    ],
+    "properties": {
+     "intervalSyncEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-GLONASS-5",
+   "method": "POST",
+   "path": "/api/glonass/sync_enable",
+   "title": "Включение/отключение периодической синхронизации координат",
+   "kind": "не вызывается",
+   "reason": "приёмник ГЛОНАСС может быть источником времени камеры (AD-7)"
+  },
+  {
+   "id": "API-GLONASS-6",
+   "method": "GET",
+   "path": "/api/glonass/sync_interval",
+   "title": "Получение текущего интервала синхронизации",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "syncInterval",
+     "syncIntervalRange"
+    ],
+    "properties": {
+     "syncInterval": {
+      "type": "integer"
+     },
+     "syncIntervalRange": {
+      "type": "object",
+      "properties": {
+       "min": {
+        "type": "integer"
+       },
+       "max": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "API-GLONASS-7",
+   "method": "POST",
+   "path": "/api/glonass/sync_interval",
+   "title": "Установка интервала синхронизации координат",
+   "kind": "не вызывается",
+   "reason": "приёмник ГЛОНАСС может быть источником времени камеры (AD-7)"
+  },
+  {
+   "id": "API-GLONASS-8",
+   "method": "GET",
+   "path": "/api/glonass/coordinates",
+   "title": "Получение последних координат GPS/ГЛОНАСС",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "coordinates"
+    ],
+    "properties": {
+     "coordinates": {
+      "type": "object",
+      "properties": {
+       "latitude": {
+        "type": "number"
+       },
+       "longitude": {
+        "type": "number"
+       }
+      }
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-GLONASS-9",
+   "method": "POST",
+   "path": "/api/glonass/synchronize",
+   "title": "Принудительное обновление координат (однократно)",
+   "kind": "не вызывается",
+   "reason": "приёмник ГЛОНАСС может быть источником времени камеры (AD-7)"
+  },
+  {
+   "id": "API-GLONASS-10",
+   "method": "GET",
+   "path": "/api/glonass/synchronization_state",
+   "title": "Статус выполнения синхронизации координат",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "synchronizationState"
+    ],
+    "properties": {
+     "synchronizationState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "live": true
+  },
+  {
+   "id": "API-LTE-1",
+   "method": "GET",
+   "path": "/api/lte",
+   "title": "Все параметры LTE",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "lteEnable",
+     "apn",
+     "lteInfo",
+     "externalIP"
+    ],
+    "properties": {
+     "lteEnable": {
+      "type": "boolean"
+     },
+     "apn": {
+      "type": "string"
+     },
+     "externalIP": {
+      "type": "string"
+     },
+     "lteInfo": {
+      "type": "object",
+      "properties": {
+       "signal": {
+        "type": "integer",
+        "enum": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ]
+       },
+       "netType": {
+        "type": "integer",
+        "enum": [
+         0,
+         1,
+         2
+        ]
+       },
+       "info": {
+        "type": "string"
+       },
+       "ip": {
+        "type": "string"
+       },
+       "netmask": {
+        "type": "string"
+       },
+       "gateway": {
+        "type": "string"
+       },
+       "broadcast": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   "sensitive": true,
+   "live": true
+  },
+  {
+   "id": "API-LTE-2",
+   "method": "GET",
+   "path": "/api/lte/enable",
+   "title": "Включение/отключение LTE",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "lteEnable"
+    ],
+    "properties": {
+     "lteEnable": {
+      "type": "boolean"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-LTE-3",
+   "method": "POST",
+   "path": "/api/lte/enable",
+   "title": "Включение/отключение LTE",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-LTE-4",
+   "method": "GET",
+   "path": "/api/lte/apn",
+   "title": "Получение APN",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "apn"
+    ],
+    "properties": {
+     "apn": {
+      "type": "string"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-LTE-5",
+   "method": "POST",
+   "path": "/api/lte/apn",
+   "title": "Установка APN",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-LTE-6",
+   "method": "GET",
+   "path": "/api/lte/info",
+   "title": "Получение информации о LTE подключении",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "lteInfo"
+    ],
+    "properties": {
+     "lteInfo": {
+      "type": "object",
+      "properties": {
+       "signal": {
+        "type": "integer",
+        "enum": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ]
+       },
+       "netType": {
+        "type": "integer",
+        "enum": [
+         0,
+         1,
+         2
+        ]
+       },
+       "info": {
+        "type": "string"
+       },
+       "ip": {
+        "type": "string"
+       },
+       "netmask": {
+        "type": "string"
+       },
+       "gateway": {
+        "type": "string"
+       },
+       "broadcast": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   "sensitive": true,
+   "live": true
+  },
+  {
+   "id": "API-NETWORK-1",
+   "method": "GET",
+   "path": "/api/network/tcpip",
+   "title": "TCPIP",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "dhcp",
+     "ip",
+     "netmask",
+     "gateway",
+     "primaryDNS",
+     "secondaryDNS",
+     "mac",
+     "httpPort",
+     "ipDefault"
+    ],
+    "properties": {
+     "dhcp": {
+      "type": "boolean"
+     },
+     "ip": {
+      "type": "string"
+     },
+     "netmask": {
+      "type": "string"
+     },
+     "gateway": {
+      "type": "string"
+     },
+     "primaryDNS": {
+      "type": "string"
+     },
+     "secondaryDNS": {
+      "type": "string"
+     },
+     "httpPort": {
+      "type": "integer"
+     },
+     "ipDefault": {
+      "type": "string"
+     },
+     "mac": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-2",
+   "method": "POST",
+   "path": "/api/network/tcpip",
+   "title": "TCPIP",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-3",
+   "method": "POST",
+   "path": "/api/network/tcpip/dhcp_enable",
+   "title": "DHCP",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-4",
+   "method": "GET",
+   "path": "/api/network/ports",
+   "title": "Получение портов",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpPort",
+     "httpsPort",
+     "rtspPort",
+     "onvifPort",
+     "snmpPort"
+    ],
+    "properties": {
+     "httpPort": {
+      "type": "integer"
+     },
+     "httpsPort": {
+      "type": "integer"
+     },
+     "rtspPort": {
+      "type": "integer"
+     },
+     "onvifPort": {
+      "type": "integer"
+     },
+     "snmpPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-5",
+   "method": "POST",
+   "path": "/api/network/ports",
+   "title": "Установка портов",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-6",
+   "method": "GET",
+   "path": "/api/network/ports/http",
+   "title": "HTTP порт",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpPort"
+    ],
+    "properties": {
+     "httpPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-7",
+   "method": "POST",
+   "path": "/api/network/ports/http",
+   "title": "HTTP порт",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-8",
+   "method": "GET",
+   "path": "/api/network/ports/https",
+   "title": "HTTPS порт",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpsPort"
+    ],
+    "properties": {
+     "httpsPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-9",
+   "method": "POST",
+   "path": "/api/network/ports/https",
+   "title": "HTTPS порт",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-10",
+   "method": "GET",
+   "path": "/api/network/ports/rtsp",
+   "title": "RTSP порт",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "rtspPort"
+    ],
+    "properties": {
+     "rtspPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-11",
+   "method": "POST",
+   "path": "/api/network/ports/rtsp",
+   "title": "RTSP порт",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-12",
+   "method": "GET",
+   "path": "/api/network/ports/onvif",
+   "title": "Onvif порт",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "onvifPort"
+    ],
+    "properties": {
+     "onvifPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-13",
+   "method": "POST",
+   "path": "/api/network/ports/onvif",
+   "title": "Onvif порт",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-14",
+   "method": "GET",
+   "path": "/api/network/ports/snmp",
+   "title": "SNMP порт",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "snmpPort"
+    ],
+    "properties": {
+     "snmpPort": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-15",
+   "method": "POST",
+   "path": "/api/network/ports/snmp",
+   "title": "SNMP порт",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-16",
+   "method": "GET",
+   "path": "/api/network/rtsp",
+   "title": "RTSP",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "rtspPort",
+     "rtspAuthEnable"
+    ],
+    "properties": {
+     "rtspPort": {
+      "type": "integer"
+     },
+     "rtspAuthEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-17",
+   "method": "GET",
+   "path": "/api/network/rtsp/auth_enable",
+   "title": "RTSP авторизация",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "rtspAuthEnable"
+    ],
+    "properties": {
+     "rtspAuthEnable": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  {
+   "id": "API-NETWORK-18",
+   "method": "POST",
+   "path": "/api/network/rtsp/auth_enable",
+   "title": "RTSP авторизация",
+   "kind": "табу",
+   "reason": "запрещено табу"
+  },
+  {
+   "id": "API-NETWORK-19",
+   "method": "GET",
+   "path": "/api/network/https",
+   "title": "HTTPS и SSL",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpsStatus",
+     "httpsState"
+    ],
+    "properties": {
+     "httpsStatus": {
+      "type": "integer"
+     },
+     "httpsState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-20",
+   "method": "POST",
+   "path": "/api/network/https",
+   "title": "HTTPS и SSL",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-21",
+   "method": "GET",
+   "path": "/api/network/https/state",
+   "title": "HTTPS вкл./выкл.",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpsState"
+    ],
+    "properties": {
+     "httpsState": {
+      "type": "boolean"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-22",
+   "method": "POST",
+   "path": "/api/network/https/state",
+   "title": "HTTPS вкл./выкл.",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-23",
+   "method": "GET",
+   "path": "/api/network/https/certificate",
+   "title": "HTTPS сертификат",
+   "kind": "чтение",
+   "binary": true,
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-24",
+   "method": "POST",
+   "path": "/api/network/https/certificate",
+   "title": "HTTPS сертификат",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-25",
+   "method": "GET",
+   "path": "/api/network/https/certificate_info",
+   "title": "Информация о HTTPS сертификат",
+   "kind": "чтение",
+   "schema": {
+    "type": "object",
+    "required": [
+     "httpsCertificate"
+    ],
+    "properties": {
+     "httpsCertificate": {
+      "type": "string"
+     }
+    }
+   },
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-26",
+   "method": "POST",
+   "path": "/api/network/https/generate_certificate",
+   "title": "Генерация HTTPS сертификата",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  },
+  {
+   "id": "API-NETWORK-27",
+   "method": "POST",
+   "path": "/api/network/https/delete_all_certificates",
+   "title": "Удаление сертификатов",
+   "kind": "табу",
+   "reason": "запрещено табу",
+   "sensitive": true
+  }
+ ]
+}

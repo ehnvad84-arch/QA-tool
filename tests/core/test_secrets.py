@@ -137,3 +137,7 @@ def test_storage_is_preferred_when_it_works(memory_keyring):
 
 def test_password_in_command_line_form_is_redacted():
     assert "s3cret" not in redact("onvif-tt --user admin --password=s3cret --host x")
+
+
+def test_session_header_is_cut():
+    assert "abc-123" not in redact("POST /api/x\nX-Session-ID: abc-123\n")

@@ -5,18 +5,32 @@
 tests/test_architecture.py не даёт импортировать httpx, requests и сокеты в обход этого модуля.
 """
 
+import functools
 import logging
 import re
+import ssl
 
 import httpx
 
 from qa_tool.core.taboo import check_http, check_onvif, check_web_request
 
 TransportError = httpx.TransportError  # драйверы ловят сетевые сбои, не импортируя httpx
+Response = httpx.Response
+NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout)  # соединения не было: запрос не ушёл
 
 # onvif-tt при загрузке включает журнал INFO на весь процесс, и httpx пишет в консоль строку на
 # каждый запрос к камере. Обмены и так сохраняются в доказательствах (с вырезанными секретами).
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+@functools.cache
+def _tls_context() -> ssl.SSLContext:
+    """Один контекст TLS на процесс.
+
+    Без него httpx заново читает сертификаты на каждый запрос: на Windows это около 0,15 с,
+    больше времени самого запроса к камере.
+    """
+    return httpx.create_ssl_context()
 
 
 _ENVELOPE = re.compile(r"<\s*(?:[\w.-]+:)?Envelope\b")
@@ -63,4 +77,6 @@ def request(
     if not _is_soap(headers, text):
         # в SOAP-конверте всегда есть Username и Password — по словам его не судим
         check_web_request(method, url, text)
-    return httpx.request(method, url, content=content, headers=headers, timeout=timeout)
+    return httpx.request(
+        method, url, content=content, headers=headers, timeout=timeout, verify=_tls_context()
+    )

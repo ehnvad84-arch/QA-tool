@@ -5,7 +5,7 @@
 
 ## WHAT — стек и структура
 
-- Стек: Python 3.12, PySide6 (Qt) — окно; onvif-tt + zeep — ONVIF; schemathesis + httpx — API; Playwright — веб-интерфейс; ffmpeg/ffprobe — поток и кодеки; OpenCV, scikit-image — картинка; SQLite — результаты; openpyxl, Qt PDF — протоколы.
+- Стек: Python 3.12, PySide6 (Qt) — окно; onvif-tt + zeep — ONVIF; httpx + jsonschema — API; Playwright — веб-интерфейс; ffmpeg/ffprobe — поток и кодеки; OpenCV, scikit-image — картинка; SQLite — результаты; openpyxl, Qt PDF — протоколы.
 - Сборки: Windows (PyInstaller + Inno Setup) и Linux (AppImage + .deb) из одного кода.
 - Каркас — этап 1 (docs/ROADMAP.md, docs/work/skeleton/). Карта:
   - `src/qa_tool/core/` — модели, сценарий прогона, планировщик на 8 камер, блокировки ресурсов стенда, база результатов
@@ -43,7 +43,7 @@
 - ONVIF-проверки — пакет onvif-tt (github.com/OpenIPC/onvif-tt), закреплённая версия.
 - Каталог тест-кейсов ONVIF и матрица профилей — github.com/onvif/testspecs (DocBook XML).
 - Справочник операций и mock-камера — github.com/smiti1642/oxvif.
-- Первый адаптер производителя — «Рувер»: OpenAPI `ruware-api-release-*.json` из репозитория прошивки (~/projects/HiSi-Developing-Firmware); веб-интерфейс — там же, `www/` (Vue 3).
+- Первый адаптер производителя — «Рувер»: карта `src/qa_tool/data/ruver_api_map.json` собирается `scripts/gen_api_map.py` из `www/openapi/doc/openapi.yaml` репозитория прошивки (~/projects/hisi-fw-dev-gstack); веб-интерфейс — там же, `www/` (Vue 3).
 
 ## Правила проекта
 

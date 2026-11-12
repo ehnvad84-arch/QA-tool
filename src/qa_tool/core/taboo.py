@@ -109,7 +109,10 @@ FORBIDDEN_HTTP_PREFIXES = (
     "/api/lte",  # APN и учётные данные мобильной сети
     "/api/service/reset",  # сброс к заводским — меняет сеть и пароли
     "/api/service/import_settings",  # импорт полной конфигурации — то же
+    "/api/datetime",  # NTP и источник времени: в ONVIF SetNTP закрыт так же
 )
+# Разделы без своей папки: настройки идут рядом с разрешёнными, поэтому только по началу имени
+FORBIDDEN_HTTP_NAME_PREFIXES = ("/api/video/multicast_",)  # адреса и порты мультикаста — это сеть
 
 
 def normalize_path(url_or_path: str) -> str:
@@ -134,13 +137,16 @@ def check_http(method: str, url_or_path: str) -> None:
     if method.upper() not in _WRITE_METHODS:
         return
     normalized = normalize_path(url_or_path)
-    for prefix in FORBIDDEN_HTTP_PREFIXES:
-        rest = normalized[len(prefix) :]
-        if normalized.startswith(prefix) and (not rest or rest[0] in "/."):  # «/api/users.json»
-            raise TabooViolation(
-                f"{method.upper()} {url_or_path} запрещён: программа не меняет сетевые настройки, "
-                "логины и пароли камеры"
-            )
+    in_section = any(
+        normalized.startswith(prefix)
+        and (len(normalized) == len(prefix) or normalized[len(prefix)] in "/.")  # «/api/users.json»
+        for prefix in FORBIDDEN_HTTP_PREFIXES
+    )
+    if in_section or normalized.startswith(FORBIDDEN_HTTP_NAME_PREFIXES):
+        raise TabooViolation(
+            f"{method.upper()} {url_or_path} запрещён: программа не меняет сетевые настройки, "
+            "логины и пароли камеры"
+        )
 
 
 # --- Веб-обход любой камеры (AD-4, AD-7) ----------------------------------------------------------
@@ -304,6 +310,28 @@ def is_write_request(method: str, url: str) -> bool:
     return any(w in WRITE_VERBS for w in words(path, query))  # глагол в любом месте пути
 
 
+# Решение директора 2026-11-04: без этих трёх адресов программа не войдёт в API «Рувер», а в них
+# есть слова «auth» и «login». Больше исключений из слов-признаков нет.
+CAMERA_LOGIN_REQUESTS = frozenset(
+    {
+        ("GET", "/api/auth/create_session"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/auth/logout"),
+    }
+)
+
+
+def is_camera_login(method: str, url: str) -> bool:
+    """Запрос ли это входа в API «Рувер»: адрес совпадает буквально, без параметров.
+
+    Адрес намеренно не приводится к общему виду: `normalize_path` убирает `;…`, `..` и %XX,
+    и «/api/auth/login;/../users/set_password» прошёл бы как вход.
+    """
+    parts = urlsplit(url)
+    plain = not (parts.query or parts.fragment or url.endswith(("?", "#")))
+    return plain and (method.upper(), parts.path) in CAMERA_LOGIN_REQUESTS
+
+
 def check_web_request(method: str, url: str, body: str = "", page_title: str = "") -> None:
     """Не пропустить изменяющий запрос к сети, учётным записям, сертификатам или сбросу.
 
@@ -313,7 +341,7 @@ def check_web_request(method: str, url: str, body: str = "", page_title: str = "
     Raises:
         TabooViolation: запрос меняет что-то на камере и содержит слово-признак.
     """
-    if not is_write_request(method, url):
+    if not is_write_request(method, url) or is_camera_login(method, url):
         return
     path, query = _target(url)
     word = web_forbidden_word(path, query, body, page_title)
