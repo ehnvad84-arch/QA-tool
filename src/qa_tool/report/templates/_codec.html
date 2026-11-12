@@ -1,0 +1,80 @@
+{% set c = p.codec %}
+<div class="page"></div>
+<h2>Приложение {{ c.number }}. Кодеки: качество на битрейт</h2>
+<p>Сцена — та, что стоит перед камерами в цветовом боксе; все камеры снимали её одновременно.
+{% if c.allowed %}Изменяющие проверки разрешены: менялись только кодек и битрейт; разрешение и частота кадров не менялись. Эталон снят в начале и в конце каждого профиля.{% else %}Изменяющие проверки запрещены сценарием: кодировщики не менялись, ниже — их текущие настройки.{% endif %}</p>
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+<b>Как читать цифры.</b> <b>VMAF</b> — оценка от 0 до 100: насколько кадр ступени похож на эталон для глаза зрителя; 100 — не отличить, разница меньше 3 обычно незаметна, от 6 — заметна.
+<b>SSIM</b> — сходство очертаний и деталей, от 0 до 1. <b>PSNR</b> — отношение сигнал/шум в дБ, больше — лучше.
+<b>Эталон</b> — этот же профиль на максимальном битрейте лучшим кодеком: цифры показывают, сколько камера теряет при сжатии, а не качество её картинки вообще.
+</td></tr></table>
+
+{% if c.restore_status == "не прошла" %}
+<table border="2" cellspacing="0" cellpadding="6" class="alarm"><tr><td>
+<b>Настройки кодировщиков не вернулись — верните вручную в веб-интерфейсе камеры, раздел видео.</b><br>{{ c.restore_reason }}
+</td></tr></table>
+{% elif c.restore_status == "прошла" %}
+<p>1. Возврат настроек · CODEC-RESTORE-1 · <span class="st-прошла">прошла</span>: все значения возвращены и сверены.</p>
+{% else %}
+<p class="muted">1. Возврат настроек: ничего не менялось.</p>
+{% endif %}
+{% for status, reason in c.lost %}
+<p>Журнал прошлого прогона · CODEC-WRITE-LOST · <span class="st-{{ status | replace(' ', '-') }}">{{ status }}</span>: {{ reason }}</p>
+{% endfor %}
+
+<h3>2. Текущие настройки до проверки · CODEC-STATE-1{% if c.state_status %} · <span class="st-{{ c.state_status | replace(' ', '-') }}">{{ c.state_status }}</span>{% endif %}</h3>
+<p>{% for line in c.state_lines %}{{ line }}<br>{% endfor %}</p>
+{% if c.state_images %}
+<table border="0" cellspacing="0" cellpadding="3"><tr>
+{% for full, label in c.state_images %}<td align="center"><a href="{{ full }}"><img src="{{ full }}" width="240" alt="{{ label }}: кадр камеры"></a><br><span class="muted">{{ label }}</span></td>{% endfor %}
+</tr></table>
+{% endif %}
+
+{% for s in c.sheets %}
+<div class="page"></div>
+<h3>3.{{ loop.index }}. {{ s.heading }}</h3>
+<table border="0" cellspacing="0" cellpadding="4"><tr>
+  <td width="62%">{% if s.chart %}<img src="{{ s.chart }}" width="600" alt="{{ s.heading }}: VMAF по битрейту">{% endif %}{% if s.chart_note %}<br><span class="muted">{{ s.chart_note }}</span>{% endif %}</td>
+  <td>
+    {% for v in s.verdicts %}<p><b>{{ v.codec }}</b> <span class="muted">{{ v.check_id }}</span> · <span class="st-{{ v.status | replace(' ', '-') }}">{{ v.status }}</span>{% if v.reason %}<br>{{ v.reason }}{% endif %}</p>{% endfor %}
+    {% if s.better %}<p>{{ s.better }}</p>{% endif %}
+  </td>
+</tr></table>
+{% if s.steps %}
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>Кодек</th><th>Ступень</th><th>Битрейт задан</th><th>Измерен, Мбит/с</th><th>VMAF</th><th>SSIM</th><th>PSNR, дБ</th><th>Итог ступени</th></tr></thead>
+  {% for t in s.steps %}
+  <tr><td>{{ t.codec }}</td><td>{{ t.step }}</td><td>{{ t.target }}</td>
+    <td{% if t.bad_rate %} class="bad"{% endif %}>{% if t.bad_rate %}! {% endif %}{{ t.measured }}</td>
+    <td{% if t.bad_vmaf %} class="bad"{% endif %}>{% if t.bad_vmaf %}! {% endif %}{{ t.vmaf }}</td>
+    <td>{{ t.ssim }}</td><td>{{ t.psnr }}</td>
+    <td class="st-{{ t.status.split(':')[0] | replace(' ', '-') }}">{{ t.status }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% if s.shots %}
+<table border="0" cellspacing="0" cellpadding="3"><tr>
+{% for thumb, full, caption in s.shots %}<td align="center"><a href="{{ full }}"><img src="{{ thumb }}" width="240" alt="{{ caption }}: кадр камеры"></a><br><span class="muted">{{ caption }}</span></td>{% endfor %}
+</tr></table>
+{% endif %}
+{% endfor %}
+
+{% if c.history %}
+<div class="page"></div>
+<h3>4. Эта прошивка и прошлая</h3>
+<p>{{ c.history }}</p>
+{% for s in c.sheets %}
+{% if s.history_chart %}<p><img src="{{ s.history_chart }}" width="600" alt="Профиль {{ s.number }}: VMAF этой и прошлой прошивки"></p>{% endif %}
+{% if s.history_note %}<p class="muted">Профиль {{ s.number }}: {{ s.history_note }}.</p>{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if c.without %}
+<h3>Строки без замера</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Строка</th><th>Результат</th><th>Причина</th></tr></thead>
+  {% for title, status, reason in c.without %}
+  <tr><td>{{ title }}</td><td class="st-{{ status | replace(' ', '-') }}">{{ status }}</td><td>{{ reason }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}

@@ -11,6 +11,9 @@ import posixpath
 import re
 from urllib.parse import parse_qsl, unquote, urlsplit
 
+from defusedxml import DefusedXmlException
+from defusedxml import ElementTree as DefusedET
+
 
 class TabooViolation(PermissionError):
     """Попытка отправить камере запрещённую команду. Это ошибка программы, а не камеры."""
@@ -98,6 +101,91 @@ def check_onvif(body: str) -> None:
                 f"ONVIF {operation} запрещена: программа не меняет сетевые настройки, "
                 "логины и пароли камеры"
             )
+
+
+# --- Мультикаст в конфигурациях ONVIF ---------------------------------------------------------
+
+_SET_CONFIGURATION = re.compile(r"^set\w*configuration$")
+MAX_REMEMBERED_XML = 2_000_000  # символов ответа: больше конфигурации медиа не бывают
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _canonical(element) -> tuple:
+    """Содержимое элемента без префиксов и пробелов: так сравниваются «было» и «уходит»."""
+    return tuple(
+        (_local(e.tag), (e.text or "").strip(), tuple(sorted(e.attrib.items())))
+        for e in element.iter()
+    )
+
+
+def _with_multicast(root) -> list[tuple[str, tuple]]:
+    """(токен конфигурации, мультикаст) для каждого элемента с атрибутом token и Multicast."""
+    found = []
+    for element in root.iter():
+        token = element.get("token")
+        multicast = next((c for c in element if _local(c.tag) == "Multicast"), None)
+        if token is not None and multicast is not None:
+            found.append((token, _canonical(multicast)))
+    return found
+
+
+class MulticastGuard:
+    """Мультикаст в `Set*Configuration` — сетевая настройка (AD-7, решение директора 08.11).
+
+    Адрес, порт и TTL мультикаста — часть конфигураций кодировщика, звука и метаданных, и их
+    меняет та же операция, что битрейт. Поэтому запрос пропускается, только если его блок
+    `Multicast` совпадает с тем, что камера сама отдала в ответе `Get*Configuration(s)`.
+    Конфигурацию ещё не читали — запрос не уходит: своего чтения не делаем, потому что чужой
+    клиент (onvif-tt через посредника) входит своим паролем, а лишний вход тратит попытки.
+    Память — на процесс камеры: в нём идут все её клиенты. Не потокобезопасна сверх GIL:
+    записи — целые значения словаря.
+    """
+
+    def __init__(self) -> None:
+        self._known: dict[tuple[str, str], tuple] = {}
+
+    def remember(self, host: str, response: str) -> None:
+        """Запомнить мультикаст из ответа камеры; не XML или слишком большой — пропустить."""
+        if "Multicast" not in response or len(response) > MAX_REMEMBERED_XML:
+            return
+        try:
+            root = DefusedET.fromstring(response)
+        except (DefusedET.ParseError, ValueError, DefusedXmlException):
+            return
+        for token, multicast in _with_multicast(root):
+            self._known[(host, token)] = multicast
+
+    def check(self, host: str, body: str) -> None:
+        """Не пропустить `Set*Configuration`, меняющий мультикаст.
+
+        Raises:
+            TabooViolation: мультикаст в запросе не совпадает с прочитанным у камеры, его
+                конфигурацию не читали или запрос с мультикастом не разобрать.
+        """
+        if "Multicast" not in body:
+            return
+        if not any(_SET_CONFIGURATION.match(op.lower()) for op in soap_operations(body)):
+            return
+        try:
+            root = DefusedET.fromstring(body)
+        except (DefusedET.ParseError, ValueError, DefusedXmlException) as e:
+            raise TabooViolation(
+                "запрос с мультикастом не разобран — не отправлен: мультикаст — сетевая настройка"
+            ) from e
+        for token, multicast in _with_multicast(root):
+            known = self._known.get((host, token))
+            if known is None:
+                raise TabooViolation(
+                    f"мультикаст конфигурации {token!r} не читали у камеры — запрос не отправлен"
+                )
+            if known != multicast:
+                raise TabooViolation(
+                    f"запрос меняет мультикаст конфигурации {token!r}: программа не меняет "
+                    "сетевые настройки камеры"
+                )
 
 
 # --- HTTP API адаптеров (первый — «Рувер», OpenAPI) ----------------------------------------------

@@ -10,10 +10,11 @@ import functools
 import logging
 import re
 import ssl
+from urllib.parse import urlsplit
 
 import httpx
 
-from qa_tool.core.taboo import check_http, check_onvif, check_web_request
+from qa_tool.core.taboo import MulticastGuard, check_http, check_onvif, check_web_request
 
 TransportError = httpx.TransportError  # драйверы ловят сетевые сбои, не импортируя httpx
 Response = httpx.Response
@@ -33,6 +34,9 @@ def _tls_context() -> ssl.SSLContext:
     """
     return httpx.create_ssl_context()
 
+
+# мультикаст в конфигурациях медиа — сеть (AD-7): помним его из ответов камер этого процесса
+_MULTICAST = MulticastGuard()
 
 _ENVELOPE = re.compile(r"<\s*(?:[\w.-]+:)?Envelope\b")
 
@@ -63,7 +67,8 @@ def request(
     Returns:
         Ответ httpx.
 
-    Проверяются всегда путь (`check_http`) и операции ONVIF в теле (`check_onvif`);
+    Проверяются всегда путь (`check_http`), операции ONVIF в теле (`check_onvif`) и мультикаст
+    в `Set*Configuration` (`MulticastGuard`: он запоминает мультикаст из ответов камеры);
     не-SOAP запрос — ещё и по словам-признакам (`check_web_request`).
 
     Raises:
@@ -75,9 +80,13 @@ def request(
     text = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
     check_http(method, url)
     check_onvif(text)  # и в «не SOAP»: операцию нельзя протащить без конверта
+    host = urlsplit(url).netloc.lower()
+    _MULTICAST.check(host, text)
     if not is_soap(headers, text):
         # в SOAP-конверте всегда есть Username и Password — по словам его не судим
         check_web_request(method, url, text)
-    return httpx.request(
+    response = httpx.request(
         method, url, content=content, headers=headers, timeout=timeout, verify=_tls_context()
     )
+    _MULTICAST.remember(host, response.text)
+    return response

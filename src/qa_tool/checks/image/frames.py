@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -157,19 +158,38 @@ class RtspFrameSource:
     Args:
         ctx: контекст проверки (камера, пароль, пороги).
         uri: адрес RTSP из GetStreamUri; хост заменяется адресом камеры из стенда.
+        timings: сроки снимка; None — пороги `image.*` стенда. Кодекам нужна одна выборка
+            (`settle_max_s=0`) длиной в несколько групп кадров.
+        sample_bytes: наибольший размер выборки, байт.
+        prefix: префикс временной папки из `core/tempfiles.py` — по нему её уберёт следующий
+            прогон, если процесс снимут.
     """
 
-    def __init__(self, ctx: CheckContext, uri: str):
+    def __init__(
+        self,
+        ctx: CheckContext,
+        uri: str,
+        timings: Timings | None = None,
+        sample_bytes: int = SAMPLE_BYTES,
+        prefix: str = IMAGE_PREFIX,
+    ):
         self.ctx = ctx
         self.url = to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port)
-        self.timings = Timings.of(ctx)
+        self.timings = timings or Timings.of(ctx)
+        self.sample_bytes = sample_bytes
+        self.prefix = prefix
         self.exchanges: list[str] = []  # обмен RTSP без секретов — в доказательства
 
-    def capture(self, keep_clip: bool = False) -> Capture:
+    def capture(
+        self, keep_clip: bool = False, on_packet: Callable[[RtpPacket], None] | None = None
+    ) -> Capture:
         """Снять стабильный кадр: выборки подряд, пока кадр не успокоится или не выйдет срок.
 
         Args:
             keep_clip: сохранить выборку потока последней попытки (для «не прошла»).
+            on_packet: получит пакеты видео той выборки, что дала кадр, от ключевого кадра —
+                битрейт меряется по тем же данным, что и качество. Отдаются после декодирования,
+                поэтому ранние выборки, пока кадр не успокоился, сюда не попадают.
 
         Raises:
             StreamRefused, StreamUnavailable, FrameTooLarge, ToolMissing, DecoderFailed.
@@ -180,23 +200,29 @@ class RtspFrameSource:
         refused = refused_password(self.ctx)
         if refused:
             raise StreamRefused(refused)
-        folder = Path(tempfile.mkdtemp(prefix=f"{IMAGE_PREFIX}{self.ctx.camera.slot}-"))
+        folder = Path(tempfile.mkdtemp(prefix=f"{self.prefix}{self.ctx.camera.slot}-"))
         started = time.monotonic()
+        packets: list[RtpPacket] = []
         try:
             while True:
-                sample, codec = self._sample(folder)
+                packets = []
+                sample, codec = self._sample(folder, packets if on_packet else None)
                 capture = self._decode(ffmpeg, ffprobe, sample, codec)
                 capture.settle_s = round(time.monotonic() - started, 1)
                 if capture.stable or capture.settle_s >= self.timings.settle_max_s:
                     break
+            if on_packet is not None:
+                for packet in packets:
+                    on_packet(packet)
             capture.clip = sample.read_bytes() if keep_clip else None
             capture.preview_jpeg, capture.thumb_jpeg = self._jpeg(ffmpeg, folder, capture.work)
             return capture
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
-    def _sample(self, folder: Path) -> tuple[Path, str]:
-        """Выборка потока с ключевого кадра длиной `clip_s` в файл."""
+    def _sample(self, folder: Path, packets: list[RtpPacket] | None) -> tuple[Path, str]:
+        """Выборка потока с ключевого кадра длиной `clip_s` в файл; `packets` — копить пакеты
+        выборки от ключевого кадра."""
         camera = self.ctx.camera
         client = RtspClient(self.url, camera.username, self.ctx.password, timeout=RTSP_TIMEOUT_S)
         path = folder / "sample"
@@ -212,7 +238,7 @@ class RtspFrameSource:
                 raise StreamUnavailable(f"поток не открывается: {e}") from e
             if track.encoding.upper() not in CODEC_FORMATS:
                 raise StreamUnavailable(f"кодек {track.encoding} стенд не декодирует")
-            sampler = Sampler(path, track, limit=SAMPLE_BYTES)
+            sampler = Sampler(path, track, limit=self.sample_bytes)
             span = int(self.timings.clip_s * track.clock_rate)
             first: list[int] = []
             frames: set[int] = set()
@@ -224,6 +250,8 @@ class RtspFrameSource:
                 if sampler.started and not first:
                     first.append(packet.timestamp)
                 if first:
+                    if packets is not None:
+                        packets.append(packet)
                     frames.add(packet.timestamp)
                     passed = (packet.timestamp - first[0]) % (1 << 32)
                     return passed >= span or sampler.full or len(frames) > MAX_FRAMES

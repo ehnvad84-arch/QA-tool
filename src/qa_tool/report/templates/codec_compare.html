@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>Сравнение кодеков {{ c.run_id }}</title>
+{% include "_style.html" %}
+</head><body>
+<h1>СРАВНЕНИЕ КОДЕКОВ КАМЕР · ПРОГОН № {{ c.run_id }}</h1>
+<p class="muted">Все камеры снимали одну неподвижную сцену одновременно. Камеры обозначены М1…М8 — номерами мест стенда.
+Ступени битрейта у камер одного разрешения стоят на общей сетке, поэтому сравниваются при равном битрейте.</p>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Место</th><th>Производитель</th><th>Модель</th><th>Прошивка</th></tr></thead>
+  {% for slot, vendor, model, firmware in c.cameras %}
+  <tr><td>М{{ slot }}</td><td>{{ vendor }}</td><td>{{ model }}</td><td>{{ firmware }}</td></tr>
+  {% endfor %}
+</table>
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+Каждая камера — к своему лучшему потоку: видно, сколько она теряет при сжатии, а не чья картинка лучше вообще.
+</td></tr></table>
+
+{% if not c.allowed %}
+<table border="2" cellspacing="0" cellpadding="6" class="alarm"><tr><td>
+<b>Изменяющие проверки были запрещены сценарием</b>: кривых нет, ниже — текущие настройки кодировщиков камер.
+</td></tr></table>
+{% for slot, lines in c.states %}
+<p><b>М{{ slot }}</b><br>{% for line in lines %}{{ line }}<br>{% endfor %}</p>
+{% endfor %}
+{% endif %}
+
+{% if c.matrix %}
+<h2>Матрица: разрешение · кодек × камера</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <thead><tr><th>Разрешение · кодек</th>{% for slot, vendor, model, firmware in c.cameras %}<th>М{{ slot }}</th>{% endfor %}</tr></thead>
+  {% for pair, results in c.matrix %}
+  <tr><td><b>{{ pair }}</b></td>
+    {% for slot, vendor, model, firmware in c.cameras %}{% set st = results.get(slot, "нет профиля") %}
+    <td class="st-{{ st.split(';')[0] | replace(' ', '-') }}">{{ st }}</td>{% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% for s in c.sheets %}
+<div class="page"></div>
+<h2>{{ s.size }} · {{ s.codec }}</h2>
+{% if s.chart %}<p><img src="{{ s.chart }}" width="700" alt="{{ s.size }} {{ s.codec }}: VMAF по битрейту, все камеры"></p>{% endif %}
+{% if s.approximate %}<p class="muted">У камер разная частота кадров — сравнение приблизительное.</p>{% endif %}
+<table border="1" cellspacing="0" cellpadding="3">
+  <thead><tr><th>Камера</th><th>Частота, к/с</th><th>Итог</th><th>Ступени: битрейт, Мбит/с → VMAF</th></tr></thead>
+  {% for curve in s.curves %}
+  <tr><td>М{{ curve.slot }}</td><td>{{ curve.fps if curve.fps is not none else "—" }}</td>
+    <td class="st-{{ curve.status | replace(' ', '-') }}">{{ curve.status }}</td>
+    <td>{% for rate, vmaf in curve.steps %}{{ rate }} → {{ vmaf }}{% if not loop.last %}; {% endif %}{% endfor %}</td></tr>
+  {% endfor %}
+</table>
+{% if s.missing %}<p class="muted">Нет профиля {{ s.size }} {{ s.codec }}: {% for slot in s.missing %}М{{ slot }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+{% endfor %}
+</body></html>

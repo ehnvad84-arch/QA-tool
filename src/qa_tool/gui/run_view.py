@@ -65,7 +65,7 @@ class Step:
         forms = ("тест", "теста", "тестов")
         if self.check_id.startswith("API-"):
             forms = ("операция", "операции", "операций")
-        elif self.check_id.startswith(("STREAM-", "WEB-", "IMAGE-")):
+        elif self.check_id.startswith(("STREAM-", "WEB-", "IMAGE-", "CODEC-")):
             forms = ("строка", "строки", "строк")
         return f"{self.title}: {plural(len(self.parts), *forms)}"
 

@@ -20,8 +20,15 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from tests.mock_onvif import ENVELOPE_NS, IMAGING_FULL, OnvifServices, OnvifState
-from tests.mock_rtsp import MockRtspServer, imaging_video
+from tests.mock_onvif import (
+    ENVELOPE_NS,
+    IMAGING_FULL,
+    MockStream,
+    OnvifServices,
+    OnvifState,
+    encoder_now,
+)
+from tests.mock_rtsp import MockRtspServer, codec_video, imaging_video
 
 WSD_GROUP, WSD_PORT = "239.255.255.250", 3702
 NS = {
@@ -95,11 +102,29 @@ class MockCamera:
             udp_blackhole=self.state.rtsp_udp_blackhole,
             range_silent=self.state.replay_range_silent,
             picture=self._picture if self.state.imaging_video else None,
+            video=self._codec_video if self.state.encoder_video else None,
         )
         self._threads: list[threading.Thread] = []
 
     def _picture(self) -> bytes | None:
         return imaging_video(self.state.picture())
+
+    def _codec_video(self, path: str) -> tuple[str, bytes] | None:
+        """Поток профиля с этим путём по текущим настройкам его кодировщика."""
+        s = self.state
+        streams = s.streams or (MockStream(s.profile_token),)
+        stream = next((st for st in streams if st.path == path), None)
+        if stream is None:
+            return None
+        now = encoder_now(s, stream)
+        codec = "H265" if str(now["encoding"]).upper() in ("H265", "HEVC") else "H264"
+        if codec in s.encoder_dead_codecs:
+            return None
+        kbps = float(now["kbps"]) * s.encoder_kbps_factor
+        low, high = s.encoder_kbps_range
+        quality = low if s.encoder_flat_quality and now["kbps"] < high else None
+        data = codec_video(codec, kbps, quality)
+        return (codec, data) if data else None
 
     @property
     def port(self) -> int:

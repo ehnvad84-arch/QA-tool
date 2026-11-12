@@ -19,6 +19,9 @@ IMAGE_COMPARE = "image_compare"
 IMAGE_COMPARE_TIP = (
     "Снимки всех камер рядом в положениях 0, 50 и 100 % и график по каждой настройке."
 )
+CODEC_COMPARE = "codec_compare"
+CODEC_COMPARE_TIP = "Кривые качества всех камер на одном графике по каждому разрешению и кодеку."
+TIPS = {IMAGE_COMPARE: IMAGE_COMPARE_TIP, CODEC_COMPARE: CODEC_COMPARE_TIP}
 
 
 def open_file(path: Path) -> None:
@@ -165,6 +168,18 @@ class ProtocolsScreen(Screen):
                     f"настроек {len(SETTINGS)}, камер {count}",
                 )
             )
+        if (run["dir"] / f"{CODEC_COMPARE}.html").exists():
+            count = len(run["cameras"])
+            # лист сравнения — на пару «разрешение · кодек», у каждой свой график
+            pairs = len(list((run["dir"] / "compare").glob("codec_*.png")))
+            rows.append(
+                (
+                    CODEC_COMPARE,
+                    "Сравнение кодеков",
+                    f"все камеры ({count})",
+                    f"разрешений и кодеков {pairs}, камер {count}",
+                )
+            )
         rows += [
             (
                 f"protocol_{c['slot']}",
@@ -179,8 +194,8 @@ class ProtocolsScreen(Screen):
             self.docs.append(stem)
             for c, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if stem == IMAGE_COMPARE:
-                    item.setToolTip(IMAGE_COMPARE_TIP)
+                if stem in TIPS:
+                    item.setToolTip(TIPS[stem])
                 self.docs_table.setItem(r, c, item)
         self.docs_table.selectRow(0)
 

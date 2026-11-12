@@ -131,6 +131,14 @@ class MockStream:
     gop: int = 10
 
 
+def encoder_now(state: "OnvifState", stream: MockStream) -> dict:
+    """Настройки кодировщика потока сейчас: заявленные плюс то, что записала проверка."""
+    now = {"encoding": stream.encoding, "kbps": stream.kbps, "constant": stream.constant}
+    now["profile"] = "Main"
+    now.update(state.encoder_now.get(stream.token, {}))
+    return now
+
+
 @dataclass
 class OnvifState:
     """Что «умеет» и что «хранит» виртуальная камера."""
@@ -199,6 +207,23 @@ class OnvifState:
     uri_fault_for: str = ""  # GetStreamUri этого профиля отказывает
     rtsp_udp: bool = True  # камера отдаёт поток и по UDP
     rtsp_udp_blackhole: bool = False  # SETUP принят, но до стенда UDP не доходит
+    # кодировщики (проверка кодеков): что объявлено в Options и как камера принимает запись
+    encoder_codecs: tuple[str, ...] = ("H264", "H265")  # кодеки Media2; в Media1 — только H264
+    encoder_kbps_range: tuple[int, int] = (256, 8192)
+    encoder_cbr: bool = True  # ConstantBitRateSupported
+    encoder_multicast: bool = False  # в конфигурации есть блок Multicast
+    encoder_options_xml: str = ""  # своё содержимое Options вместо собранного (негодный ответ)
+    encoder_reject: bool = False  # SetVideoEncoderConfiguration — Fault
+    encoder_sticky_kbps: int | None = None  # камера «принимает», но оставляет этот битрейт
+    encoder_writes: list[str] = field(default_factory=list)  # присланные блоки по порядку
+    encoder_persist: list[str] = field(default_factory=list)  # ForcePersistence Media1
+    encoder_now: dict[str, dict] = field(default_factory=dict)  # токен профиля → что изменено
+    stream_restarts: int = 0  # сколько раз смена кодека перезапускала поток
+    encoder_video: bool = False  # RTSP отдаёт поток по текущим настройкам кодировщика
+    encoder_kbps_factor: float = 1.0  # «битрейт мимо»: поток в столько раз больше заданного
+    encoder_flat_quality: bool = False  # «качество не растёт»: картинка сжата на минимуме
+    # «поток не вернулся»: после смены на этот кодек RTSP отдаёт старый поток H.264
+    encoder_dead_codecs: tuple[str, ...] = ()
     _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
     def picture(self) -> dict[str, float]:
@@ -300,33 +325,149 @@ class OnvifServices:
     def _streams(self) -> tuple[MockStream, ...]:
         return self.state.streams or (MockStream(self.state.profile_token),)
 
-    @staticmethod
-    def _encoder(stream: MockStream, media2: bool) -> str:
-        rate = (
-            f"<tt:FrameRateLimit>{stream.fps:g}</tt:FrameRateLimit>"
-            f"<tt:BitrateLimit>{stream.kbps}</tt:BitrateLimit>"
-        )
+    def _current(self, stream: MockStream) -> dict:
+        """Настройки кодировщика сейчас: заявленные потоком плюс то, что записала проверка."""
+        return encoder_now(self.state, stream)
+
+    def _encoder_parts(self, stream: MockStream, media2: bool) -> tuple[str, str]:
+        """Атрибуты и содержимое конфигурации кодировщика в порядке схемы ONVIF."""
+        now = self._current(stream)
         size = (
             f"<tt:Resolution><tt:Width>{stream.width}</tt:Width>"
             f"<tt:Height>{stream.height}</tt:Height></tt:Resolution>"
         )
-        if media2:
-            constant = str(stream.constant).lower()
-            return (
-                f"<tr2:Configurations><tr2:VideoEncoder token={quoteattr('ve-' + stream.token)} "
-                f'GovLength="{stream.gop}"><tt:Name>Кодировщик</tt:Name>'
-                f"<tt:Encoding>{stream.encoding}</tt:Encoding>{size}"
-                f'<tt:RateControl ConstantBitRate="{constant}">{rate}</tt:RateControl>'
-                "</tr2:VideoEncoder></tr2:Configurations>"
-            )
-        return (
-            f"<tt:VideoEncoderConfiguration token={quoteattr('ve-' + stream.token)}>"
-            "<tt:Name>Кодировщик</tt:Name>"
-            f"<tt:Encoding>{stream.encoding}</tt:Encoding>{size}"
-            f"<tt:RateControl>{rate}<tt:EncodingInterval>1</tt:EncodingInterval></tt:RateControl>"
-            f"<tt:H264><tt:GovLength>{stream.gop}</tt:GovLength></tt:H264>"
-            "</tt:VideoEncoderConfiguration>"
+        multicast = (
+            "<tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>239.0.0.1"
+            "</tt:IPv4Address></tt:Address><tt:Port>5000</tt:Port><tt:TTL>1</tt:TTL>"
+            "<tt:AutoStart>false</tt:AutoStart></tt:Multicast>"
+            if self.state.encoder_multicast
+            else ""
         )
+        token = quoteattr("ve-" + stream.token)
+        if media2:
+            constant = str(now["constant"]).lower()
+            attrs = f'token={token} GovLength="{stream.gop}" Profile={quoteattr(now["profile"])}'
+            inner = (
+                f"<tt:Name>Кодировщик</tt:Name><tt:UseCount>1</tt:UseCount>"
+                f"<tt:Encoding>{now['encoding']}</tt:Encoding>{size}"
+                f'<tt:RateControl ConstantBitRate="{constant}">'
+                f"<tt:FrameRateLimit>{stream.fps:g}</tt:FrameRateLimit>"
+                f"<tt:BitrateLimit>{now['kbps']}</tt:BitrateLimit></tt:RateControl>"
+                f"{multicast}<tt:Quality>4</tt:Quality>"
+            )
+            return attrs, inner
+        inner = (
+            "<tt:Name>Кодировщик</tt:Name><tt:UseCount>1</tt:UseCount>"
+            f"<tt:Encoding>{now['encoding']}</tt:Encoding>{size}<tt:Quality>4</tt:Quality>"
+            f"<tt:RateControl><tt:FrameRateLimit>{stream.fps:g}</tt:FrameRateLimit>"
+            "<tt:EncodingInterval>1</tt:EncodingInterval>"
+            f"<tt:BitrateLimit>{now['kbps']}</tt:BitrateLimit></tt:RateControl>"
+            f"<tt:H264><tt:GovLength>{stream.gop}</tt:GovLength>"
+            "<tt:H264Profile>Main</tt:H264Profile></tt:H264>"
+            f"{multicast}<tt:SessionTimeout>PT60S</tt:SessionTimeout>"
+        )
+        return f"token={token}", inner
+
+    def _encoder(self, stream: MockStream, media2: bool) -> str:
+        attrs, inner = self._encoder_parts(stream, media2)
+        if media2:
+            return (
+                f"<tr2:Configurations><tr2:VideoEncoder {attrs}>{inner}</tr2:VideoEncoder>"
+                "</tr2:Configurations>"
+            )
+        return f"<tt:VideoEncoderConfiguration {attrs}>{inner}</tt:VideoEncoderConfiguration>"
+
+    def _stream_of(self, request: ET.Element) -> MockStream | None:
+        token = _text(request, "ConfigurationToken")
+        return next((s for s in self._streams() if "ve-" + s.token == token), None)
+
+    def op_GetVideoEncoderConfigurations(self, request) -> str | None:  # noqa: N802
+        stream = self._stream_of(request)
+        if stream is None:
+            return None
+        attrs, inner = self._encoder_parts(stream, True)
+        return (
+            f"<tr2:GetVideoEncoderConfigurationsResponse><tr2:Configurations {attrs}>{inner}"
+            "</tr2:Configurations></tr2:GetVideoEncoderConfigurationsResponse>"
+        )
+
+    def op_GetVideoEncoderConfiguration(self, request) -> str | None:  # noqa: N802
+        stream = self._stream_of(request)
+        if stream is None:
+            return None
+        attrs, inner = self._encoder_parts(stream, False)
+        return (
+            f"<trt:GetVideoEncoderConfigurationResponse><trt:Configuration {attrs}>{inner}"
+            "</trt:Configuration></trt:GetVideoEncoderConfigurationResponse>"
+        )
+
+    def _range_xml(self, name: str, low: float, high: float) -> str:
+        return f"<tt:{name}><tt:Min>{low:g}</tt:Min><tt:Max>{high:g}</tt:Max></tt:{name}>"
+
+    def op_GetVideoEncoderConfigurationOptions(self, request) -> str | None:  # noqa: N802
+        stream = self._stream_of(request)
+        if stream is None:
+            return None
+        s = self.state
+        size = (
+            f"<tt:ResolutionsAvailable><tt:Width>{stream.width}</tt:Width>"
+            f"<tt:Height>{stream.height}</tt:Height></tt:ResolutionsAvailable>"
+        )
+        bitrate = self._range_xml("BitrateRange", *s.encoder_kbps_range)
+        quality = self._range_xml("QualityRange", 0, 10)
+        if request.tag.startswith("{" + SERVICE_NS["media"] + "}"):
+            h264 = (
+                f"{size}{self._range_xml('GovLengthRange', 1, 100)}"
+                f"{self._range_xml('FrameRateRange', 1, 30)}"
+                "<tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>"
+            )
+            options = s.encoder_options_xml or (
+                f"{quality}<tt:H264>{h264}</tt:H264>"
+                f"<tt:Extension><tt:H264>{h264}{bitrate}</tt:H264></tt:Extension>"
+            )
+            return (
+                "<trt:GetVideoEncoderConfigurationOptionsResponse><trt:Options>"
+                f"{options}</trt:Options></trt:GetVideoEncoderConfigurationOptionsResponse>"
+            )
+        profiles = {"H264": "Main High", "H265": "Main Main10"}
+        options = s.encoder_options_xml or "".join(
+            f'<tr2:Options GovLengthRange="1 100" FrameRatesSupported="25 15 {stream.fps:g} 5" '
+            f'ProfilesSupported="{profiles.get(codec, "Main")}" '
+            f'ConstantBitRateSupported="{str(s.encoder_cbr).lower()}">'
+            f"<tt:Encoding>{codec}</tt:Encoding>{quality}{size}{bitrate}</tr2:Options>"
+            for codec in s.encoder_codecs
+        )
+        return (
+            "<tr2:GetVideoEncoderConfigurationOptionsResponse>"
+            f"{options}</tr2:GetVideoEncoderConfigurationOptionsResponse>"
+        )
+
+    def op_SetVideoEncoderConfiguration(self, request) -> str | None:  # noqa: N802
+        s = self.state
+        config = next(e for e in request if e.tag.endswith("}Configuration"))
+        s.encoder_writes.append(ET.tostring(config, encoding="unicode"))
+        persist = next((e for e in request if e.tag.endswith("}ForcePersistence")), None)
+        if persist is not None:
+            s.encoder_persist.append((persist.text or "").strip())
+        stream = next(
+            (st for st in self._streams() if "ve-" + st.token == config.get("token")), None
+        )
+        if s.encoder_reject or self._set_allowed() is None or stream is None:
+            return None
+        before = self._current(stream)
+        now = dict(s.encoder_now.get(stream.token, {}))
+        now["encoding"] = _text(config, "Encoding", before["encoding"])
+        now["kbps"] = s.encoder_sticky_kbps or int(float(_text(config, "BitrateLimit", "0")))
+        rate = next((e for e in config.iter() if e.tag.endswith("}RateControl")), None)
+        if rate is not None and rate.get("ConstantBitRate"):
+            now["constant"] = rate.get("ConstantBitRate") == "true"
+        now["profile"] = config.get("Profile", before["profile"])
+        s.encoder_now[stream.token] = now
+        if now["encoding"] != before["encoding"]:
+            s.stream_restarts += 1
+        media1 = request.tag.startswith("{" + SERVICE_NS["media"] + "}")
+        prefix = "trt" if media1 else "tr2"
+        return f"<{prefix}:SetVideoEncoderConfigurationResponse/>"
 
     def op_GetProfiles(self, request) -> str:  # noqa: N802
         if request.tag.startswith("{" + SERVICE_NS["media"] + "}"):
