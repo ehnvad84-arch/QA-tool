@@ -108,3 +108,28 @@ def test_profile_token_from_camera_is_escaped_in_request():
     soap = Soap()
     assert metadata.stream_uri(soap, "m2", "a&b<c>") == "rtsp://x/"
     assert "a&amp;b&lt;c&gt;" in soap.body and "a&b<c>" not in soap.body
+
+
+def test_stand_port_applies_when_camera_names_no_port():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1/live", "10.0.0.1", 8554)
+    assert uri == "rtsp://10.0.0.1:8554/live"
+
+
+def test_stand_port_beats_the_port_camera_believes_in():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1:554/live", "10.0.0.1", 8554)
+    assert uri == "rtsp://10.0.0.1:8554/live"
+
+
+def test_impossible_port_from_camera_is_not_a_crash():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1:70000/live", "10.0.0.1", 554)
+    assert uri == "rtsp://10.0.0.1:554/live"
+
+
+def test_ipv6_stand_address_keeps_brackets():
+    uri = metadata.to_stand_address("rtsp://[fd00::1]/live", "fd00::1", 8554)
+    assert uri == "rtsp://[fd00::1]:8554/live"
+
+
+def test_special_port_of_the_camera_survives_a_stand_port():
+    uri = metadata.to_stand_address("rtsp://10.0.0.1:8555/replay", "10.0.0.1", 8554)
+    assert uri == "rtsp://10.0.0.1:8555/replay"

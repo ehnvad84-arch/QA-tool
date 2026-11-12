@@ -3,11 +3,13 @@ import pytest
 from qa_tool.core.checks import (
     CheckContext,
     CheckResult,
+    CheckSpec,
     Evidence,
     Phase,
     Registry,
     Status,
     run_check,
+    skip_reason,
 )
 from qa_tool.core.models import Camera, Place, Scenario
 
@@ -111,3 +113,17 @@ def test_duplicate_id_rejected():
     reg.check("T-1", "core", "", "")(ok)
     with pytest.raises(ValueError, match="уже зарегистрирована"):
         reg.check("T-1", "core", "", "")(ok)
+
+
+def test_stress_check_waits_for_its_checkbox():
+    spec = CheckSpec("X", "stream", "X", "X", lambda ctx: None, stress=True)
+    assert "стресс" in skip_reason(spec, Scenario(), Place.COLOR_BOX)
+    assert skip_reason(spec, Scenario(allow_stress=True), Place.COLOR_BOX) is None
+
+
+def test_stress_time_limit_adds_chosen_duration():
+    stress = CheckSpec("X", "stream", "X", "X", lambda ctx: None, stress=True, timeout_s=300)
+    plain = CheckSpec("Y", "stream", "Y", "Y", lambda ctx: None, timeout_s=300)
+    scenario = Scenario(stress_minutes=30)
+    assert stress.time_limit_s(scenario) == 300 + 1800
+    assert plain.time_limit_s(scenario) == 300

@@ -139,3 +139,10 @@ def test_control_characters_from_camera_do_not_break_excel(tmp_path):
     path = tmp_path / "x.xlsx"
     book.save(path)
     assert load_workbook(path).active["A2"].value == "отказ камеры"
+
+
+def test_stream_module_has_a_russian_title(store):
+    row = CheckSpec("STREAM-PARAMS-1", "stream", "Параметры", "Описание", lambda ctx: None)
+    ok = CheckResult(Status.PASSED, evidence=[Evidence("a.txt", "x")])
+    store.add_result(1, row, ok, "t")
+    assert "Поток и стресс" in render_protocol(build_protocol(store, 1))

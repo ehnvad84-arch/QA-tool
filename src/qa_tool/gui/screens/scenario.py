@@ -75,6 +75,12 @@ class ScenarioScreen(Screen):
             "никогда, даже с этой галочкой.",
             "scenario-permissions",
         )
+        self.allow_stress = helped(
+            QCheckBox("Стресс-тест"),
+            "Все потоки всех камер читаются одновременно весь заданный срок. Настройки камер "
+            "не меняются, но прогон становится длиннее на это время.",
+            "scenario-stress",
+        )
         self.stress = helped(
             QComboBox(),
             "Сколько держать максимальную нагрузку на все камеры в стресс-фазе: "
@@ -84,11 +90,15 @@ class ScenarioScreen(Screen):
         for minutes in STRESS_CHOICES:
             self.stress.addItem(stress_label(minutes), minutes)
         self.stress.setMaximumWidth(160)
+        self.stress.setEnabled(False)
         self.allow_writes.toggled.connect(self._changed)
         self.allow_destructive.toggled.connect(self._confirm_destructive)
+        self.allow_stress.toggled.connect(self.stress.setEnabled)
+        self.allow_stress.toggled.connect(self._changed)
         self.stress.currentIndexChanged.connect(self._changed)
         form.addRow(self.allow_writes)
         form.addRow(self.allow_destructive)
+        form.addRow(self.allow_stress)
         form.addRow("Длительность стресс-теста", self.stress)
         self.layout_.addLayout(form)
         self.refresh()
@@ -147,6 +157,7 @@ class ScenarioScreen(Screen):
         scenario.checks = None if checked == all_ids else checked
         scenario.allow_writes = self.allow_writes.isChecked()
         scenario.allow_destructive = self.allow_destructive.isChecked()
+        scenario.allow_stress = self.allow_stress.isChecked()
         scenario.stress_minutes = int(self.stress.currentData())
         self.state.save()
 
@@ -190,6 +201,7 @@ class ScenarioScreen(Screen):
         self.tree.resizeColumnToContents(0)  # названия проверок длинные — без обрезки «…»
         self.allow_writes.setChecked(scenario.allow_writes)
         self.allow_destructive.setChecked(scenario.allow_destructive)
+        self.allow_stress.setChecked(scenario.allow_stress)
         index = self.stress.findData(scenario.stress_minutes)
         if index < 0:  # значение из scenario.yaml не из списка — показываем его как есть
             self.stress.addItem(stress_label(scenario.stress_minutes), scenario.stress_minutes)

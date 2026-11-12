@@ -1,6 +1,6 @@
 [project]
 name = "qa-tool"
-version = "0.3.0"
+version = "0.4.1"
 description = "Стенд проверки IP-камер: ONVIF, API, веб, интерфейсы, картинка — до 8 камер одновременно"
 readme = "AGENTS.md"
 requires-python = ">=3.12,<3.13"

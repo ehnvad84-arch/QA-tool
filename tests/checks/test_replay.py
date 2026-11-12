@@ -259,3 +259,24 @@ def test_lost_connection_while_enabling_recording_still_restores_modes(monkeypat
     with pytest.raises(CameraUnreachable):
         replay.record_for_a_while(None, "url", 0)
     assert calls == ["Active", "Idle"]
+
+
+def stap_a(*nals: bytes) -> bytes:
+    return b"\x18" + b"".join(len(nal).to_bytes(2, "big") + nal for nal in nals)
+
+
+def test_keyframe_found_behind_parameter_sets_in_aggregation():
+    assert replay.is_keyframe("H264", stap_a(b"\x67sps", b"\x68pps", b"\x65idr"))
+    assert not replay.is_keyframe("H264", stap_a(b"\x67sps", b"\x68pps"))
+
+
+def test_keyframe_in_h265_aggregation():
+    packet = b"\x60\x01" + b"".join(
+        len(nal).to_bytes(2, "big") + nal for nal in (b"\x40\x01vps", b"\x26\x01idr")
+    )
+    assert replay.is_keyframe("H265", packet)
+
+
+def test_aggregation_with_lying_size_is_not_a_crash():
+    assert not replay.is_keyframe("H264", b"\x18\xff\xff\x41")
+    assert not replay.is_keyframe("H264", b"\x18\x00\x00\x65")

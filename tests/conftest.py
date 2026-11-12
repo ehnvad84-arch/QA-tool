@@ -10,6 +10,9 @@ from keyring.backend import KeyringBackend
 for _bin in sorted((Path.home() / ".cache" / "qa-tool-build").glob("ffmpeg-*/*/bin")):
     os.environ.setdefault("QA_TOOL_FFMPEG_DIR", str(_bin))
 
+# выборка потока на всём прогоне: иначе каждый тест с mock-камерой шёл бы на 30 с дольше
+os.environ.setdefault("QA_TOOL_STREAM_SAMPLE_S", "1")
+
 if sys.platform.startswith("linux"):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # тесты окна и PDF без экрана
 

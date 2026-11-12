@@ -12,15 +12,18 @@ UDP не поддерживается: клиент получает 461 и до
 """
 
 import base64
+import contextlib
 import datetime
 import hashlib
 import os
 import shutil
+import socket
 import socketserver
 import struct
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 FPS = 10
@@ -129,9 +132,31 @@ def rtp_packets(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
     return out
 
 
+@dataclass(frozen=True)
+class StreamFault:
+    """Сбой потока на одном пути, для проверок модуля «Поток»."""
+
+    lose_every: int = 0  # каждый N-й пакет выброшен, номер всё равно растёт
+    drop_every: int = 0  # каждый N-й кадр не выдан, метка времени идёт дальше
+    send_every: int = 1  # выдаётся каждый N-й кадр: частота ниже заявленной
+    break_after_s: float = 0.0  # через столько секунд обрыв соединения, один раз на путь
+    stays_down: bool = False  # после обрыва камера больше не отдаёт поток
+    lag: float = 0.0  # доля, на которую метки отстают от настоящего времени
+    setup_refused_after_break: bool = False  # после обрыва DESCRIBE отвечает, SETUP — 453
+    no_frames_after_break: bool = False  # после обрыва RTSP жив, а кадров нет: умер кодировщик
+    rejects_after_break: bool = False  # после обрыва камера отвергает пароль
+    rejects_on_play_after_break: bool = False  # то же, но DESCRIBE и SETUP ещё проходят
+    rtcp_only_after_s: float = 0.0  # через столько секунд кодировщик умирает, RTCP идёт дальше
+
+
 class _Session:
-    def __init__(self, path: str, frames, write, channels: dict[str, int]):
+    def __init__(self, path: str, frames, write, channels: dict[str, int], server, hang_up):
         self.path, self.frames, self.write = path, frames, write
+        self.server, self.hang_up = server, hang_up
+        self.fault = server.faults.get(path, StreamFault())
+        self.packets_made = 0
+        self.udp_target: tuple[str, int] | None = None
+        self.last_seen = time.monotonic()
         self.channels = channels  # дорожка («video», «metadata») → канал interleaved
         self.stop = threading.Event()
         self.seq = {"video": 1, "metadata": 1}
@@ -148,39 +173,77 @@ class _Session:
             0x51A0C0DE if kind == "video" else 0x3E7AD47A,
         )
         self.seq[kind] += 1
+        if kind == "video":
+            self.packets_made += 1
+            if self.fault.lose_every and self.packets_made % self.fault.lose_every == 0:
+                return
         packet = header + ext + payload
+        if self.udp_target:
+            if not self.server.udp_blackhole:
+                self.server.udp_socket.sendto(packet, self.udp_target)
+            return
         channel = self.channels[kind]
         self.write(b"$" + bytes([channel]) + struct.pack("!H", len(packet)) + packet)
 
     def run(self) -> None:
         if "metadata" in self.channels:
-            threading.Thread(target=self._metadata, daemon=True).start()
+            threading.Thread(target=self._quietly, args=(self._metadata,), daemon=True).start()
         if "video" in self.channels:
-            self._video()
+            self._quietly(self._video)
+
+    def _quietly(self, send) -> None:
+        # клиент закрыл соединение посреди кадра: сокет или уже закрытый файл обработчика
+        with contextlib.suppress(OSError, ValueError):
+            send()
 
     def _video(self) -> None:
+        if not self.frames:
+            self.stop.wait()
+            return
         replay = self.path.startswith("/replay")
-        index = 0
+        fault, server = self.fault, self.server
+        if self.stop.wait(server.first_frame_delay_s):
+            return
+        index = shown = 0
         started = time.monotonic()
         archive_start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60)
         while not self.stop.is_set():
-            if index >= len(self.frames):
-                if replay:
-                    return  # конец архива: дальше камера молчит
-                index = 0
-            frame = self.frames[index]
-            timestamp = (
-                int(index * 90000 / FPS) if replay else int((time.monotonic() - started) * 90000)
-            )
+            elapsed = time.monotonic() - started
+            lease = server.session_timeout
+            if lease and time.monotonic() - self.last_seen > lease:
+                server.expired = True
+                self.hang_up()
+                return
+            if fault.rtcp_only_after_s and elapsed > fault.rtcp_only_after_s:
+                self._rtcp_forever()
+                return
+            due = fault.break_after_s and elapsed > fault.break_after_s
+            if due and self.path not in server.broken:
+                server.broken.add(self.path)
+                self.hang_up()
+                return
+            if index >= len(self.frames) and replay:
+                return  # конец архива: дальше камера молчит
+            frame = self.frames[index % len(self.frames)]
+            # метки и темп — по номеру кадра: под нагрузкой тестов поток остаётся ровным
+            timestamp = int(shown * 90000 / FPS * (1 - fault.lag))
             ext = b""
             if replay:
                 moment = archive_start + datetime.timedelta(seconds=index / FPS)
                 ext = onvif_extension(moment, any(nal[0] & 0x1F == 5 for nal in frame))
-            for n, nal in enumerate(frame):
-                for payload, marker in rtp_packets(nal, n == len(frame) - 1):
-                    self._send("video", payload, marker, timestamp, 96, ext)
+            skipped = fault.drop_every and (shown + 1) % fault.drop_every == 0
+            if shown % fault.send_every == 0 and not skipped:
+                for n, nal in enumerate(frame):
+                    for payload, marker in rtp_packets(nal, n == len(frame) - 1):
+                        self._send("video", payload, marker, timestamp, 96, ext)
             index += 1
-            self.stop.wait(1 / FPS)
+            shown += 1
+            self.stop.wait(max(started + shown / FPS - time.monotonic(), 0))
+
+    def _rtcp_forever(self) -> None:
+        report = b"\x80\xc8\x00\x06" + bytes(24)  # отчёт отправителя, RFC 3550 §6.4.1
+        while not self.stop.wait(0.1):
+            self.write(b"$" + bytes([self.channels["video"] + 1]) + struct.pack("!H", 28) + report)
 
     def _metadata(self) -> None:
         started = time.monotonic()
@@ -202,12 +265,56 @@ class _Session:
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
-    def __init__(self, metadata: bool = True, require_unsupported: bool = False):
+    def __init__(
+        self,
+        metadata: bool = True,
+        require_unsupported: bool = False,
+        silent: bool = False,
+        session_timeout: int = 0,
+        ping: str = "answer",
+        ping_delay_s: float = 0.0,
+        sets_in_stream: bool = True,
+        max_plays: int = 0,
+        udp: bool = False,
+        udp_blackhole: bool = False,
+        reject_password: bool = False,
+        silent_teardown: bool = False,
+        assigned_channel: int | None = None,
+        ping_refused: bool = False,
+        basic_auth: bool = False,
+        both_auth: bool = False,
+        first_frame_delay_s: float = 0.0,
+    ):
         self.metadata = metadata
+        self.reject_password = reject_password  # 401 на любой пароль
+        self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
+        self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
+        self.ping_refused = ping_refused  # посреди сессии пароль перестал подходить
+        self.basic_auth = basic_auth  # камера просит вход Basic
+        self.both_auth = both_auth  # камера предлагает Digest, а следом Basic
+        self.first_frame_delay_s = first_frame_delay_s  # пауза между PLAY и первым кадром
+        self.assigned_channel = assigned_channel  # канал, который камера назначает сама
+        self.silent = silent  # поток запущен, но камера ничего не шлёт
+        self.session_timeout = session_timeout  # с; без запросов сессия закрывается, 0 — нет
+        self.ping = ping  # GET_PARAMETER: answer, silent (молчит, но считает), refused (405)
+        self.ping_delay_s = ping_delay_s
+        self.expired = False
+        self.faults: dict[str, StreamFault] = {}  # путь → сбой
+        self.broken: set[str] = set()  # пути, где обрыв уже случился
+        self.max_plays = max_plays  # сверх этого числа потоков — 453, 0 — без предела
+        self.playing = 0
+        self.udp = udp  # камера отдаёт поток по UDP; без него SETUP отвечает 461
+        self.udp_blackhole = udp_blackhole  # SETUP принят, но до стенда ничего не доходит
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.bind(("127.0.0.1", 0))
+        self.udp_socket.settimeout(0.05)
+        self.play_lock = threading.Lock()
         self.require_unsupported = require_unsupported
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
+        if not sets_in_stream:  # такие камеры отдают SPS и PPS только в SDP
+            self.frames = [[n for n in f if n[0] & 0x1F not in (7, 8)] for f in self.frames]
         self.sprop = ",".join(base64.b64encode(x).decode() for x in (sps, pps) if x)
         self.requests: list[str] = []
         self._server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), self._handler())
@@ -224,6 +331,7 @@ class MockRtspServer:
     def stop(self) -> None:
         self._server.shutdown()
         self._server.server_close()
+        self.udp_socket.close()
 
     def tracks(self, path: str) -> list[str]:
         """Дорожки пути по порядку: trackN в SETUP — N-я из них."""
@@ -253,12 +361,16 @@ class MockRtspServer:
             def handle(self):
                 lock = threading.Lock()
                 session: _Session | None = None
+                udp_target: tuple[str, int] | None = None
                 channels: dict[str, int] = {}
 
                 def write(data: bytes) -> None:
                     with lock:
                         self.wfile.write(data)
                         self.wfile.flush()
+
+                def hang_up() -> None:
+                    self.connection.shutdown(socket.SHUT_RDWR)
 
                 try:
                     while True:
@@ -281,11 +393,64 @@ class MockRtspServer:
                         server.requests.append(f"{method} {path}")
                         server.headers.append((method, path, headers))
                         cseq = headers.get("cseq", "0")
+                        if method == "GET_PARAMETER" and server.ping == "refused":
+                            write(
+                                f"RTSP/1.0 405 Method Not Allowed\r\nCSeq: {cseq}\r\n\r\n".encode()
+                            )
+                            continue
+                        if session:
+                            session.last_seen = time.monotonic()
+                        if method == "GET_PARAMETER" and server.ping == "silent":
+                            continue
+                        if method == "GET_PARAMETER":
+                            time.sleep(server.ping_delay_s)
                         if server.require_unsupported and "require" in headers:
                             write(
                                 f"RTSP/1.0 551 Option not supported\r\nCSeq: {cseq}\r\n"
                                 f"Unsupported: {headers['require']}\r\n\r\n".encode()
                             )
+                            continue
+                        fault = server.faults.get(path, StreamFault())
+                        after_break = path in server.broken
+                        if server.reject_password or (fault.rejects_after_break and after_break):
+                            server.password_tries += "authorization" in headers
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if server.basic_auth and "authorization" not in headers:
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Basic realm="r"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if server.both_auth and "authorization" not in headers:
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n'
+                                'WWW-Authenticate: Basic realm="r"\r\n\r\n'.encode()
+                            )
+                            continue
+                        late_refusal = fault.rejects_on_play_after_break and after_break
+                        if (method == "PLAY" and late_refusal) or (
+                            method in ("GET_PARAMETER", "OPTIONS") and server.ping_refused
+                        ):
+                            server.password_tries += "authorization" in headers
+                            write(
+                                f"RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\n"
+                                'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n'.encode()
+                            )
+                            continue
+                        if method == "SETUP" and fault.setup_refused_after_break and after_break:
+                            write(
+                                f"RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: {cseq}\r\n\r\n".encode()
+                            )
+                            continue
+                        if method == "TEARDOWN" and server.silent_teardown:
+                            continue
+                        if method == "DESCRIBE" and fault.stays_down and path in server.broken:
+                            write(f"RTSP/1.0 503 Unavailable\r\nCSeq: {cseq}\r\n\r\n".encode())
                             continue
                         extra, body = "", ""
                         if method == "OPTIONS":
@@ -295,20 +460,55 @@ class MockRtspServer:
                             extra = f"Content-Type: application/sdp\r\nContent-Base: {url}/\r\n"
                         elif method == "SETUP":
                             transport = headers.get("transport", "")
+                            if "client_port=" in transport and server.udp:
+                                ports = transport.split("client_port=")[1].split(";")[0]
+                                udp_target = ("127.0.0.1", int(ports.split("-")[0]))
+                                own = server.udp_socket.getsockname()[1]
+                                lease = (
+                                    f";timeout={server.session_timeout}"
+                                    if server.session_timeout
+                                    else ""
+                                )
+                                write(
+                                    f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n"
+                                    f"Session: 1A2B3C{lease}\r\n"
+                                    f"Transport: RTP/AVP;unicast;client_port={ports};"
+                                    f"server_port={own}-{own + 1}\r\n\r\n".encode()
+                                )
+                                channels["video"] = 0
+                                continue
                             if "interleaved=" not in transport:
                                 write(
                                     f"RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n".encode()
                                 )
                                 continue
                             first = int(transport.split("interleaved=")[1].split("-")[0])
+                            if server.assigned_channel is not None:
+                                first = server.assigned_channel
                             kinds = server.tracks(path)
                             channels[kinds[min(int(track or 1), len(kinds)) - 1]] = first
+                            lease = (
+                                f";timeout={server.session_timeout}"
+                                if server.session_timeout
+                                else ""
+                            )
                             extra = (
                                 f"Transport: RTP/AVP/TCP;unicast;interleaved={first}-{first + 1}\r\n"
-                                "Session: 1A2B3C\r\n"
+                                f"Session: 1A2B3C{lease}\r\n"
                             )
                         elif method == "PLAY":
-                            session = _Session(path, server.frames, write, dict(channels))
+                            dead = fault.no_frames_after_break and after_break
+                            frames = [] if server.silent or dead else server.frames
+                            with server.play_lock:
+                                full = server.max_plays and server.playing >= server.max_plays
+                                server.playing += 0 if full else 1
+                            if full:
+                                write(
+                                    f"RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: {cseq}\r\n\r\n".encode()
+                                )
+                                continue
+                            session = _Session(path, frames, write, dict(channels), server, hang_up)
+                            session.udp_target = udp_target
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()
@@ -331,5 +531,7 @@ class MockRtspServer:
                 finally:
                     if session:
                         session.stop.set()
+                        with server.play_lock:
+                            server.playing -= 1
 
         return Handler
