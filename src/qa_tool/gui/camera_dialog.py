@@ -12,7 +12,17 @@ from PySide6.QtWidgets import (
 from qa_tool.core.models import RUVER, Camera
 from qa_tool.gui.help import helped
 
-VENDORS = [RUVER, "hikvision", "dahua", "axis", "uniview", "raysharp", "generic"]
+VENDORS = [
+    RUVER,
+    "hikvision",
+    "dahua",
+    "tiandy",
+    "beward",
+    "axis",
+    "uniview",
+    "raysharp",
+    "generic",
+]
 
 
 def vendor_from_manufacturer(manufacturer: str) -> str:
@@ -55,7 +65,8 @@ class CameraDialog(QDialog):
             QComboBox(),
             "Производитель. Любая камера проверяется по ONVIF, потоку, картинке и "
             "веб-интерфейсу; если для производителя есть адаптер, добавляются проверки его "
-            "API. Нет в списке — «generic».",
+            "API, а у Hikvision, Dahua и «Рувер» снимается карта родного API. Производитель "
+            "из паспорта ONVIF главнее этого поля. Нет в списке — «generic».",
             "cameras-add",
         )
         self.vendor.addItems(VENDORS)

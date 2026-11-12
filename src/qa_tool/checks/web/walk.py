@@ -14,6 +14,7 @@ from qa_tool.checks.web.limits import DEFAULTS, limit
 from qa_tool.checks.web.login import Entry, login, logout, web_address
 from qa_tool.checks.web.probe import Row, open_page, press
 from qa_tool.checks.web.write import Writer, is_field
+from qa_tool.core.api_map import WEB_TRAFFIC_KEY
 from qa_tool.core.checks import (
     REGISTRY,
     CheckContext,
@@ -200,6 +201,9 @@ def _run(ctx: CheckContext, session: BrowserSession, address: str, deadline: flo
         return CheckResult.stand_error(reason)
     found = Discovery()
     walk = _Walk(ctx, session, deadline)
+    # трафик того же обхода — карта родного API для камеры без сборщика (api-discovery, S2);
+    # список общий с сессией: что страница запросит дальше, попадёт в него же
+    ctx.extra[WEB_TRAFFIC_KEY] = {"запросы": session.traffic, "остановлены": session.stopped}
     note, status, reason = "", Status.PASSED, ""
     accepted = entry.entry is Entry.OK
     try:

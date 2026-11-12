@@ -54,6 +54,21 @@ def first_stream(soap: SoapClient, services: dict[str, str]) -> tuple[str, str, 
     return profile, stream_uri(soap, url, media2, profile), _video_source(first)
 
 
+def video_source(soap: SoapClient, services: dict[str, str], named: str) -> str:
+    """Токен источника видео для Imaging: названный профилем или первый из GetVideoSources.
+
+    Media2 GetProfiles без `Type` отдаёт профили без конфигураций (Hikvision V5.7+, Dahua
+    3.120 на стенде 10.11) — токена в профиле нет, а служба Imaging без него не ответит.
+
+    Raises:
+        CameraUnreachable, OnvifFault: GetVideoSources не прочитан.
+    """
+    if named:
+        return named
+    answer = soap.call(services.get("media", services["device"]), "<trt:GetVideoSources/>")
+    return next((e.get("token", "") for e in answer.iter() if e.tag.endswith("VideoSources")), "")
+
+
 def _video_source(profile: Element) -> str:
     """SourceToken источника видео: Media — VideoSourceConfiguration, Media2 — VideoSource."""
     for element in profile.iter():

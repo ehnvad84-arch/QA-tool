@@ -82,6 +82,31 @@ def _sync_folder(folder: Path) -> None:
             os.close(descriptor)
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Записать текстовый файл атомарно и с `fsync`: на диске либо старый файл, либо новый.
+
+    Args:
+        path: файл; его папка создаётся при необходимости.
+        text: содержимое, UTF-8.
+
+    Raises:
+        OSError: файл не записан; прежний файл, если был, не тронут.
+    """
+    folder = path.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(name, path)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
+    _sync_folder(folder)
+
+
 def save(folder: Path, entry: PendingWrite) -> None:
     """Записать журнал атомарно и с `fsync`.
 
@@ -92,22 +117,12 @@ def save(folder: Path, entry: PendingWrite) -> None:
     Raises:
         OSError: журнал не записан. Менять поле нельзя: вернуть его будет нечем.
     """
-    folder.mkdir(parents=True, exist_ok=True)
     data = asdict(entry) | {
         "page": safe_page(entry.page),
         "time": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
     }
-    descriptor, name = tempfile.mkstemp(dir=folder, suffix=".tmp")
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-            json.dump(data, file, ensure_ascii=False, indent=1)
-            file.flush()
-            os.fsync(file.fileno())
-        os.replace(name, journal_file(folder, entry.address, entry.port))
-    except BaseException:
-        Path(name).unlink(missing_ok=True)
-        raise
-    _sync_folder(folder)
+    text = json.dumps(data, ensure_ascii=False, indent=1)
+    write_atomic(journal_file(folder, entry.address, entry.port), text)
 
 
 def load(folder: Path, address: str, port: int) -> PendingWrite | None:
@@ -205,4 +220,15 @@ CODEC = Journal(
     ),
     "служба",
 )
-JOURNALS = (WEB, IMAGE, CODEC)  # планировщик ищет строки «блокер» в каждом
+API = Journal(
+    "pending-api",
+    "api_journal_dir",
+    _lost_spec(
+        "API-WRITE-LOST",
+        "api",
+        "Запись автопоиска соответствий API не завершена",
+        "по ONVIF при поиске соответствий с родным API",
+    ),
+    "служба",
+)
+JOURNALS = (WEB, IMAGE, CODEC, API)  # планировщик ищет строки «блокер» в каждом

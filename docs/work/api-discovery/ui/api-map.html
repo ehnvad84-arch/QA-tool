@@ -1,0 +1,106 @@
+<!doctype html>
+<!-- Макет отдельного документа «Карта API» камеры: api_map_<место>.html/.pdf/.xlsx (ui-designer, фича api-discovery;
+     решение директора 09.11: полная карта — отдельным документом, в протоколе — обзор разделов).
+     Только таблицы и атрибуты width: PDF печатает QTextDocument (write_pdf), он не знает flex, grid, max-width, details.
+     ДАННЫЕ ВЫДУМАНЫ, по мотивам Hikvision .111 и Dahua .108.
+
+     Справочный документ: подписей и итогов нет — они в протоколе камеры (Приложение «API камеры»).
+     Геометрия PDF (A4 альбомная, поле 273 × 186 мм):
+       лист 1: шапка ≈ 55 мм, «Как читать» ≈ 20 мм, разделы ≤ 25 строк × 4,2 мм ≈ 105 мм;
+       карта — с новой страницы, 8 pt, строка параметра ≈ 4,2 мм → ≈ 40 строк на лист, <thead> повторяется;
+       Hikvision 170 параметров + 13 заголовков разделов ≈ 5 листов; Dahua ≈ 900 параметров, после свёртки
+       копий по профилям и потокам ≈ 250–300 строк ≈ 7–8 листов. Предела строк в PDF нет: размер ограничивает
+       сама карта (≤ 5000 параметров, иначе «обрезано»).
+     HTML-вариант (media="html"): каждый раздел — <details>, раскрыты разделы с парами и расхождениями;
+       сверху — ссылки на разделы и на protocol_<место>.html. -->
+<html lang="ru"><head><meta charset="utf-8">
+<title>Макет: документ «Карта API»</title>
+<style>
+  body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #111; }
+  h1 { font-size: 15pt; margin: 0 0 4pt 0; }
+  h2 { font-size: 12pt; margin: 14pt 0 4pt 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #e8e8e8; text-align: left; }
+  td, th { vertical-align: top; }
+  .muted { color: #555; }
+  .note { background: #f6f6f6; }
+  .bad { color: #a11212; font-weight: bold; }
+  .page { page-break-before: always; }
+  .small { font-size: 8pt; }
+  .path { font-family: "DejaVu Sans Mono", Consolas, monospace; }
+</style>
+</head><body>
+
+<h1>КАРТА РОДНОГО API КАМЕРЫ · QA-20261109-003-3</h1>
+<p class="muted">Прогон QA-20261109-003 · карта снята 09.11.2026 10:12 · qa-tool 0.9.0</p>
+<table border="1" cellspacing="0" cellpadding="3">
+  <tr><th width="28%">Камера</th><td>Бокс, место 3</td></tr>
+  <tr><th>Производитель · модель · прошивка</th><td>HIKVISION · DS-2CD2143G2-I · V5.7.3 build 220112 <span class="muted">(по ONVIF и по родному API одинаково)</span></td></tr>
+  <tr><th>Адрес · место на стенде</th><td>10.0.0.111 · место 3</td></tr>
+  <tr><th>Родной API · сборщик</th><td>Hikvision ISAPI · сборщик версии 1</td></tr>
+  <tr><th>Источник</th><td>самоописание API (ISAPI capabilities) · запросов 25</td></tr>
+  <tr><th>Вход</th><td>Digest MD5, логин ONVIF с экрана «Камеры»</td></tr>
+  <tr><th>Итого</th><td>разделов 13 из 18 · параметров 172 со значениями, 45 только описание · скрыто 3</td></tr>
+</table>
+<p>Итоги, пары с ONVIF и задачи программистам — в протоколе <b>QA-20261109-003-3</b>, Приложение 3 «API камеры».</p>
+<p class="muted">Если карта обрезана — плашка <span class="note">«Карта обрезана: больше 5000 параметров; снято 61 раздел из 74»</span> здесь, под шапкой.</p>
+
+<table border="0" cellspacing="0" cellpadding="6"><tr><td class="note">
+<b>Как читать.</b> Раздел — один ресурс родного API (адрес ISAPI, имя конфигурации CGI). Тип: «число 0…100», «список: …», «да / нет», «текст до 32 знаков»; «только чтение» — камера не даёт его менять; «не объявлены» — камера не сообщила допустимые значения.
+<span class="path">[*]</span> — параметр повторяется по каналам, профилям или потокам с одинаковыми допустимыми значениями; текущие значения — по индексам «[0] 50 · [1] 50».
+«скрыто» — пароль, ключ или токен: значение вырезано. «только описание» — раздел сети, учётных записей или безопасности: значения не читались и не сохранялись. «меняется сам» — значение менялось без записи (автоматика, счётчики).
+Пометки «п. 3, API-MATCH-12» ведут в протокол камеры.
+</td></tr></table>
+
+<h2>1. Разделы</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="22%">Раздел</th><th width="13%">Класс</th><th width="9%">Параметров</th><th width="8%">В парах</th><th width="10%">Расхождений</th><th>Примечание</th></tr></thead>
+  <tr><td class="path">Image/channels/1</td><td>картинка</td><td>46</td><td>8</td><td class="bad">! 1</td><td>режим экспозиции; ! не вернулась выдержка</td></tr>
+  <tr><td class="path">Streaming/channels</td><td>кодировщик</td><td>38</td><td>1</td><td>0</td><td></td></tr>
+  <tr><td class="path">Event</td><td>события</td><td>22</td><td>0</td><td>0</td><td>скрыто 1</td></tr>
+  <tr><td colspan="6" class="muted">… System 10 · Smart 16 · VideoOverlay 11 · ContentMgmt 9 · Audio 8 · Motion 8 · SDK 2 · Custom 2 …</td></tr>
+  <tr><td class="path">System/Network</td><td>сеть и безопасность</td><td>31</td><td>—</td><td>—</td><td>только описание</td></tr>
+  <tr><td class="path">Security</td><td>сеть и безопасность</td><td>14</td><td>—</td><td>—</td><td>только описание</td></tr>
+</table>
+<p>Не ответили:</p>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="50%">Запрос</th><th width="8%">Код</th><th>Причина</th></tr></thead>
+  <tr><td class="path">GET /ISAPI/PTZCtrl/channels/1/capabilities</td><td>404</td><td>раздела нет у модели</td></tr>
+  <tr><td colspan="3" class="muted">… Wireless, Thermal, Traffic, IOT — 404 …</td></tr>
+</table>
+
+<div class="page"></div>
+<h2>2. Карта</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="34%">Параметр</th><th width="32%">Тип и допустимые значения</th><th width="14%">Текущее</th><th>Примечание</th></tr></thead>
+  <tr><th colspan="4">Image/channels/1 · картинка · <span class="path">GET /ISAPI/Image/channels/1</span> · 46 параметров</th></tr>
+  <tr><td class="path">Color/brightnessLevel</td><td>число 0…100</td><td>50</td><td>пара: яркость, API-MATCH-1</td></tr>
+  <tr><td class="path">Color/contrastLevel</td><td>число 0…100</td><td>50</td><td>пара: контраст, API-MATCH-2</td></tr>
+  <tr><td class="path">Exposure/ExposureType</td><td>список: auto, IrisFirst, ShutterFirst, GainFirst, manual</td><td class="bad">! manual</td><td class="bad">! расхождение с ONVIF — протокол, п. 3, API-MATCH-12</td></tr>
+  <tr><td class="path">Shutter/ShutterLevel</td><td>список: 1/1, 1/3, 1/6 … 1/100000 (18 значений)</td><td class="bad">! 1/25</td><td class="bad">! не вернулось: было 1/50 — протокол, рамка блокера</td></tr>
+  <tr><td class="path">Gain/GainLevel</td><td>число 0…100</td><td>0</td><td>пара: предел усиления, API-MATCH-13</td></tr>
+  <tr><td class="path">IrcutFilter/IrcutFilterType</td><td>список: auto, day, night, schedule</td><td>auto</td><td></td></tr>
+  <tr><td class="path">ImageFlip/enabled</td><td>да / нет</td><td>нет</td><td></td></tr>
+  <tr><td class="path">capabilities/isSupportDehaze</td><td>да / нет · только чтение</td><td>да</td><td></td></tr>
+  <tr><td class="path">Color/hueLevel</td><td>не объявлены</td><td>50</td><td></td></tr>
+  <tr><td colspan="4" class="muted">… ещё 37 параметров раздела …</td></tr>
+  <tr><th colspan="4">Event · события · <span class="path">GET /ISAPI/Event</span> · 22 параметра</th></tr>
+  <tr><td class="path">notification/mailing/authentication/password</td><td>текст до 32 знаков</td><td>скрыто</td><td>пароль: значение вырезано</td></tr>
+  <tr><td class="path">triggers/eventTrigger[*]/eventType</td><td>список: VMD, tamperdetection, shelteralarm, IO</td><td>[0] VMD · [1] tamperdetection · [2] IO</td><td></td></tr>
+  <tr><td colspan="4" class="muted">… …</td></tr>
+  <tr><th colspan="4">System/Network · сеть и безопасность · <span class="path">GET /ISAPI/System/Network</span> · 31 параметр · только описание</th></tr>
+  <tr><td colspan="4" class="muted">Раздел сети: значения не читались и не сохранялись. Имена и допустимые значения — в Excel, лист «Параметры».</td></tr>
+</table>
+
+<h2 class="page">Фрагмент другой камеры: Dahua, место 5 (по мотивам .108, данные выдуманы)</h2>
+<table border="1" cellspacing="0" cellpadding="2" class="small">
+  <thead><tr><th width="34%">Параметр</th><th width="32%">Тип и допустимые значения</th><th width="14%">Текущее</th><th>Примечание</th></tr></thead>
+  <tr><th colspan="4">VideoColor · картинка · <span class="path">GET configManager.cgi?action=getConfig&amp;name=VideoColor</span> · 18 параметров (54 значения)</th></tr>
+  <tr><td class="path">VideoColor[0][*].Brightness</td><td>число 0…100</td><td>[0] 50 · [1] 50 · [2] 60</td><td>пара: яркость, API-MATCH-1 (все копии)</td></tr>
+  <tr><td class="path">VideoColor[0][*].Gamma</td><td>число 0…100</td><td>[0] 50 · [1] 50 · [2] 50</td><td></td></tr>
+  <tr><th colspan="4">Encode · кодировщик · <span class="path">GET configManager.cgi?action=getConfig&amp;name=Encode</span> + <span class="path">encode.cgi?action=getConfigCaps</span></th></tr>
+  <tr><td class="path">Encode[0].MainFormat[0].Video.BitRate</td><td>число 512…5632</td><td>4096</td><td class="bad">! диапазон не держит — протокол, п. 3, API-RANGE-15</td></tr>
+</table>
+<p class="muted">Источник «трафик веб-обхода»: заголовок раздела — метод и адрес запроса страницы («POST /RPC2 · configManager.getConfig»), допустимые значения — «не видны в трафике»; запрос, остановленный табу, — строкой «запись замечена, остановлена табу», без значений.</p>
+
+</body></html>

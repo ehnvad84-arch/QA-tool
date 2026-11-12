@@ -24,7 +24,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Системные библиотеки Qt (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 fonts-dejavu-core
+        run: scripts/ci_apt.sh
       - run: uv sync --locked
       - name: ffmpeg для тестов потока (закреплённая сборка BtbN, как в установщиках)
         shell: bash
@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 fonts-dejavu-core
+      - run: scripts/ci_apt.sh
       - run: packaging/linux/build.sh
       - name: Проверка сборки
         run: |
@@ -81,6 +81,8 @@ jobs:
         run: uv run python packaging/smoke_onvif.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
       - name: Веб-обход собранной программой без скачиваний
         run: uv run python packaging/smoke_web.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
+      - name: Картинка двух виртуальных камер собранной программой, протоколы и сравнение
+        run: uv run python packaging/smoke_image.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
       - name: Размер установщика
         run: du -h dist/*.AppImage
       - uses: actions/upload-artifact@v4
@@ -105,6 +107,8 @@ jobs:
         run: uv run python packaging/smoke_onvif.py build\pyinstaller\qa-tool\qa-tool-cli.exe
       - name: Веб-обход собранной программой без скачиваний
         run: uv run python packaging/smoke_web.py build\pyinstaller\qa-tool\qa-tool-cli.exe
+      - name: Картинка двух виртуальных камер собранной программой, протоколы и сравнение
+        run: uv run python packaging/smoke_image.py build\pyinstaller\qa-tool\qa-tool-cli.exe
       - name: Размер установщика
         shell: pwsh
         run: Get-Item dist\*-setup.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB)}}

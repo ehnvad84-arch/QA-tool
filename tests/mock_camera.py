@@ -19,6 +19,10 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.mock_native import NativeApi
 
 from tests.mock_onvif import (
     ENVELOPE_NS,
@@ -87,10 +91,14 @@ class MockCamera:
         password: str = "admin",
         state: OnvifState | None = None,
         web_pages: dict[str, str] | None = None,
+        native: "NativeApi | None" = None,
     ):
         self.passport = passport
         self.web_pages = web_pages or {}  # веб-страницы камеры: проверка сборки с браузером
-        self.state = state or OnvifState()
+        # родной API (ISAPI, CGI) на том же порту, что ONVIF, — как у настоящих камер;
+        # состояние у них общее, поэтому запись по ONVIF видна в родном API
+        self.native = native
+        self.state = state or (native.state if native else OnvifState())
         self.username = username
         self.password = password
         self.requests: list[str] = []
@@ -241,7 +249,29 @@ class MockCamera:
         camera = self
 
         class Handler(BaseHTTPRequestHandler):
+            def _native(self) -> bool:
+                """Ответить родным API, если адрес его; иначе False."""
+                if camera.native is None or not self.path.startswith(("/ISAPI/", "/cgi-bin/")):
+                    return False
+                payload = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+                code, headers, data = camera.native.handle(
+                    self.command, self.path, self.headers, payload
+                )
+                self.send_response(code)
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return True
+
+            def do_PUT(self):  # noqa: N802 — имя задаёт http.server
+                if not self._native():
+                    self.send_error(405)
+
             def do_GET(self):  # noqa: N802 — имя задаёт http.server
+                if self._native():
+                    return
                 page = camera.web_pages.get(self.path.split("?")[0])
                 if page is None:
                     self.send_error(404)

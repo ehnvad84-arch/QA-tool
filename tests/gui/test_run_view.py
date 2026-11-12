@@ -242,3 +242,10 @@ def test_codec_step_counts_rows():
 def test_image_step_counts_rows():
     step = Step("09:12", "IMAGE-EFFECT-1", "Картинка: эффект настроек", parts=["прошла"] * 11)
     assert step.label == "Картинка: эффект настроек: 11 строк"
+
+
+def test_api_map_step_counts_rows_not_operations():
+    step = Step("09:20", "API-MAP-1", "API камеры: карта и сверка с ONVIF", parts=["прошла"] * 5)
+    assert step.label == "API камеры: карта и сверка с ONVIF: 5 строк"
+    ruver = Step("09:12", "API-RUVER-1", "API «Рувер»", parts=["прошла"] * 2)
+    assert ruver.label.endswith("2 операции")

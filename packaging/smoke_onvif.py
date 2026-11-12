@@ -1,4 +1,4 @@
-"""Проверка собранной программы: ONVIF, API, поток, картинка и кодеки против виртуальных камер.
+"""Проверка собранной программы: ONVIF, API, поток и кодеки против виртуальных камер.
 
 Запуск из корня репозитория (виртуальная камера — в tests/):
     uv run python packaging/smoke_onvif.py <программа> [аргументы до «run» …]
@@ -7,13 +7,14 @@
 
 Проверяется то, что ломается именно в сборке: onvif-tt запускается из собранной программы
 (без `python -m`), находит свои схемы и выдаёт строки протокола; свой RTSP-клиент читает поток
-метаданных; карта API «Рувер» лежит в сборке, и проверка API выдаёт строки операций; проверка
-картинки снимает кадры ffmpeg из сборки, пишет настройки Imaging и возвращает их, а протокол PDF
-собирается со снимками; проверка кодеков меняет кодировщик и возвращает его, а VMAF считает
-libvmaf ffmpeg из сборки.
+метаданных; карта API «Рувер» лежит в сборке, и проверка API выдаёт строки операций;
+«API камеры» снимает карту виртуальных Hikvision и Dahua, сверяет её по таблице пар из сборки
+и выпускает документ «Карта API»; проверка кодеков меняет кодировщик и возвращает его, а VMAF
+считает libvmaf ffmpeg из сборки. Картинка проверяется отдельно: `smoke_image.py`.
 Код выхода: 0 — сборка годна, 1 — нет.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -59,6 +60,7 @@ def run_app(
         timeout=1200,
     )
     print(done.stdout[-4000:], done.stderr[-4000:], sep="\n")
+    # рядом с прогонами лежат папки журналов записи (`pending-image`): прогон — только `QA-*`
     runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
     if not runs:
         print("ПРОВАЛ: прогон не создал папку результатов")
@@ -94,6 +96,59 @@ def smoke_api(app: list[str]) -> list[str]:
     return [] if len(api_rows) >= MIN_API_ROWS else [f"строк API {len(api_rows)} < {MIN_API_ROWS}"]
 
 
+def smoke_api_map(app: list[str]) -> list[str]:
+    """«API камеры» в сборке на виртуальных Hikvision и Dahua: карта, сверка по таблице пар из
+    сборки (`qa_tool/data/api_pairs`), документ «Карта API» из шаблона сборки; список проблем."""
+    from tests.mock_native import dahua, hikvision
+
+    problems = []
+    for maker, model, api in (
+        ("Hikvision", "DS-2CD2043G2-I", hikvision()),
+        ("Dahua", "IPC-HFW2431S-S-S2", dahua()),
+    ):
+        cam = MockCamera(Passport(maker, model, "1.0", "SN1"), native=api).start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="qa-tool-smoke-api-map-") as tmp:
+                folder = Path(tmp)
+                (folder / "stand.yaml").write_text(stand_yaml([cam]), encoding="utf-8")
+                (folder / "scenario.yaml").write_text(
+                    "checks: [CORE-CONNECT-1, API-MAP-1]\nallow_writes: false\n",
+                    encoding="utf-8",
+                )
+                rows = run_app(app, folder)
+                runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
+                documents = [runs[-1] / f"api_map_1.{ext}" for ext in ("html", "pdf", "xlsx")]
+                missing = [d.name for d in documents if not runs or not d.exists()]
+                found = list(runs[-1].rglob("api-map.json")) if runs else []
+                native = json.loads(found[0].read_text(encoding="utf-8")) if found else {}
+        finally:
+            cam.stop()
+        if rows is None:
+            problems.append(f"API камеры, {maker}: прогон не создал папку результатов")
+            continue
+        head = rows.get("API-MAP-1", ("нет строки", ""))
+        if head[0] != "прошла":
+            problems.append(f"API-MAP-1, {maker}: {head}")
+        failed = [
+            i for i, (status, _) in rows.items() if i.startswith("API-") and status == "не прошла"
+        ]
+        problems += [f"{i}, {maker}: {rows[i]}" for i in failed]
+        problems += [f"«Карта API», {maker}: нет файла {name}" for name in missing]
+        pairs = [i for i in rows if i.startswith(("API-MATCH-", "API-RANGE-"))]
+        # у Hikvision в таблице программы две подтверждённые пары: без них данных сборки нет
+        if maker == "Hikvision" and rows.get("API-MATCH-12", ("",))[0] != "прошла":
+            problems.append(f"API-MATCH-12, {maker}: {rows.get('API-MATCH-12', ('нет строки',))}")
+        sections = native.get("разделы", [])
+        params = sum(len(x.get("параметры", [])) for x in sections)
+        if not sections:
+            problems.append(f"API камеры, {maker}: api-map.json пуст или не записан")
+        print(
+            f"API камеры, {maker}: {head[0]}; разделов {len(sections)}, параметров {params}, "
+            f"строк сверки {len(pairs)}"
+        )
+    return problems
+
+
 def smoke_stream(app: list[str]) -> list[str]:
     """Модуль «Поток» в сборке: нити, ffmpeg из сборки, UDP; пароля нет ни в одном файле прогона."""
     cam = MockCamera(Passport("Smoke", "M1", "1.0", "SN1"), password=STREAM_PASSWORD).start()
@@ -122,48 +177,6 @@ def smoke_stream(app: list[str]) -> list[str]:
         if rows.get(row, ("",))[0] != "прошла":
             problems.append(f"{row}: {rows.get(row, ('нет строки', ''))}")
     print(f"строк потока: {sum(i.startswith('STREAM-') for i in rows)}")
-    return problems
-
-
-def smoke_image(app: list[str]) -> list[str]:
-    """Картинка в сборке: кадры через ffmpeg сборки, запись и возврат Imaging, PDF со снимками."""
-    from tests.mock_onvif import IMAGING_FULL, OnvifState
-
-    manual = IMAGING_FULL.replace("<tt:Exposure><tt:Mode>AUTO", "<tt:Exposure><tt:Mode>MANUAL")
-    state = OnvifState(imaging_xml=manual, imaging_video=True)
-    cam = MockCamera(Passport("Smoke", "M1", "1.0", "SN1"), state=state).start()
-    fast = {"image.apply_delay_s": 0.5, "image.before_gap_s": 0.5, "image.clip_s": 1.0}
-    try:
-        with tempfile.TemporaryDirectory(prefix="qa-tool-smoke-image-") as tmp:
-            folder = Path(tmp)
-            (folder / "stand.yaml").write_text(stand_yaml([cam]), encoding="utf-8")
-            (folder / "scenario.yaml").write_text(
-                "checks: [CORE-CONNECT-1, IMAGE-EFFECT-1]\nallow_writes: true\n", encoding="utf-8"
-            )
-            (folder / "thresholds.yaml").write_text(
-                "".join(
-                    f"{key}: {{value: {value}, unit: с, source: проверка сборки}}\n"
-                    for key, value in fast.items()
-                ),
-                encoding="utf-8",
-            )
-            rows = run_app(app, folder)
-            runs = sorted(p for p in (folder / "runs").glob("QA-*") if p.is_dir())
-            pdf = runs[-1] / "protocol_1.pdf" if runs else None
-            pdf_size = pdf.stat().st_size if pdf and pdf.exists() else 0
-    finally:
-        cam.stop()
-    if rows is None:
-        return ["картинка: прогон не создал папку результатов"]
-    problems = []
-    for row in ("IMAGE-STATE-1", "IMAGE-BRIGHT-1", "IMAGE-RESTORE-1"):
-        if rows.get(row, ("",))[0] != "прошла":
-            problems.append(f"{row}: {rows.get(row, ('нет строки', ''))}")
-    if state.imaging_xml != manual:
-        problems.append("картинка: настройки виртуальной камеры не вернулись")
-    if pdf_size < 50_000:  # без снимков протокол — десятки килобайт
-        problems.append(f"картинка: PDF протокола {pdf_size} байт — снимков в нём нет")
-    print(f"строк картинки: {sum(i.startswith('IMAGE-') for i in rows)}, PDF {pdf_size} байт")
     return problems
 
 
@@ -258,8 +271,8 @@ def main(app: list[str]) -> int:
         problems.append(f"строк onvif-tt {len(ott_rows)} < {MIN_OTT_ROWS}")
     print(f"строк протокола: {len(rows)}, из них onvif-tt: {len(ott_rows)}")
     problems += smoke_api(app)
+    problems += smoke_api_map(app)
     problems += smoke_stream(app)
-    problems += smoke_image(app)
     problems += smoke_codec(app)
     for problem in problems:
         print("ПРОВАЛ:", problem)

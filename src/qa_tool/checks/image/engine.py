@@ -22,13 +22,14 @@ from qa_tool.checks.image.frames import (
     RtspFrameSource,
     StreamRefused,
     StreamUnavailable,
+    Timings,
 )
 from qa_tool.checks.image.metrics import Masks, Measurement, masks_of, measure
 from qa_tool.checks.image.rules import limit, rule_for, verdict
 from qa_tool.checks.image.scene import OrdinaryScene, Scene, moved
 from qa_tool.checks.image.settings import METRIC_TITLES, SETTINGS, Exposure, Setting
 from qa_tool.checks.onvif.replay import soap_evidence
-from qa_tool.checks.onvif.stream import first_stream
+from qa_tool.checks.onvif.stream import first_stream, video_source
 from qa_tool.checks.rtsp_refusal import refused_password
 from qa_tool.checks.stream.common import DecoderFailed, ToolMissing
 from qa_tool.checks.write_pass import (
@@ -130,6 +131,26 @@ def _shown(value: float | None) -> str:
     return "—" if value is None else f"{value:.6g}"
 
 
+def _not_settled(capture: Capture, ctx: CheckContext, moment: str) -> str:
+    """Почему снимок не успокоился за `settle_max_s`; пусто — снимок стабилен.
+
+    `RtspFrameSource.capture` по истечении срока отдаёт последний кадр с `stable=False`:
+    его величина — случайная точка колебания, мерить по ней эффект нельзя.
+
+    Args:
+        moment: когда снят кадр, для причины: «до записи», «после записи 100 %».
+    """
+    if capture.stable:
+        return ""
+    timings = Timings.of(ctx)
+    window = capture.lumas[-timings.settle_frames :]
+    swing = max(window) - min(window) if window else 0.0
+    return (
+        f"картинка не успокоилась за {timings.settle_max_s:g} с {moment}: средняя яркость "
+        f"последних кадров колеблется на {swing:.1f} при допуске {timings.settle_luma:g}"
+    ).replace(".", ",")
+
+
 class Engine:
     """Проход проверки картинки по одной камере.
 
@@ -164,7 +185,7 @@ class Engine:
             if "imaging" not in services:
                 return self._all_skipped("камера не объявляет службу Imaging (ONVIF)")
             _profile, uri, source = first_stream(self.soap, services)
-            source = source or self._first_source(services)
+            source = video_source(self.soap, services, source)
             # читаем все настройки, даже если проверяем часть: журнал прошлого прогона может
             # касаться любой из них
             fields = {s.key: s for s in SETTINGS}
@@ -198,7 +219,12 @@ class Engine:
         except FRAMES_ERRORS as e:
             return self._frames_failed(e)
         self.out.rows.append(self._state_row(ranges, before))
-        unstable = moved(before, second, self.ctx)
+        # кадр «до» не успокоился без единой записи — колеблется сцена или свет, а не настройка (S5)
+        unstable = (
+            moved(before, second, self.ctx)
+            or _not_settled(before, self.ctx, "до записи")
+            or _not_settled(second, self.ctx, "до записи")
+        )
         if not self.ctx.allow_writes:
             self._read_only_rows(ranges)
             return self._result()
@@ -303,6 +329,37 @@ class Engine:
                 evidence,
             )
             return
+        # «не прошла» только при стабильных «до» и «после»: тогда доказано, что сцена стоит,
+        # а колеблется камера (спека, «Решения»); иначе это сцена — «ошибка стенда»
+        after_unsettled = _not_settled(after, self.ctx, "после возврата") if after else ""
+        if after_unsettled:
+            self._row(
+                setting,
+                CheckResult(
+                    Status.STAND_ERROR,
+                    reason=after_unsettled,
+                    expected=rule.expected,
+                ),
+                before,
+                evidence,
+            )
+            return
+        for position in positions:
+            moment = f"после записи {round(position.share * 100)} %"
+            unsettled = _not_settled(position.capture, self.ctx, moment) if position.capture else ""
+            if unsettled:
+                self._row(
+                    setting,
+                    CheckResult(
+                        Status.FAILED,
+                        reason=unsettled,
+                        expected=rule.expected,
+                        actual=_positions_text(positions, setting),
+                    ),
+                    before,
+                    evidence,
+                )
+                return
         values = [p.measurement.value for p in positions if p.measurement]
         clips = [
             max(p.measurement.clip_pct, p.measurement.crush_pct) for p in positions if p.measurement
@@ -595,10 +652,3 @@ class Engine:
 
     def _progress(self, text: str) -> None:
         self.ctx.progress(text)
-
-    def _first_source(self, services: dict[str, str]) -> str:
-        """Токен первого источника видео, если профиль его не назвал."""
-        answer = self.soap.call(services.get("media", services["device"]), "<trt:GetVideoSources/>")
-        return next(
-            (e.get("token", "") for e in answer.iter() if e.tag.endswith("VideoSources")), ""
-        )
