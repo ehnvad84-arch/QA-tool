@@ -7,7 +7,6 @@
 import time
 from dataclasses import dataclass
 from enum import Enum
-from urllib.parse import urlsplit
 
 from qa_tool.checks.rtsp_refusal import refused_password, remember_web_refusal
 from qa_tool.checks.web.limits import limit
@@ -38,7 +37,6 @@ class Entry(Enum):
     REFUSED = "пароль не принят"
     CHANGE_REQUIRED = "камера просит сменить пароль"
     SESSIONS_FULL = "заняты все подключения"
-    STOPPED = "вход остановлен программой"
 
 
 @dataclass(frozen=True)
@@ -155,7 +153,6 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
     """
     if refused_password(ctx):
         return LoginResult(Entry.REFUSED, refused_password(ctx))
-    stopped_before = len(session.stopped)
     load = session.open(address, limit(ctx, "web.login_timeout_s"))
     if load.status == HTTP_UNAUTHORIZED:
         return _http_login(ctx, session, address)
@@ -180,17 +177,6 @@ def login(ctx: CheckContext, session: BrowserSession, address: str) -> LoginResu
             if outcome is not None:
                 return outcome
             session.wait(POLL_MS)
-    stopped = session.stopped[stopped_before:]
-    if stopped:
-        # Табу остановило служебный запрос страницы входа — ещё при загрузке, до нажатия, или во
-        # время входа: форма без него не работает, пароль до камеры не дошёл. Так было у .112 и
-        # .100 11.11; их два чтения директор потом разрешил (`WEB_APPROVED_READS`), но у другой
-        # камеры такой запрос может найтись снова.
-        # Решение директора 06.11 — «ошибка стенда» с причиной; признак отказа не ставится,
-        # иначе он выключал вход для «API камеры», «Картинки» и «Кодеков».
-        first = stopped[0]
-        path = urlsplit(first.url).path
-        return LoginResult(Entry.STOPPED, f"табу остановило запрос входа {first.method} {path}")
     return _refused(ctx, "форма входа осталась на экране")
 
 

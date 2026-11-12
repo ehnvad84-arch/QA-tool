@@ -10,6 +10,7 @@ from qa_tool.drivers.camera.onvif_generic import (
     media_profiles,
     parse_encoder,
     service_urls,
+    stand_service_url,
 )
 from qa_tool.drivers.camera.soap import (
     CameraUnreachable,
@@ -179,3 +180,32 @@ def test_encoding_interval_divides_frame_rate_and_hevc_is_h265():
     )
     encoder = parse_encoder(root)
     assert (encoder.encoding, encoder.fps) == ("H265", 15)
+
+
+TUNNEL = Camera(slot=1, address="127.0.0.1", port=9114, username="a", lan_address="192.168.1.114")
+DIRECT = Camera(slot=1, address="192.168.1.10", port=80, username="a")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://192.168.1.114/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),
+        ("http://192.168.1.114:80/onvif/a?b=1", "http://127.0.0.1:9114/onvif/a?b=1"),
+        ("http://127.0.0.1/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),  # Dahua
+        ("http://10.9.9.9/onvif/Replay", None),
+        ("http://[1:2]/onvif/Replay", None),
+    ],
+)
+def test_service_of_camera_behind_tunnel(url, expected):
+    assert stand_service_url(TUNNEL, url) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://192.168.1.10:8000/onvif/a", "http://192.168.1.10:8000/onvif/a"),
+        ("http://192.168.1.114/onvif/a", None),
+    ],
+)
+def test_direct_camera_keeps_addresses_and_has_no_aliases(url, expected):
+    assert stand_service_url(DIRECT, url) == expected

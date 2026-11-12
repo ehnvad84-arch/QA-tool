@@ -6,7 +6,7 @@ from pathlib import Path
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
 from qa_tool.core.checks import CheckResult, Evidence, Phase, Registry, Severity, Status
-from qa_tool.core.web_journal import FOLDER_KEY, RUN_ID_KEY, PendingWrite, save
+from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, WEB, PendingWrite, save
 
 REGISTRY = Registry()
 
@@ -68,7 +68,36 @@ def write_and_hang(ctx):
         "60",
         "sent",
     )
-    save(Path(ctx.extra[FOLDER_KEY]), entry)
+    save(Path(ctx.extra[WEB.folder_key]), entry)
+    time.sleep(30)
+    return CheckResult.skipped("сюда процесс не дойдёт")
+
+
+@REGISTRY.check(
+    "FAKE-WRITE-HANG-BOTH",
+    module="image",
+    title="Две записи и зависание",
+    description="",
+    phase=Phase.NETWORK,
+    timeout_s=1,
+)
+def write_both_and_hang(ctx):
+    """Оставить журнал веба и журнал картинки и зависнуть: у камеры две незакрытые записи."""
+    camera = ctx.camera
+    common = (ctx.extra[RUN_ID_KEY], camera.slot, camera.address, camera.port, "generic")
+    web = PendingWrite(*common, "http://cam/image", "Яркость", "range", "50", "60", "sent")
+    image = PendingWrite(
+        *common,
+        "http://cam/onvif/imaging",
+        "Контраст",
+        "range",
+        "40",
+        "100",
+        "sent",
+        restore={"token": "src1", "xml": "<tt:Contrast>40</tt:Contrast>"},
+    )
+    save(Path(ctx.extra[WEB.folder_key]), web)
+    save(Path(ctx.extra[IMAGE.folder_key]), image)
     time.sleep(30)
     return CheckResult.skipped("сюда процесс не дойдёт")
 
@@ -112,6 +141,28 @@ def _composite(ctx):
 
 
 REGISTRY.check("FAKE-COMPOSITE-1", "fake", "составная", "что делаем")(_composite)
+
+
+def _composite_camera_vanishes(ctx):
+    """Составная проверка, во время которой камера пропадает (её останавливает тест)."""
+    from qa_tool.core.checks import ChildResult
+
+    ctx.progress("Контраст · 50 % · 2 из 9 · password=s3cret")
+    time.sleep(1.0)
+    ok = CheckResult(Status.PASSED, evidence=[Evidence("x.txt", "кадр")])
+    return CheckResult(
+        Status.PASSED,
+        children=[
+            ChildResult("SUB-A", "первая", ok),
+            ChildResult("SUB-B", "вторая", ok),
+            ChildResult("SUB-C", "третья", CheckResult(Status.STAND_ERROR, reason="нет ответа")),
+        ],
+    )
+
+
+REGISTRY.check("FAKE-COMPOSITE-LOST", "fake", "составная, камера пропадает", "")(
+    _composite_camera_vanishes
+)
 
 
 def _passport(ctx):

@@ -1,7 +1,8 @@
-"""Временные файлы браузера веб-обхода: имя папки и уборка после снятого процесса.
+"""Временные папки проверок: имена и уборка после снятого процесса.
 
-Браузер живёт в процессе камеры. Если планировщик снял этот процесс, папка профиля остаётся: в ней
-могут быть куки сессии. Поэтому при старте прогона такие папки удаляются.
+Браузер веб-обхода (`qa-web-`) и захват кадров картинки (`qa-image-`) живут в процессе камеры.
+Если планировщик снял этот процесс, папка остаётся: у браузера в ней куки сессии, у картинки —
+выборки видео в десятки мегабайт. Поэтому при старте прогона такие папки удаляются.
 """
 
 import shutil
@@ -10,12 +11,13 @@ import time
 from pathlib import Path
 
 TEMP_PREFIX = "qa-web-"
+IMAGE_PREFIX = "qa-image-"
 # Папка моложе часа может принадлежать идущему прогону другой копии программы
 STALE_AFTER_S = 3600.0
 
 
-def remove_stale_browser_files(folder: Path | None = None) -> int:
-    """Удалить папки браузера, оставшиеся от снятых процессов.
+def remove_stale_temp_files(folder: Path | None = None) -> int:
+    """Удалить папки браузера и захвата кадров, оставшиеся от снятых процессов.
 
     Args:
         folder: где искать; по умолчанию системная временная папка.
@@ -25,7 +27,7 @@ def remove_stale_browser_files(folder: Path | None = None) -> int:
     """
     root = folder or Path(tempfile.gettempdir())
     removed = 0
-    for path in root.glob(f"{TEMP_PREFIX}*"):
+    for path in [*root.glob(f"{TEMP_PREFIX}*"), *root.glob(f"{IMAGE_PREFIX}*")]:
         try:
             if path.is_dir() and time.time() - path.stat().st_mtime > STALE_AFTER_S:
                 shutil.rmtree(path, ignore_errors=True)

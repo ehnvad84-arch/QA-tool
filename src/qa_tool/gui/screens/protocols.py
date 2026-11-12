@@ -7,6 +7,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem
 
+from qa_tool.checks.image.settings import SETTINGS
 from qa_tool.core.scheduler import summary_status
 from qa_tool.core.store import RunStore
 from qa_tool.gui.help import helped
@@ -14,6 +15,10 @@ from qa_tool.gui.screens.base import Screen
 from qa_tool.report.model import build_protocol
 
 SUMMARY = "summary"
+IMAGE_COMPARE = "image_compare"
+IMAGE_COMPARE_TIP = (
+    "Снимки всех камер рядом в положениях 0, 50 и 100 % и график по каждой настройке."
+)
 
 
 def open_file(path: Path) -> None:
@@ -150,6 +155,16 @@ class ProtocolsScreen(Screen):
             self.docs_table.setRowCount(0)
             return
         rows = [(SUMMARY, "Сводный отчёт", "все камеры", run["result"])]
+        if (run["dir"] / f"{IMAGE_COMPARE}.html").exists():
+            count = len(run["cameras"])
+            rows.append(
+                (
+                    IMAGE_COMPARE,
+                    "Сравнение картинки",
+                    f"все камеры ({count})",
+                    f"настроек {len(SETTINGS)}, камер {count}",
+                )
+            )
         rows += [
             (
                 f"protocol_{c['slot']}",
@@ -163,7 +178,10 @@ class ProtocolsScreen(Screen):
         for r, (stem, *values) in enumerate(rows):
             self.docs.append(stem)
             for c, value in enumerate(values):
-                self.docs_table.setItem(r, c, QTableWidgetItem(value))
+                item = QTableWidgetItem(value)
+                if stem == IMAGE_COMPARE:
+                    item.setToolTip(IMAGE_COMPARE_TIP)
+                self.docs_table.setItem(r, c, item)
         self.docs_table.selectRow(0)
 
     def open_selected(self, fmt: str) -> Path | None:

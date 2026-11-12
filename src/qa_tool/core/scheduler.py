@@ -6,7 +6,6 @@ import queue
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from qa_tool.checks.core.connect import PASSPORT_KEY
@@ -14,17 +13,9 @@ from qa_tool.core.checks import CheckResult, Phase, Status
 from qa_tool.core.models import Scenario, Stand, Threshold
 from qa_tool.core.secrets import get_password, redact
 from qa_tool.core.store import RunStore
-from qa_tool.core.tempfiles import remove_stale_browser_files
-from qa_tool.core.web_journal import (
-    FOLDER_KEY,
-    FOLDER_NAME,
-    LOST_WRITE_SPEC,
-    RUN_ID_KEY,
-    load,
-    lost_write_result,
-    save,
-)
+from qa_tool.core.tempfiles import remove_stale_temp_files
 from qa_tool.core.worker import STOPPED, WorkerArgs, resolve_registry, worker_main
+from qa_tool.core.write_journal import JOURNALS, RUN_ID_KEY, Journal, load, lost_write_result, save
 
 DEFAULT_REGISTRY = "qa_tool.checks:registry"
 FREEZE_GAP_S = 2.0  # цикл координатора крутится каждые 0,2 с; дольше 2 с — значит, он стоял
@@ -34,7 +25,7 @@ FREEZE_GAP_S = 2.0  # цикл координатора крутится каж�
 class Event:
     """Событие прогона для окна и командной строки: фаза, старт и итог проверки, потеря камеры."""
 
-    kind: str  # вид события: phase, passport, started, result, done, lost, finished
+    kind: str  # вид события: phase, passport, started, progress, result, done, lost, finished
     slot: int = 0
     check_id: str = ""
     title: str = ""
@@ -107,7 +98,7 @@ class Runner:
         passwords = {
             cam.slot: get_password(cam) for cam in self.stand.cameras
         }  # ConfigError — до создания папки прогона
-        remove_stale_browser_files()
+        remove_stale_temp_files()
         self.store = RunStore.create(self.stand, self.scenario)
         self.outbox = self._mp.Queue()
         plans = {
@@ -136,7 +127,7 @@ class Runner:
                 thresholds=self.thresholds,
                 extra={
                     **self.extra,
-                    FOLDER_KEY: str(self._journal_folder()),
+                    **{j.folder_key: str(j.folder(self.stand.runs_dir)) for j in JOURNALS},
                     RUN_ID_KEY: self.store.run_id,
                 },
                 allow_writes=self.scenario.allow_writes,
@@ -198,6 +189,11 @@ class Runner:
             spec = self.registry.get(check_id)
             c.running = (check_id, time.monotonic() + spec.time_limit_s(self.scenario))
             self.on_event(Event("started", slot, check_id, spec.title))
+        elif kind == "progress":
+            check_id = message[2]
+            spec = self.registry.get(check_id)
+            # текст собирает проверка, но в нём могут быть ответы камеры — вычищаем, как причины
+            self.on_event(Event("progress", slot, check_id, spec.title, detail=redact(message[3])))
         elif kind == "result":
             _, _, check_id, result, started = message
             self._record(c, check_id, result, started)
@@ -374,31 +370,38 @@ class Runner:
             self.barriers[check_id].discard(c.slot)
             self._try_barrier(check_id)
 
-    def _journal_folder(self) -> Path:
-        return self.stand.runs_dir / FOLDER_NAME
-
     def _report_lost_write(self, c: _Camera) -> None:
-        """Строка «блокер» из журнала: снятый процесс сам сказать об этом уже не может (S14)."""
+        """Строки «блокер» из журналов: снятый процесс сам сказать об этом уже не может.
+
+        Журналы веба и картинки независимы: процесс, снятый посреди картинки, мог раньше
+        оставить и незакрытую запись веб-обхода — тогда строк две.
+        """
+        for journal in JOURNALS:
+            self._report_journal(c, journal)
+
+    def _report_journal(self, c: _Camera, journal: Journal) -> None:
         camera = next(cam for cam in self.stand.cameras if cam.slot == c.slot)
-        entry = load(self._journal_folder(), camera.address, camera.port)
+        folder = journal.folder(self.stand.runs_dir)
+        entry = load(folder, camera.address, camera.port)
         if entry is None or entry.reported or entry.run_id not in ("", self.store.run_id):
             return
-        result = lost_write_result(entry)
-        self.store.add_result(c.slot, LOST_WRITE_SPEC, result, "")
+        spec = journal.lost_spec
+        result = lost_write_result(entry, journal.where)
+        self.store.add_result(c.slot, spec, result, "")
         if entry.run_id:
             entry.reported = True
-            save(self._journal_folder(), entry)
+            save(folder, entry)
         self.on_event(
             Event(
                 "result",
                 c.slot,
-                LOST_WRITE_SPEC.id,
-                LOST_WRITE_SPEC.title,
+                spec.id,
+                spec.title,
                 result.status.value,
                 redact(result.reason),
-                severity=LOST_WRITE_SPEC.severity.value,
-                module=LOST_WRITE_SPEC.module,
-                phase=int(LOST_WRITE_SPEC.phase),
+                severity=spec.severity.value,
+                module=spec.module,
+                phase=int(spec.phase),
             )
         )
 

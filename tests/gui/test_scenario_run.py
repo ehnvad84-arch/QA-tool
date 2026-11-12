@@ -154,7 +154,7 @@ def test_onvif_groups_tooltips_and_f1(qtbot, tmp_path, fleet):
     assert {"Тесты onvif-tt", "Профиль G: накопитель и архив", "Итог по профилям"} <= set(groups)
     archive = groups["Профиль G: накопитель и архив"]
     ids = {archive.child(i).data(0, Qt.ItemDataRole.UserRole) for i in range(archive.childCount())}
-    assert ids == {"RUV-SD-1", "RUV-SD-2", "RUV-G-REPLAY-1"}
+    assert ids == {"RUV-SD-1", "RUV-SD-2", "RUV-G-SEARCH-1", "RUV-G-REPLAY-1"}
     replay = next(
         i
         for i in scenario._check_items()
@@ -185,3 +185,48 @@ def test_connect_check_cannot_be_unchecked(qtbot, tmp_path, fleet):
     )
     assert item.checkState(0) == Qt.CheckState.Checked
     assert not item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+
+
+def test_image_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):
+    from qa_tool.gui.help import HELP_ID
+
+    window = make_window(qtbot, tmp_path, fleet[:1])
+    scenario = screen(window, ScenarioScreen)
+    window.menu.setCurrentRow(2)
+    note = scenario.writes_note
+    assert note.isVisibleTo(window) and note.text().startswith("Без этой галочки «Картинка»")
+    assert note.property(HELP_ID) == "scenario-permissions" and note.toolTip()
+    assert "«Картинка» снимает текущий кадр" in scenario.allow_writes.toolTip()
+    scenario.allow_writes.setChecked(True)
+    assert note.text().startswith("«Картинка» будет менять")
+    item = next(
+        i
+        for i in scenario._check_items()
+        if i.data(0, Qt.ItemDataRole.UserRole) == "IMAGE-EFFECT-1"
+    )
+    assert item.parent().text(0) == "Настройки изображения"
+    assert item.data(1, Qt.ItemDataRole.UserRole) == "image"
+    assert "Без этой галочки" in item.toolTip(0)
+    item.setCheckState(0, Qt.CheckState.Unchecked)
+    assert not note.isVisibleTo(window)
+
+
+def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):
+    from qa_tool.gui.screens.protocols import IMAGE_COMPARE, ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
+    window.run_block.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+    run_dir = window.run_control.last_store.run_dir
+    (run_dir / f"{IMAGE_COMPARE}.html").write_text("<p>сравнение</p>", encoding="utf-8")
+    protocols = screen(window, ProtocolsScreen)
+    opened = []
+    protocols.opener = opened.append
+    window.menu.setCurrentRow(4)
+    protocols.refresh()
+    assert protocols.docs_table.rowCount() == 4  # сводка, сравнение, 2 камеры
+    assert protocols.docs_table.item(1, 0).text() == "Сравнение картинки"
+    assert protocols.docs_table.item(1, 2).text() == "настроек 9, камер 2"
+    assert "0, 50 и 100 %" in protocols.docs_table.item(1, 0).toolTip()
+    protocols.docs_table.selectRow(1)
+    assert protocols.open_selected("html") == run_dir / f"{IMAGE_COMPARE}.html"

@@ -124,6 +124,9 @@ class CheckContext:
     stress_minutes: int = 60
     # долгая составная проверка спрашивает здесь: остановка не снимает её посреди записи
     stop_requested: Callable[[], bool] = lambda: False
+    # ход долгой проверки для окна («Контраст · 50 % · 2 из 9»): строки протокола приходят
+    # только в конце, и без хода несколько минут выглядят зависанием
+    progress: Callable[[str], None] = lambda _text: None
 
 
 CheckFunc = Callable[[CheckContext], CheckResult]
@@ -150,6 +153,10 @@ class CheckSpec:
     timeout_s: float = 120.0  # дольше — проверка считается зависшей
     group: str = ""  # подгруппа внутри модуля на экране «Сценарий»; пусто — прямо в модуле
     help_id: str = ""  # раздел справки F1 для строки проверки; пусто — общий раздел «Проверки»
+    # что проверка делает без галочки «изменяющие» и с ней, если идёт и без неё (writes=False):
+    # подпись под галочкой на экране «Сценарий»; пусто — проверка не зависит от галочки
+    read_only_note: str = ""
+    writes_note: str = ""
 
     def time_limit_s(self, scenario: Scenario) -> float:
         """Срок, после которого проверка считается зависшей, с учётом длительности стресс-теста."""
@@ -175,7 +182,8 @@ class Registry:
             title: название для экрана и протокола.
             description: «что делаем, что ожидаем» — уходит в протокол и шаги задачи.
             **options: поля CheckSpec (phase, resources, vendors, places, writes,
-                destructive, severity, order, timeout_s, group, help_id).
+                destructive, severity, order, timeout_s, group, help_id, read_only_note,
+                writes_note).
 
         Raises:
             ValueError: проверка с таким id уже зарегистрирована.
@@ -279,7 +287,7 @@ def scrub(result: CheckResult, known_secrets: list[str]) -> None:
     """Вырезать известные секреты из текстов результата, строк и текстовых доказательств.
 
     `RunStore` знает только общие признаки секретов, а камера может вывести пароль как есть:
-    например, в консоль браузера. Известный пароль есть только здесь.
+    повторить в ответе или вывести в консоль браузера. Известный пароль есть только здесь.
 
     Args:
         result: результат проверки; меняется на месте.

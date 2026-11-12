@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from qa_tool.core.checks import Status
+from qa_tool.core.checks import Phase, Status
 from qa_tool.core.models import Camera
 from qa_tool.core.scheduler import Event
 from qa_tool.core.worker import LOST_DURING_CHECK, STOPPED
@@ -54,6 +54,8 @@ class Step:
     state: str = RUNNING
     reason: str = ""
     parts: list[str] = field(default_factory=list)  # итоги тестов составной проверки
+    started_at: datetime | None = None
+    progress: str = ""  # ход долгой проверки: «Контраст · 50 % · 2 из 9 · 1:40»
 
     @property
     def label(self) -> str:
@@ -63,7 +65,7 @@ class Step:
         forms = ("тест", "теста", "тестов")
         if self.check_id.startswith("API-"):
             forms = ("операция", "операции", "операций")
-        elif self.check_id.startswith(("STREAM-", "WEB-")):
+        elif self.check_id.startswith(("STREAM-", "WEB-", "IMAGE-")):
             forms = ("строка", "строки", "строк")
         return f"{self.title}: {plural(len(self.parts), *forms)}"
 
@@ -183,6 +185,11 @@ class RunView:
         self.slots[slot] = SlotView(slot, camera=camera, total=total)
         self.phase, self.finished = "", False
 
+    @property
+    def sync_phase(self) -> bool:
+        """Идёт синхронная фаза: камеры снимают сцену бокса, заходить в него нельзя."""
+        return not self.finished and self.phase == Phase.SYNC.title
+
     def abort(self, reason: str) -> None:
         """Прогон оборвался посреди проверок: незавершённые места не должны выглядеть идущими."""
         self.finished = True
@@ -214,7 +221,13 @@ class RunView:
             view.passport = dict(event.passport)
         elif event.kind == "started":
             view.started = True
-            view.steps.append(Step(at.strftime("%H:%M"), event.check_id, event.title))
+            step = Step(at.strftime("%H:%M"), event.check_id, event.title, started_at=at)
+            view.steps.append(step)
+        elif event.kind == "progress":
+            step = self._running(view)
+            if step is not None and step.check_id == event.check_id:
+                passed = int((at - (step.started_at or at)).total_seconds())
+                step.progress = f"{event.detail} · {passed // 60}:{passed % 60:02d}"
         elif event.kind == "result":
             self._result(view, event)
         elif event.kind == "done":

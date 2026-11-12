@@ -14,6 +14,7 @@ UDP не поддерживается: клиент получает 461 и до
 import base64
 import contextlib
 import datetime
+import functools
 import hashlib
 import os
 import shutil
@@ -23,6 +24,7 @@ import struct
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,6 +91,60 @@ def test_video() -> bytes | None:
             timeout=120,
         )
         tmp.replace(path)
+    return path.read_bytes()
+
+
+@functools.cache
+def _h264_encoder(ffmpeg: str) -> tuple[str, ...]:
+    """OpenH264 из сборки программы, иначе libx264 системного ffmpeg (без B-кадров, как камера)."""
+    listed = subprocess.run(
+        [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False
+    ).stdout
+    if "libopenh264" in listed:
+        return ("-c:v", "libopenh264")
+    return ("-c:v", "libx264", "-bf", "0", "-pix_fmt", "yuv420p")
+
+
+def imaging_video(picture: dict[str, float]) -> bytes | None:
+    """Неподвижная картинка 3 с с временным шумом, как её «снимает» камера с такими настройками.
+
+    `picture` — доли 0…1: brightness, contrast, saturation, sharpness, red, blue (баланс белого;
+    0,5 — нейтрально) и noise (сила шума). Кеш — по набору долей: проверка картинки снимает одни
+    и те же положения на всех камерах.
+    """
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return None
+    p = {k: round(v, 3) for k, v in sorted(picture.items())}
+    key = hashlib.sha1(repr(p).encode()).hexdigest()[:12]
+    path = CACHE / f"imaging2-{key}.h264"
+    if path.exists():
+        return path.read_bytes()
+    shift = (p["brightness"] - 0.5) * 0.4 * 255
+    gain = 0.5 + p["contrast"]
+    sat = 2 * p["saturation"]
+    # lutyuv по формуле фильтра eq: eq есть только в GPL-сборках ffmpeg, а CI и установщики
+    # берут LGPL-сборку BtbN — с eq ролик не строился, и тесты картинки падали
+    chain = [
+        "loop=loop=29:size=1:start=0",
+        f"lutyuv=y='clip((val-128)*{gain:.3f}+128+{shift:.3f},0,255)'"
+        f":u='clip((val-128)*{sat:.3f}+128,0,255)':v='clip((val-128)*{sat:.3f}+128,0,255)'",
+        f"unsharp=5:5:{(p['sharpness'] - 0.5) * 3:.3f}",
+        f"colorchannelmixer=rr={0.6 + 0.8 * p['red']:.3f}:bb={0.6 + 0.8 * p['blue']:.3f}",
+    ]
+    if p["noise"] > 0:
+        chain.append(f"noise=alls={round(30 * p['noise'])}:allf=t")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.part")
+    subprocess.run(
+        [ffmpeg, "-loglevel", "error", "-y", "-f", "lavfi"]
+        + ["-i", f"testsrc2=size={WIDTH}x{HEIGHT}:rate={FPS}:duration=0.1"]
+        + ["-vf", ",".join(chain), *_h264_encoder(ffmpeg), "-b:v", "2M", "-g", str(FPS)]
+        + ["-bsf:v", "h264_metadata=aud=insert", "-f", "h264", str(tmp)],
+        check=True,
+        timeout=120,
+    )
+    tmp.replace(path)
     return path.read_bytes()
 
 
@@ -284,8 +340,11 @@ class MockRtspServer:
         basic_auth: bool = False,
         both_auth: bool = False,
         first_frame_delay_s: float = 0.0,
+        range_silent: bool = False,
+        picture: Callable[[], bytes | None] | None = None,
     ):
         self.metadata = metadata
+        self.picture = picture  # видео по текущим настройкам картинки; None — общее тестовое
         self.reject_password = reject_password  # 401 на любой пароль
         self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
         self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
@@ -310,6 +369,7 @@ class MockRtspServer:
         self.udp_socket.settimeout(0.05)
         self.play_lock = threading.Lock()
         self.require_unsupported = require_unsupported
+        self.range_silent = range_silent  # PLAY с Range: 200 OK и ни одного кадра (как Dahua)
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
@@ -498,7 +558,11 @@ class MockRtspServer:
                             )
                         elif method == "PLAY":
                             dead = fault.no_frames_after_break and after_break
-                            frames = [] if server.silent or dead else server.frames
+                            silent_range = server.range_silent and "range" in headers  # как Dahua
+                            frames = [] if server.silent or dead or silent_range else server.frames
+                            drawn = server.picture() if server.picture and frames else None
+                            if drawn:
+                                frames = access_units(drawn)[0]
                             with server.play_lock:
                                 full = server.max_plays and server.playing >= server.max_plays
                                 server.playing += 0 if full else 1

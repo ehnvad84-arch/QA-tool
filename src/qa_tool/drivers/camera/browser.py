@@ -43,7 +43,6 @@ from qa_tool.core.taboo import (
     check_web_request,
     is_static_asset,
     is_web_action,
-    is_web_approved_read,
     is_write_message,
     is_write_request,
     web_danger_word,
@@ -537,13 +536,6 @@ class BrowserSession:
         if not is_camera_url(url, self.host, self.ports):
             return Verdict.STOP_FOREIGN
         if is_static_asset(method, url):
-            return None
-        if is_web_approved_read(method, url):
-            # опасное действие ловится и на разрешённом адресе: второй слой после белого списка
-            try:
-                check_web_danger(method, url, "", None)
-            except WebDangerViolation:
-                return Verdict.STOP_DANGER
             return None
         write = is_write_request(method, url)
         if write and body is None:

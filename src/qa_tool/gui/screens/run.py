@@ -241,6 +241,15 @@ class StepLog(QFrame):
             title = plain(step.label, wrap=True)
             if step.reason:
                 title.setToolTip(safe_tip(step.reason))
+            if step.state == RUNNING and step.progress:
+                # долгая проверка: без строки хода минуты без новых строк выглядят зависанием
+                column = QWidget()
+                stack = QVBoxLayout(column)
+                stack.setContentsMargins(0, 0, 0, 0)
+                stack.setSpacing(2)
+                stack.addWidget(title)
+                stack.addWidget(plain(step.progress, role="progress", wrap=True))
+                title = column
             state = plain(step.state)
             state.setProperty("state", step.state)
             line.addWidget(plain(step.time or "—", role="time"))
@@ -404,6 +413,12 @@ class CameraCard(QWidget):
         self.tasks.show_view(view)
 
 
+SYNC_NOTICE = (
+    "Синхронная фаза: камеры снимают сцену бокса. Не заходите в бокс, не меняйте свет и не "
+    "двигайте камеры — иначе настройки получат «ошибку стенда»."
+)
+
+
 class RunScreen(Screen):
     title = "Прогон"
     help_id = "run"
@@ -418,6 +433,13 @@ class RunScreen(Screen):
         row.setSpacing(0)
         self.cameras = CameraList(self._open_cameras)
         self.card = CameraCard(self.open_protocol)
+        self.notice = helped(
+            plain(SYNC_NOTICE, role="notice", wrap=True),
+            "Камеры снимают одну сцену одновременно: движение в боксе испортит снимки всех.",
+            "run-sync",
+        )
+        self.notice.setVisible(False)
+        self.layout_.addWidget(self.notice)
         row.addWidget(self.cameras)
         row.addWidget(self.card, 1)
         self.layout_.addLayout(row)
@@ -474,6 +496,7 @@ class RunScreen(Screen):
 
     def _on_event(self, event) -> None:
         slot = self.view.apply(event, datetime.now())
+        self.notice.setVisible(self.view.sync_phase)
         if event.kind == "finished":
             for s, row in self.cameras.rows.items():
                 row.show_view(self.view.slots[s])

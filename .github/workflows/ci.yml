@@ -17,6 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
+    # набор идёт 25–35 мин; зависший тест браузера 08.11 держал задание 6 ч до отмены GitHub
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -41,7 +43,13 @@ jobs:
         # соединение 2 минуты: 16 тысяч портов по умолчанию кончаются (WinError 10048)
         run: netsh int ipv4 set dynamicport tcp start=1025 num=64510
       - name: Тесты
-        run: uv run pytest -q  # на Linux conftest включает offscreen, на Windows — рабочий стол раннера
+        # на Linux conftest включает offscreen, на Windows — рабочий стол раннера; --durations
+        # показывает самые долгие тесты. Сторож из conftest: тест дольше 4 мин называет себя,
+        # печатает стеки потоков и greenlet и снимает прогон — 08.11 набор дважды висел на
+        # раннерах после 65 % до предела задания, а faulthandler не показал стек теста
+        env:
+          QA_TOOL_TEST_WATCHDOG_S: "240"
+        run: uv run pytest -q --durations=25
 
   dependencies:
     runs-on: ubuntu-24.04
@@ -73,6 +81,8 @@ jobs:
         run: uv run python packaging/smoke_onvif.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
       - name: Веб-обход собранной программой без скачиваний
         run: uv run python packaging/smoke_web.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
+      - name: Картинка двух виртуальных камер собранной программой, протоколы и сравнение
+        run: uv run python packaging/smoke_image.py "$(ls dist/*.AppImage)" --appimage-extract-and-run
       - name: Размер установщика
         run: du -h dist/*.AppImage
       - uses: actions/upload-artifact@v4
@@ -97,6 +107,8 @@ jobs:
         run: uv run python packaging/smoke_onvif.py build\pyinstaller\qa-tool\qa-tool-cli.exe
       - name: Веб-обход собранной программой без скачиваний
         run: uv run python packaging/smoke_web.py build\pyinstaller\qa-tool\qa-tool-cli.exe
+      - name: Картинка двух виртуальных камер собранной программой, протоколы и сравнение
+        run: uv run python packaging/smoke_image.py build\pyinstaller\qa-tool\qa-tool-cli.exe
       - name: Размер установщика
         shell: pwsh
         run: Get-Item dist\*-setup.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB)}}

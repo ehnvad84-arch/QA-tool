@@ -2,7 +2,8 @@
 
 Сообщения в координатор (outbox): кортежи (вид, место, ...):
   started(check_id, время) · result(check_id, CheckResult, время начала) ·
-  lock(check_id, ресурсы) · release(check_id) · barrier(check_id) · phase_done(фаза) · lost(причина)
+  lock(check_id, ресурсы) · release(check_id) · barrier(check_id) · phase_done(фаза) ·
+  lost(причина) · progress(check_id, текст хода)
 Ответы координатора (inbox): ("phase", фаза) · ("grant", check_id) · ("go", check_id) ·
   ("abort", check_id) · ("quit",)
 """
@@ -20,6 +21,8 @@ from qa_tool.core.checks import (
     UNREACHABLE,
     CheckContext,
     CheckResult,
+    CheckSpec,
+    ChildResult,
     Phase,
     Registry,
     Status,
@@ -59,6 +62,32 @@ class WorkerArgs:
 def camera_alive(camera: Camera, timeout: float = 1.0, attempts: int = 2) -> bool:
     """Отвечает ли камера на TCP-порт HTTP; две попытки, чтобы не путать сбой с пропажей."""
     return any(tcp_open(camera.address, camera.port, timeout) for _ in range(attempts))
+
+
+def lost_during_check(spec: CheckSpec, result: CheckResult) -> CheckResult:
+    """Итог проверки, во время которой камера перестала отвечать.
+
+    Строки составной проверки, полученные до пропажи, остаются: это уже проверенное, и без них
+    протокол потерял бы, например, сводку веб-обхода. Сама пропажа — отдельной строкой с ID
+    проверки (строка родителя у составной проверки в протокол не пишется).
+    """
+    failed = CheckResult(
+        Status.FAILED,
+        reason=LOST_DURING_CHECK,
+        expected=result.expected,
+        actual=f"{result.actual or result.reason}; камера перестала отвечать",
+        evidence=result.evidence,
+    )
+    if not result.children:
+        return failed
+    failed.children = [*result.children, ChildResult(spec.id, spec.title, failed)]
+    return failed
+
+
+def troubled(result: CheckResult) -> bool:
+    """Есть ли в итоге «не прошла» или «ошибка стенда» — повод проверить, жива ли камера."""
+    bad = (Status.FAILED, Status.STAND_ERROR)
+    return result.status in bad or any(c.result.status in bad for c in result.children)
 
 
 def wait_reply(inbox, expected: str) -> str:
@@ -159,6 +188,7 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                     continue
             started = _now()
             outbox.put(("started", slot, check_id, started))
+            ctx.progress = lambda text, cid=check_id: outbox.put(("progress", slot, cid, text))
             result = run_check(spec, ctx)
             if spec.resources and check_id not in args.sync_checks:
                 outbox.put(("release", slot, check_id))
@@ -172,23 +202,11 @@ def worker_main(args: WorkerArgs, inbox, outbox, stop_event) -> None:
                 rejected_from_start = check_id == FIRST_CHECK and bool(
                     result.data.get(CREDENTIALS_REJECTED)
                 )
-            if (
-                was_reachable
-                and result.status in (Status.FAILED, Status.STAND_ERROR)
-                and liveness
-                and not camera_alive(args.camera)
-            ):
+            if was_reachable and troubled(result) and liveness and not camera_alive(args.camera):
                 # Решение директора 2026-11-03: камера, переставшая отвечать во время проверки, —
                 # сбой камеры или прошивки, задача программистам. Остальные её проверки после
                 # этого провести нельзя — они получают «ошибка стенда: нет связи».
-                failed = CheckResult(
-                    Status.FAILED,
-                    reason=LOST_DURING_CHECK,
-                    expected=result.expected,
-                    actual=f"{result.actual or result.reason}; камера перестала отвечать",
-                    evidence=result.evidence,
-                )
-                send_result(check_id, failed, started)
+                send_result(check_id, lost_during_check(spec, result), started)
                 lost()
                 return
             send_result(check_id, result, started)
