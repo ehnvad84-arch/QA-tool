@@ -4,7 +4,7 @@ import pytest
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.discovery import discover
-from qa_tool.drivers.camera.onvif_generic import OnvifCamera, stand_service_url
+from qa_tool.drivers.camera.onvif_generic import OnvifCamera
 from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, credentials_rejected
 from tests.mock_camera import start_fleet
 
@@ -100,32 +100,3 @@ def test_username_with_xml_characters_is_escaped():
 )
 def test_only_codes_decide_that_credentials_were_rejected(fault, rejected):
     assert credentials_rejected(fault) is rejected
-
-
-TUNNEL = Camera(slot=1, address="127.0.0.1", port=9114, username="a", lan_address="192.168.1.114")
-DIRECT = Camera(slot=1, address="192.168.1.10", port=80, username="a")
-
-
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("http://192.168.1.114/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),
-        ("http://192.168.1.114:80/onvif/a?b=1", "http://127.0.0.1:9114/onvif/a?b=1"),
-        ("http://127.0.0.1/onvif/Replay", "http://127.0.0.1:9114/onvif/Replay"),  # Dahua
-        ("http://10.9.9.9/onvif/Replay", None),
-        ("http://[1:2]/onvif/Replay", None),
-    ],
-)
-def test_service_of_camera_behind_tunnel(url, expected):
-    assert stand_service_url(TUNNEL, url) == expected
-
-
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("http://192.168.1.10:8000/onvif/a", "http://192.168.1.10:8000/onvif/a"),
-        ("http://192.168.1.114/onvif/a", None),
-    ],
-)
-def test_direct_camera_keeps_addresses_and_has_no_aliases(url, expected):
-    assert stand_service_url(DIRECT, url) == expected

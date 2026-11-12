@@ -105,7 +105,6 @@ def save_stand(stand: Stand, path: Path) -> None:
                 "username": c.username,
                 "vendor": c.vendor,
                 "name": c.name,
-                "lan_address": c.lan_address,
             }
             for c in stand.cameras
         ],

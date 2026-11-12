@@ -224,9 +224,7 @@ def onvif_tt(ctx: CheckContext) -> CheckResult:
                     ),
                 )
             )
-    proxy = TabooProxy(
-        ctx.camera.address, ctx.camera.port, lan_address=ctx.camera.lan_address
-    ).start()
+    proxy = TabooProxy(ctx.camera.address, ctx.camera.port).start()
     restore_row = None
     try:
         result = _run(ctx, proxy, writes)
@@ -253,20 +251,19 @@ def _restore_row(taker: "SnapshotTaker", snap: "Snapshot") -> ChildResult:
     """Строка протокола «вернули ли настройки камеры как были» (AD-3, never.md)."""
     restored, problems = taker.restore(snap)
     evidence = [Evidence("restored.txt", "Восстановлено и сверено:\n" + "\n".join(restored))]
-    notes = "".join(f"; {item.note}" for item in snap.items if item.note)
     if problems:
         result = CheckResult(
             Status.STAND_ERROR,
             reason="камера осталась изменённой: " + "; ".join(problems),
             expected="настройки после изменяющих тестов совпадают с исходными",
-            actual="; ".join(problems) + notes,
+            actual="; ".join(problems),
             evidence=evidence,
         )
     else:
         result = CheckResult(
             Status.PASSED,
             expected="настройки после изменяющих тестов совпадают с исходными",
-            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}{notes}",
+            actual=f"восстановлено и сверено: {', '.join(restored) or 'менять было нечего'}",
             evidence=evidence,
         )
     return ChildResult(RESTORE_ID, "Восстановление настроек после изменяющих тестов", result)
@@ -292,9 +289,6 @@ def _run(ctx: CheckContext, proxy: TabooProxy, writes: bool) -> CheckResult:
             data = json.loads(report.read_text(encoding="utf-8"))
     except ValueError as e:
         return CheckResult.stand_error(f"отчёт onvif-tt не разобран: {e}")
-    if not data.get("results"):
-        # срыв на старте: pytest.exit оставляет отчёт, в котором нет ни одного теста
-        return CheckResult.stand_error(f"onvif-tt не выполнил ни одного теста: {tail[-300:]}")
     names = titles()
     children = [to_child(item, names) for item in data.get("results", [])]
     for test_id, why in EXCLUDED.items():

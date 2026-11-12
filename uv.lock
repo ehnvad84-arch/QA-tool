@@ -760,14 +760,13 @@ wheels = [
 
 [[package]]
 name = "qa-tool"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "keyring" },
-    { name = "lxml" },
     { name = "onvif-tt" },
     { name = "openpyxl" },
     { name = "pyside6" },
@@ -791,7 +790,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "keyring", specifier = ">=25" },
-    { name = "lxml", specifier = ">=5" },
     { name = "onvif-tt", git = "https://github.com/OpenIPC/onvif-tt?rev=8866b251bc63a3c746ca3f9b6544bdfcfcfa90df" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pyside6", specifier = ">=6.8" },

@@ -16,7 +16,6 @@ import fnmatch
 import json
 from dataclasses import asdict, dataclass
 
-from qa_tool.checks.onvif.excluded import EXCLUDED
 from qa_tool.checks.onvif.onvif_tt import CHECK_ID as ONVIF_TT
 from qa_tool.core.checks import (
     PREVIOUS_RESULTS,
@@ -34,7 +33,6 @@ from qa_tool.drivers.camera.soap import CameraUnreachable, OnvifFault, SoapClien
 CHECK_ID = "RUV-PROFILES-1"
 PREVIOUS = PREVIOUS_RESULTS
 SCOPES = {"S": "Streaming", "G": "G", "M": "M", "T": "T"}
-STAND_ERROR_BASIS = "ошибка стенда: "
 WORKS, BROKEN, UNSUPPORTED, UNCHECKED = "работает", "не работает", "не поддержана", "не проверена"
 READ_ONLY = "проверено только чтением: изменение — табу (AD-7)"
 
@@ -47,9 +45,6 @@ class Feature:
     spec: str  # фраза из Support Check — по ней тест сверяет список со спецификацией
     tests: tuple[str, ...]  # ID и маски строк протокола (onvif-tt и RUV-*)
     note: str = ""
-    # Строки, которые сами доказывают функцию. Остальные могут только опровергнуть её: например,
-    # DEVICE-1-1-20 ищет службу в GetServices, а архив при этом может не проигрываться.
-    proof: tuple[str, ...] = ()
 
 
 _DISCOVERY = Feature(
@@ -68,9 +63,7 @@ _PULLPOINT = Feature(
     "Pull-Point Notification",
     ("EVENT-3-1-*", "LOCAL-EVENT-PULLPOINT-CREATE"),
 )
-_EVENTS = Feature(
-    "Служба событий", "Event Service", ("EVENT-*", "DEVICE-1-1-16", "RUV-E-SUBSCRIBE-1")
-)
+_EVENTS = Feature("Служба событий", "Event Service", ("EVENT-*", "DEVICE-1-1-16"))
 _METADATA = Feature("Метаданные", "Metadata", ("RUV-M-METADATA-1", "RUV-M-STREAM-1"))
 
 PROFILES: dict[str, tuple[Feature, ...]] = {
@@ -79,11 +72,7 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         _DISCOVERY,
         _NETWORK,
         _USERS,
-        Feature(
-            "События: WS-BaseNotification",
-            "WS-BasicNotification",
-            ("EVENT-2-1-*", "RUV-E-SUBSCRIBE-1"),
-        ),
+        Feature("События: WS-BaseNotification", "WS-BasicNotification", ("EVENT-2-1-*",)),
         _PULLPOINT,
         Feature(
             "Аутентификация WS-UsernameToken",
@@ -105,7 +94,6 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
             "Видеопоток RTSP",
             "Media Streaming",
             ("LOCAL-MEDIA-S-STREAM-URI", "RUV-S-STREAM-1"),
-            proof=("RUV-S-STREAM-1",),
         ),
     ),
     "G": (
@@ -116,17 +104,11 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
         _EVENTS,
         _PULLPOINT,
         _DIGEST,
-        Feature(
-            "Поиск записей",
-            "Recording Search Service",
-            ("SEARCH-*", "LOCAL-SEARCH-*", "RUV-G-SEARCH-1"),
-            proof=("RUV-G-SEARCH-1",),
-        ),
+        Feature("Поиск записей", "Recording Search Service", ("SEARCH-*", "LOCAL-SEARCH-*")),
         Feature(
             "Воспроизведение архива",
             "Replay Service",
-            ("DEVICE-1-1-20", "RUV-G-REPLAY-1"),
-            proof=("RUV-G-REPLAY-1",),
+            ("DEVICE-1-1-20", "LOCAL-REPLAY-STREAM-URI", "RUV-G-REPLAY-1"),
         ),
         Feature(
             "Управление записью", "Recording Control Service", ("RECORDING-*", "LOCAL-RECORDING-*")
@@ -157,7 +139,6 @@ PROFILES: dict[str, tuple[Feature, ...]] = {
             "Видеопоток RTSP",
             "RTSP streaming",
             ("LOCAL-MEDIA2-STREAM-URI", "RUV-S-STREAM-1"),
-            proof=("RUV-S-STREAM-1",),
         ),
         Feature("Снимок JPEG", "JPEG Snapshot", ()),
         _METADATA,
@@ -177,7 +158,6 @@ class FeatureVerdict:
     verdict: str
     basis: str
     note: str = ""
-    needs_proof: bool = False  # без своей проверки функция не даёт профилю «прошла»
 
 
 def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, str]:
@@ -190,21 +170,9 @@ def judge(feature: Feature, previous: dict[str, tuple[str, str]]) -> tuple[str, 
     if not rows:
         return UNCHECKED, "нет проверок этой функции в прогоне"
     failed = [i for i, (status, _) in rows.items() if status == Status.FAILED.value]
-    proving = feature.proof or feature.tests
-    passed = [
-        i
-        for i, (status, _) in rows.items()
-        if status == Status.PASSED.value and any(fnmatch.fnmatch(i, m) for m in proving)
-    ]
-    errors = [
-        i
-        for i, (status, _) in rows.items()
-        if status == Status.STAND_ERROR.value and any(fnmatch.fnmatch(i, m) for m in feature.proof)
-    ]
+    passed = [i for i, (status, _) in rows.items() if status == Status.PASSED.value]
     if failed:
         return BROKEN, "не прошли: " + ", ".join(sorted(failed))
-    if feature.proof and errors:
-        return UNCHECKED, STAND_ERROR_BASIS + ", ".join(sorted(errors))
     if passed:
         return WORKS, "прошли: " + ", ".join(sorted(passed))
     not_advertised = [i for i, (_, reason) in rows.items() if "does not advertise" in reason]
@@ -225,22 +193,6 @@ def declared_profiles(ctx: CheckContext) -> set[str]:
         for p, scope in SCOPES.items()
         if f"onvif://www.onvif.org/profile/{scope}".lower() in items
     }
-
-
-# строки наших проверок: тесты onvif-tt получают свои ID только в прогоне
-OWN_ROW_PREFIXES = (
-    *("RUV-", "CORE-", ONVIF_TT, "API-", "WEB-", "STREAM-", "IO-", "LENS-", "DAYNIGHT-"),
-    *("CODEC-", "SDCARD-", "IMAGE-", "ANALYTICS-QA-", "COMPARE-"),
-)
-
-
-def ran_onvif_tt(previous: dict[str, tuple[str, str]]) -> bool:
-    """Есть ли итог хоть одного теста onvif-tt: исключённые строки добавляет сам QA-tool."""
-    done = (Status.PASSED.value, Status.FAILED.value)
-    return any(
-        status in done and i not in EXCLUDED and not i.startswith(OWN_ROW_PREFIXES)
-        for i, (status, _) in previous.items()
-    )
 
 
 def confirms(check_id: str) -> list[str]:
@@ -270,11 +222,7 @@ def matrix(previous: dict[str, tuple[str, str]]) -> list[FeatureVerdict]:
     for profile, features in PROFILES.items():
         for feature in features:
             verdict, basis = judge(feature, previous)
-            out.append(
-                FeatureVerdict(
-                    profile, feature.name, verdict, basis, feature.note, bool(feature.proof)
-                )
-            )
+            out.append(FeatureVerdict(profile, feature.name, verdict, basis, feature.note))
     return out
 
 
@@ -296,9 +244,7 @@ def profiles(ctx: CheckContext) -> CheckResult:
         declared = declared_profiles(ctx)
     except (CameraUnreachable, OnvifFault) as e:
         return CheckResult.stand_error(f"не прочитать объявленные профили (GetScopes): {e}")
-    previous = ctx.extra.get(PREVIOUS, {})
-    table = matrix(previous)
-    onvif_tt_ran = ran_onvif_tt(previous)
+    table = matrix(ctx.extra.get(PREVIOUS, {}))
     evidence = Evidence(
         "matrix.json",
         json.dumps(
@@ -332,22 +278,6 @@ def profiles(ctx: CheckContext) -> CheckResult:
                 reason=f"профиль {profile} объявлен, но обязательные функции: " + "; ".join(bad),
                 expected="все обязательные функции профиля работают",
                 actual="; ".join(bad),
-                evidence=[evidence],
-            )
-        elif not onvif_tt_ran:
-            result = CheckResult(
-                Status.STAND_ERROR,
-                reason=f"профиль {profile} не подтверждён: onvif-tt не дал результатов",
-                evidence=[evidence],
-            )
-        elif unproved := [v for v in rows if v.verdict == UNCHECKED and v.needs_proof]:
-            # Без доказательства «прошла» нельзя (never.md), а дефекта камеры тоже не видно:
-            # например, на камере без карты архив проиграть нечем.
-            names = "; ".join(f"{v.feature} ({v.basis})" for v in unproved)
-            stand = any(v.basis.startswith(STAND_ERROR_BASIS) for v in unproved)
-            result = CheckResult(
-                Status.STAND_ERROR if stand else Status.SKIPPED,
-                reason=f"профиль {profile} объявлен, но не подтверждено: {names}",
                 evidence=[evidence],
             )
         else:

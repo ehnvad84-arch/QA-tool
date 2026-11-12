@@ -1,5 +1,9 @@
+import keyring
 import pytest
+from keyring.backend import KeyringBackend
+from keyring.errors import NoKeyringError
 
+from qa_tool.core import secrets
 from qa_tool.core.models import Camera, ConfigError
 from qa_tool.core.secrets import MASK, get_password, redact, set_password
 
@@ -89,3 +93,47 @@ def test_two_cameras_behind_one_address_keep_own_passwords():
 )
 def test_more_secret_forms_redacted(text):
     assert "abc123" not in redact(text)
+
+
+class NoStorage(KeyringBackend):
+    """Как Linux без Secret Service: любое обращение к хранилищу падает."""
+
+    priority = 1
+
+    def get_password(self, service, username):
+        raise NoKeyringError("нет хранилища")
+
+    def set_password(self, service, username, password):
+        raise NoKeyringError("нет хранилища")
+
+    def delete_password(self, service, username):
+        raise NoKeyringError("нет хранилища")
+
+
+@pytest.fixture
+def no_storage(memory_keyring):
+    keyring.set_keyring(NoStorage())
+    yield
+    secrets._session.clear()
+    keyring.set_keyring(memory_keyring)
+
+
+def test_without_storage_password_lives_in_memory_only(no_storage, tmp_path):
+    camera = Camera(slot=1, address="10.0.0.5", username="admin")
+    assert set_password(camera, "s3cret") is False
+    assert get_password(camera) == "s3cret"
+
+
+def test_without_storage_and_password_is_config_error(no_storage):
+    with pytest.raises(ConfigError, match="добавьте заново"):
+        get_password(Camera(slot=1, address="10.0.0.5", username="admin"))
+
+
+def test_storage_is_preferred_when_it_works(memory_keyring):
+    camera = Camera(slot=1, address="10.0.0.5", username="admin")
+    assert set_password(camera, "s3cret") is True
+    assert not secrets._session
+
+
+def test_password_in_command_line_form_is_redacted():
+    assert "s3cret" not in redact("onvif-tt --user admin --password=s3cret --host x")

@@ -102,14 +102,16 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor() -> int:
-    """Проверить установку: версия, ffmpeg и ffprobe, справка.
+    """Проверить установку: версия, ffmpeg и ffprobe, справка, шрифты окна.
 
     Returns:
         0 — всё на месте, 2 — чего-то не хватает.
     """
     import subprocess
 
+    from qa_tool.core.secrets import storage_name
     from qa_tool.gui.help_window import load_topics, manual_dir
+    from qa_tool.gui.theme import font_files_missing
     from qa_tool.tools import tool_path
 
     print(f"qa-tool {__version__}")
@@ -125,6 +127,10 @@ def cmd_doctor() -> int:
     topics = load_topics()
     print(f"справка: {manual_dir()} — разделов {len(topics)}")
     ok = ok and "index" in topics
+    print(f"хранилище паролей: {storage_name()}")
+    missing = font_files_missing()
+    print(f"шрифты окна: {'не хватает ' + ', '.join(missing) if missing else 'PT Sans, PT Mono'}")
+    ok = ok and not missing
     return EXIT_OK if ok else EXIT_STAND
 
 

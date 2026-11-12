@@ -202,12 +202,9 @@ class _Session:
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
-    def __init__(
-        self, metadata: bool = True, require_unsupported: bool = False, range_silent: bool = False
-    ):
+    def __init__(self, metadata: bool = True, require_unsupported: bool = False):
         self.metadata = metadata
         self.require_unsupported = require_unsupported
-        self.range_silent = range_silent  # PLAY с Range: 200 OK и ни одного кадра (как Dahua)
         self.headers: list[tuple[str, str, dict[str, str]]] = []  # метод, путь, заголовки
         video = test_video()
         self.frames, sps, pps = access_units(video) if video else ([], b"", b"")
@@ -311,8 +308,7 @@ class MockRtspServer:
                                 "Session: 1A2B3C\r\n"
                             )
                         elif method == "PLAY":
-                            if not (server.range_silent and "range" in headers):
-                                session = _Session(path, server.frames, write, dict(channels))
+                            session = _Session(path, server.frames, write, dict(channels))
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:
                             session.stop.set()

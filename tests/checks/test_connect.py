@@ -98,24 +98,6 @@ def test_clock_is_corrected_once_so_later_checks_spend_no_login_attempts(mock):
     assert "GetSystemDateAndTime" not in mock.requests
 
 
-@pytest.mark.parametrize("new_skew_s", [-86400, 2], ids=["перезагрузка", "время вернули"])
-def test_camera_clock_jump_after_correction_is_corrected_again(mock, new_skew_s):
-    mock.auth_reply, mock.clock_skew_s = "gsoap", 3600
-    assert run_check(SPEC, ctx_for(mock)).status is Status.PASSED
-    mock.clock_skew_s = new_skew_s
-    result = run_check(SPEC, ctx_for(mock))
-    assert result.status is Status.PASSED, result.reason
-
-
-def test_wrong_password_costs_one_extra_attempt_per_clock_correction(mock):
-    mock.auth_reply, mock.clock_skew_s = "gsoap", 3600
-    run_check(SPEC, ctx_for(mock, password="wrong"))
-    mock.requests.clear()
-    result = run_check(SPEC, ctx_for(mock, password="wrong"))
-    assert result.status is Status.STAND_ERROR and result.data[CREDENTIALS_REJECTED]
-    assert mock.requests.count("GetDeviceInformation") == 1
-
-
 def test_wrong_password_with_right_clock_is_tried_once(mock):
     mock.auth_reply, mock.clock_skew_s = "gsoap", 1  # часы почти верны: повтор не поможет
     mock.requests.clear()

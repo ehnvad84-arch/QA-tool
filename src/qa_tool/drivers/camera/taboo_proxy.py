@@ -20,8 +20,6 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, urlsplit
 
-from lxml import etree
-
 from qa_tool.core.taboo import TabooViolation
 from qa_tool.drivers.camera import http
 
@@ -65,7 +63,6 @@ class TabooProxy:
         camera_address: адрес камеры со стенда (IP или имя).
         camera_port: HTTP-порт камеры по умолчанию (ONVIF Device Service).
         timeout_s: сколько ждать ответа камеры на один запрос, с.
-        lan_address: адрес камеры в её сети, если стенд ходит через туннель (`Camera.lan_address`).
 
     `start()` — до первого запроса, `stop()` — после модуля. Потокобезопасен: список
     остановленных запросов `blocked` пополняется под блокировкой.
@@ -74,7 +71,6 @@ class TabooProxy:
     camera_address: str
     camera_port: int = 80
     timeout_s: float = DEFAULT_TIMEOUT_S
-    lan_address: str = ""
     blocked: list[Blocked] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _server: ThreadingHTTPServer | None = field(default=None, repr=False)
@@ -114,9 +110,7 @@ class TabooProxy:
         match = _PORT_PREFIX.match(path.split("?", 1)[0])
         if match:
             query = path[len(path.split("?", 1)[0]) :]
-            # за туннелем порт из ответа камеры выбирал бы службу на компьютере стенда
-            port = self.camera_port if self.lan_address else match.group(1)
-            return f"http://{self.camera_address}:{port}{match.group(2) or '/'}{query}"
+            return f"http://{self.camera_address}:{match.group(1)}{match.group(2) or '/'}{query}"
         return f"http://{self.camera_address}:{self.camera_port}{path}"
 
     def rewrite(self, text: str) -> str:
@@ -135,46 +129,6 @@ class TabooProxy:
         text = _HTTP_URL.sub(self._to_proxy, text)
         return _ADDRESS_FIELD.sub(foreign_in_field, text)
 
-    def hides_address(self, content: bytes) -> bool:
-        """Остался ли после подмены адрес мимо посредника, видимый клиенту после разбора XML.
-
-        Подмена работает по тексту, а клиент читает разобранный XML: CDATA, комментарии, ссылки
-        на символы и кодировка могут скрыть адрес от подмены, и клиент ушёл бы по нему с логином.
-        Поэтому разбираются исходящие байты и теми же настройками, что в zeep (`parse_xml` при
-        `strict=False`): битый XML клиент тоже прочтёт. Импортировать сам zeep здесь нельзя:
-        сетевые библиотеки закрыты тестом архитектуры (AD-7).
-
-        Args:
-            content: ответ в том виде, в каком он уйдёт клиенту.
-
-        Returns:
-            True — отдавать ответ нельзя. Сущности в DTD тоже считаются скрытием: zeep их
-            отвергает. Обычный DOCTYPE страницы ошибки веб-сервера — нет.
-        """
-        parser = etree.XMLParser(
-            remove_comments=True, resolve_entities=False, recover=True, huge_tree=True
-        )
-        try:
-            root = etree.fromstring(content, parser=parser)
-        except etree.XMLSyntaxError:
-            return False  # не XML: разбирать адреса клиенту не из чего
-        if root is None:
-            return False
-        dtd = root.getroottree().docinfo.internalDTD
-        if dtd is not None and any(True for _ in dtd.iterentities()):
-            return True
-        for element in root.iter("*"):
-            # не etree.QName: на необъявленном префиксе он бросает ValueError
-            if re.split("[}:]", element.tag)[-1] not in _ADDRESS_FIELDS:
-                continue
-            # только свой текст, как читает zeep: обход потомков квадратичен на вложенных полях
-            for word in (element.text or "").split():
-                if word.lower().startswith(("http:", "https:", "//")) and (
-                    not self._is_proxy_url(word)
-                ):
-                    return True
-        return False
-
     def rewrite_location(self, location: str) -> str:
         """Заменить адрес перенаправления: это всегда адрес, поэтому чужой хост — на отказ.
 
@@ -185,30 +139,18 @@ class TabooProxy:
         location = location.strip()
         if location.startswith("//"):
             location = f"http:{location}"
-        try:
-            rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
-            parts = urlsplit(rewritten)
-        except ValueError:  # неразбираемый адрес вроде http://[1:2]/
-            return f"{self.base_url}{_FOREIGN}/"
+        rewritten = _HTTP_URL.sub(self._to_foreign, _HTTP_URL.sub(self._to_proxy, location))
+        parts = urlsplit(rewritten)
         if (parts.scheme or parts.netloc) and not self._is_proxy_url(rewritten):
             return f"{self.base_url}{_FOREIGN}/"
         return rewritten
 
     def _is_proxy_url(self, url: str) -> bool:
         # не startswith: «http://посредник@чужой-хост/» начинается с адреса посредника
-        try:
-            return urlsplit(url).netloc == urlsplit(self.base_url).netloc
-        except ValueError:
-            return False
+        return urlsplit(url).netloc == urlsplit(self.base_url).netloc
 
     def _to_proxy(self, match: re.Match) -> str:
         scheme, host, port, path = match.group(1), match.group(2), match.group(3), match.group(4)
-        if self.lan_address and host.lower() in (
-            self.camera_address.lower(),
-            self.lan_address.lower(),
-        ):
-            # за туннелем доступен один порт, а порты из ответа камеры — её внутренние
-            return f"{self.base_url}{path or ''}"
         if host.lower() == self.camera_address.lower():
             target = int(port) if port else (443 if scheme.lower() == "https" else 80)
             return f"{self.base_url}/_port/{target}{path or ''}"
@@ -253,24 +195,11 @@ class TabooProxy:
                     return
                 content = response.content
                 content_type = response.headers.get("content-type", "")
-                if "multipart" in content_type.lower():
-                    # Части MTOM клиент делит по-своему, и каждая разница в разборе — это адрес
-                    # мимо посредника с логином (подтверждено на onvif-tt). Отказ надёжнее разбора.
-                    reason = "ответ multipart посредник не пропускает: адреса в нём не проверить"
-                    proxy._block(self.command, self.path, reason)
-                    self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
-                    return
                 if any(t in content_type for t in ("xml", "soap", "json", "html", "text")):
                     charset = response.encoding or "utf-8"
                     # U+FFFD от битых байт однобайтовая кодировка обратно не примет
                     text = proxy.rewrite(content.decode(charset, "replace"))
                     content = text.encode(charset, "replace")
-                # проверяем любой ответ: клиент разбирает его и при чужом Content-Type
-                if proxy.hides_address(content):
-                    reason = "адрес службы скрыт от подмены: клиент ушёл бы мимо посредника"
-                    proxy._block(self.command, self.path, reason)
-                    self._reply(502, soap_fault("ter:QAToolForeignHost", reason))
-                    return
                 if "location" in response.headers:
                     location = response.headers["location"]
                     response.headers["location"] = proxy.rewrite_location(location)
@@ -305,4 +234,3 @@ _HTTP_URL = re.compile(
 )
 # поля, где ONVIF передаёт адреса служб: <tt:XAddr>, <d:XAddrs>, <wsa:Address>, <tt:Uri>
 _ADDRESS_FIELD = re.compile(r"(<(?:[\w.-]+:)?(XAddrs?|Address|Uri)\b[^>]*>)([^<]*)(</)")
-_ADDRESS_FIELDS = {"XAddr", "XAddrs", "Address", "Uri"}

@@ -1,7 +1,7 @@
 """Общий ONVIF-драйвер: годится для любой камеры, своей и конкурента (AD-4)."""
 
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from qa_tool.core.models import Camera
 from qa_tool.drivers.camera.soap import NS, SoapClient
@@ -34,24 +34,6 @@ SERVICE_KEYS = {
 }
 
 
-def stand_service_url(camera: Camera, url: str) -> str | None:
-    """Адрес службы, по которому до неё дойдёт стенд; None — служба на чужом хосте.
-
-    Камера за туннелем называет службы своим внутренним адресом, а Dahua — хостом из запроса,
-    но без порта. Оба варианта ведут на проброшенный порт: без этого запрос с логином ушёл бы
-    на порт 80 компьютера стенда.
-    """
-    try:
-        parts = urlsplit(url)
-        host = parts.hostname
-    except ValueError:  # адрес от камеры, разобрать нельзя: на такой идти нельзя
-        return None
-    aliases = (camera.address.lower(), camera.lan_address.lower())
-    if camera.lan_address and host in aliases:
-        return urlunsplit(parts._replace(scheme="http", netloc=f"{camera.address}:{camera.port}"))
-    return url if host == camera.address.lower() else None
-
-
 def service_urls(
     soap: SoapClient, camera: Camera, foreign: list[str] | None = None
 ) -> dict[str, str]:
@@ -77,9 +59,8 @@ def service_urls(
         key = SERVICE_KEYS.get(namespace.strip())
         if not key or key == "device":
             continue
-        reachable = stand_service_url(camera, url)
-        if reachable:
-            out[key] = reachable
+        if urlsplit(url).hostname == camera.address:
+            out[key] = url
         elif foreign is not None:
             foreign.append(key)
     return out

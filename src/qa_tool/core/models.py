@@ -35,17 +35,12 @@ class Camera:
     rtsp_port: int = 554
     vendor: str = "generic"
     name: str = ""
-    # Адрес камеры в её собственной сети, если стенд ходит к ней через туннель или NAT: камера
-    # называет им свои службы. Только псевдоним для разбора ответов, соединений на него нет.
-    lan_address: str = ""
 
     def __post_init__(self) -> None:
         if not 1 <= self.slot <= MAX_SLOTS:
             raise ConfigError(f"Место {self.slot}: допустимы места 1–{MAX_SLOTS}")
         if not self.address:
             raise ConfigError(f"Место {self.slot}: не указан адрес камеры")
-        if set(self.lan_address) & set("/@ :\\"):
-            raise ConfigError(f"Место {self.slot}: адрес за туннелем — только IPv4 или имя хоста")
 
 
 @dataclass
