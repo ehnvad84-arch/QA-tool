@@ -3,7 +3,7 @@ from datetime import datetime
 from qa_tool.core.models import Camera, Scenario
 from qa_tool.core.scheduler import Event, Runner
 from qa_tool.core.worker import LOST_DURING_CHECK, STOPPED
-from qa_tool.gui.run_view import Dot, RunView, plural
+from qa_tool.gui.run_view import Dot, RunView, Step, plural
 from tests.core.test_scheduler import REF, fleet, make_stand  # noqa: F401 — фикстура fleet
 
 AT = datetime(2026, 11, 4, 9, 12)
@@ -203,3 +203,8 @@ def test_aborted_run_leaves_nothing_looking_alive():
     view.abort("нет места на диске")
     assert slot.dot == Dot.STAND and slot.summary == "ошибка стенда: нет места на диске"
     assert slot.steps[0].state == "ошибка стенда"
+
+
+def test_api_step_counts_operations():
+    step = Step("09:12", "API-RUVER-1", "API «Рувер»", parts=["прошла"] * 300)
+    assert step.label == "API «Рувер»: 300 операций"

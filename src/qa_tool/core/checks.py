@@ -121,6 +121,8 @@ class CheckContext:
     # галочки сценария: составным проверкам (onvif-tt) решать, что из своего запускать
     allow_writes: bool = False
     allow_destructive: bool = False
+    # долгая составная проверка спрашивает здесь: остановка не снимает её посреди записи
+    stop_requested: Callable[[], bool] = lambda: False
 
 
 CheckFunc = Callable[[CheckContext], CheckResult]

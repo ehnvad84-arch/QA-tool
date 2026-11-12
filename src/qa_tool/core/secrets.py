@@ -74,7 +74,10 @@ def get_password(camera: Camera) -> str:
 _PATTERNS = [
     # HTTP-заголовки целиком до конца строки
     (
-        re.compile(r"(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*).+$"),
+        re.compile(
+            r"(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie|x-session-id)"
+            r"\s*:\s*).+$"
+        ),
         rf"\g<1>{MASK}",
     ),
     # WS-Security UsernameToken: <wsse:Password ...>…</wsse:Password>
