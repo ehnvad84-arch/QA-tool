@@ -208,7 +208,45 @@ def test_image_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):
     assert item.data(1, Qt.ItemDataRole.UserRole) == "image"
     assert "Без этой галочки" in item.toolTip(0)
     item.setCheckState(0, Qt.CheckState.Unchecked)
-    assert not note.isVisibleTo(window)
+    assert "«Картинка»" not in note.text()
+
+
+def test_codec_note_follows_writes_checkbox_and_sits_in_its_group(qtbot, tmp_path, fleet):
+    window = make_window(qtbot, tmp_path, fleet[:1])
+    scenario = screen(window, ScenarioScreen)
+    window.menu.setCurrentRow(2)
+    note = scenario.writes_note
+    assert "Без этой галочки «Кодеки» только прочитают" in note.text()
+    assert "«Кодеки» — текущие настройки кодировщиков" in scenario.allow_writes.toolTip()
+    scenario.allow_writes.setChecked(True)
+    assert "«Кодеки» будут менять кодек и битрейт" in note.text()
+    item = next(
+        i
+        for i in scenario._check_items()
+        if i.data(0, Qt.ItemDataRole.UserRole) == "CODEC-QUALITY-1"
+    )
+    assert item.parent().text(0) == "Качество сжатия"
+    assert item.data(1, Qt.ItemDataRole.UserRole) == "codec"
+
+
+def test_protocols_screen_lists_codec_comparison(qtbot, tmp_path, fleet):
+    from qa_tool.gui.screens.protocols import CODEC_COMPARE, ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
+    window.run_block.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+    run_dir = window.run_control.last_store.run_dir
+    (run_dir / f"{CODEC_COMPARE}.html").write_text("<p>сравнение</p>", encoding="utf-8")
+    (run_dir / "compare").mkdir(exist_ok=True)
+    (run_dir / "compare" / "codec_1.png").write_bytes(b"")
+    protocols = screen(window, ProtocolsScreen)
+    window.menu.setCurrentRow(4)
+    protocols.refresh()
+    assert protocols.docs_table.item(1, 0).text() == "Сравнение кодеков"
+    assert protocols.docs_table.item(1, 2).text() == "разрешений и кодеков 1, камер 2"
+    assert "Кривые качества" in protocols.docs_table.item(1, 0).toolTip()
+    protocols.docs_table.selectRow(1)
+    assert protocols.open_selected("html") == run_dir / f"{CODEC_COMPARE}.html"
 
 
 def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):

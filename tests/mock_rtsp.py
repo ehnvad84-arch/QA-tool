@@ -2,7 +2,8 @@
 
 Видео — H.264, сгенерированный один раз встроенным ffmpeg (OpenH264) и закешированный;
 отдаётся по RTP поверх TCP (interleaved, RFC 2326 §10.12), упаковка — RFC 6184 (одиночные
-NAL и FU-A). Пути: `/live` — видео по кругу и, если `metadata`, вторая дорожка с XML
+NAL и FU-A). Для проверки кодеков камера может отдавать поток по своим текущим настройкам
+кодировщика (`video`): H.264 или H.265 (упаковка RFC 7798) с заданным битрейтом. Пути: `/live` — видео по кругу и, если `metadata`, вторая дорожка с XML
 MetadataStream раз в 0,5 с (ONVIF Streaming, vnd.onvif.metadata — так отдают метаданные камеры
 Profile M); `/metadata` — только метаданные; `/replay/<запись>` — 12 с и тишина, как конец
 архива, с расширением RTP архива ONVIF (время кадра, признак ключевого кадра). Канал interleaved
@@ -148,35 +149,171 @@ def imaging_video(picture: dict[str, float]) -> bytes | None:
     return path.read_bytes()
 
 
+H264_AUD, H264_SETS = 9, (7, 8)
+H265_AUD, H265_SETS = 35, (32, 33, 34)  # VPS, SPS, PPS
+H265_FU = 49
+CODEC_SECONDS = 4  # ролик кодека: выборка проверки — 2 группы кадров по 1 с, с запасом
+
+
+@functools.cache
+def _hevc_encoder(ffmpeg: str) -> tuple[str, ...] | None:
+    """libx265 системного ffmpeg или libkvazaar сборки программы; None — H.265 не собрать."""
+    listed = subprocess.run(
+        [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False
+    ).stdout
+    if "libx265" in listed:
+        params = f"bframes=0:keyint={FPS}:min-keyint={FPS}:scenecut=0:log-level=error"
+        return ("-c:v", "libx265", "-x265-params", params)
+    if "libkvazaar" in listed:
+        return ("-c:v", "libkvazaar", "-kvazaar-params", f"gop=0,period={FPS}")
+    return None
+
+
+def hevc_available() -> bool:
+    """Можно ли собрать ролик H.265 для mock-камеры (для `skipif` тестов H.265)."""
+    ffmpeg = find_ffmpeg()
+    return ffmpeg is not None and _hevc_encoder(ffmpeg) is not None
+
+
+def _filler(h265: bool, size: int) -> bytes:
+    """NAL «заполнитель» (H.264 тип 12, H.265 тип 38): декодер его пропускает, байты — идут."""
+    header = bytes([38 << 1, 1]) if h265 else bytes([12])
+    return b"\x00\x00\x00\x01" + header + b"\xff" * max(0, size - len(header) - 5) + b"\x80"
+
+
+def pad_to_bitrate(stream: bytes, h265: bool, kbps: float) -> bytes:
+    """Добить каждую секунду ролика заполнителем до `kbps`: так камера держит постоянный
+    битрейт, когда сцене столько не нужно. Секунда, которая и так больше, не трогается."""
+    frames, _sets = coded_frames(stream, h265)
+    # AUD с типом кадра «любые срезы»: заполнитель не меняет границ кадров
+    aud = bytes([H265_AUD << 1, 1, 0x50]) if h265 else bytes([H264_AUD, 0xF0])
+    per_second = int(kbps * 1000 / 8)
+    out = bytearray()
+    for start in range(0, len(frames), FPS):
+        group = frames[start : start + FPS]
+        size = sum(4 + len(nal) for frame in group for nal in frame)
+        extra = max(0, per_second * len(group) // FPS - size)
+        for frame in group:
+            out += b"\x00\x00\x00\x01" + aud
+            out += b"".join(b"\x00\x00\x00\x01" + nal for nal in frame)
+            if extra:
+                out += _filler(h265, extra // len(group))
+    return bytes(out)
+
+
+def _encode(ffmpeg: str, codec: str, kbps: float, path: Path) -> bool:
+    """Ролик неподвижной сцены с лёгким шумом сенсора, сжатый на `kbps`; False — нет кодировщика.
+
+    Сцена неподвижна, как цветовой бокс стенда: выборки в разное время сравнимы кадр к кадру.
+    """
+    h265 = codec == "H265"
+    encoder = _hevc_encoder(ffmpeg) if h265 else _h264_encoder(ffmpeg)
+    if encoder is None:
+        return False
+    rate = f"{max(16, round(kbps))}k"
+    chain = [f"loop=loop={CODEC_SECONDS * FPS - 1}:size=1:start=0", "noise=alls=3:allf=t"]
+    limits = [] if "libkvazaar" in encoder else ["-maxrate", rate, "-bufsize", rate]
+    if "libopenh264" in encoder:
+        limits = ["-rc_mode", "bitrate", "-maxrate", rate]
+    bsf = "hevc_metadata=aud=insert" if h265 else "h264_metadata=aud=insert"
+    subprocess.run(
+        [ffmpeg, "-loglevel", "error", "-y", "-f", "lavfi"]
+        + ["-i", f"testsrc2=size={WIDTH}x{HEIGHT}:rate={FPS}:duration=0.1"]
+        + ["-vf", ",".join(chain), *encoder, "-b:v", rate, *limits, "-g", str(FPS)]
+        + ["-bsf:v", bsf, "-f", "hevc" if h265 else "h264", str(path)],
+        check=True,
+        timeout=120,
+    )
+    return True
+
+
+def codec_video(codec: str, kbps: float, quality_kbps: float | None = None) -> bytes | None:
+    """Ролик кодировщика: `codec` (H264, H265) с битрейтом потока `kbps`, кбит/с.
+
+    Args:
+        codec: H264 или H265.
+        kbps: битрейт, который покажет поток: недобор сцены добивается заполнителем.
+        quality_kbps: на каком битрейте на самом деле сжата картинка; None — `kbps`. Меньше
+            `kbps` — неисправность «качество не растёт»: байты есть, деталей нет.
+
+    Returns:
+        Annex-B с AUD перед каждым кадром; None — нет ffmpeg или кодировщика H.265.
+    """
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return None
+    quality = kbps if quality_kbps is None else quality_kbps
+    key = hashlib.sha1(f"{codec}:{kbps:.0f}:{quality:.0f}:{ffmpeg}".encode()).hexdigest()[:12]
+    path = CACHE / f"codec-{key}.{codec.lower()}"
+    if path.exists():
+        return path.read_bytes()
+    CACHE.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.part")
+    target = quality
+    try:
+        # кодировщики промахиваются по битрейту на 10–70 %: перебор снижает цель, пока ролик
+        # не уложится, недобор закрывает заполнитель
+        for _attempt in range(4):
+            if not _encode(ffmpeg, codec, target, tmp):
+                return None
+            made = tmp.stat().st_size * 8 / 1000 / CODEC_SECONDS
+            if made <= quality * 1.03:
+                break
+            target *= quality / made * 0.97
+        tmp.write_bytes(pad_to_bitrate(tmp.read_bytes(), codec == "H265", kbps))
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path.read_bytes()
+
+
 def split_nals(stream: bytes) -> list[bytes]:
     parts = stream.replace(b"\x00\x00\x00\x01", b"\x00\x00\x01").split(b"\x00\x00\x01")
     return [p for p in parts if p]
 
 
-def access_units(stream: bytes) -> tuple[list[list[bytes]], bytes, bytes]:
-    """Кадры (списки NAL без AUD), SPS и PPS."""
-    frames, current, sps, pps = [], [], b"", b""
+def nal_type(nal: bytes, h265: bool = False) -> int:
+    """Тип NAL: в H.265 он в битах 1–6 первого байта заголовка (RFC 7798 §1.1.4)."""
+    return (nal[0] >> 1) & 0x3F if h265 else nal[0] & 0x1F
+
+
+def coded_frames(stream: bytes, h265: bool = False) -> tuple[list[list[bytes]], list[bytes]]:
+    """Кадры (списки NAL без AUD) и наборы параметров в порядке SDP: VPS, SPS, PPS."""
+    aud, kinds = (H265_AUD, H265_SETS) if h265 else (H264_AUD, H264_SETS)
+    frames: list[list[bytes]] = []
+    current: list[bytes] = []
+    sets: dict[int, bytes] = {}
     for nal in split_nals(stream):
-        kind = nal[0] & 0x1F
-        if kind == 9:  # AUD — начало нового кадра
+        kind = nal_type(nal, h265)
+        if kind == aud:  # AUD — начало нового кадра
             if current:
                 frames.append(current)
             current = []
             continue
-        if kind == 7:
-            sps = sps or nal
-        elif kind == 8:
-            pps = pps or nal
+        if kind in kinds:
+            sets.setdefault(kind, nal)
         current.append(nal)
     if current:
         frames.append(current)
-    return frames, sps, pps
+    return frames, [sets[k] for k in kinds if k in sets]
 
 
-def rtp_packets(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
-    """Полезная нагрузка RTP для одного NAL: целиком или кусками FU-A (RFC 6184 §5.8)."""
+def access_units(stream: bytes) -> tuple[list[list[bytes]], bytes, bytes]:
+    """Кадры H.264 (списки NAL без AUD), SPS и PPS."""
+    frames, _sets = coded_frames(stream)
+    first: dict[int, bytes] = {}
+    for nal in (n for f in frames for n in f):
+        first.setdefault(nal_type(nal), nal)
+    return frames, first.get(7, b""), first.get(8, b"")
+
+
+def rtp_packets(nal: bytes, last_in_frame: bool, h265: bool = False) -> list[tuple[bytes, bool]]:
+    """Полезная нагрузка RTP для одного NAL: целиком или кусками FU-A (RFC 6184 §5.8),
+    у H.265 — кусками FU (RFC 7798 §4.4.3)."""
     if len(nal) <= MTU_PAYLOAD:
         return [(nal, last_in_frame)]
+    if h265:
+        return _h265_fragments(nal, last_in_frame)
     header, body = nal[0], nal[1:]
     indicator = (header & 0xE0) | 28
     chunks = [body[i : i + MTU_PAYLOAD - 2] for i in range(0, len(body), MTU_PAYLOAD - 2)]
@@ -185,6 +322,20 @@ def rtp_packets(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
         start, end = i == 0, i == len(chunks) - 1
         fu_header = (0x80 if start else 0) | (0x40 if end else 0) | (header & 0x1F)
         out.append((bytes([indicator, fu_header]) + chunk, last_in_frame and end))
+    return out
+
+
+def _h265_fragments(nal: bytes, last_in_frame: bool) -> list[tuple[bytes, bool]]:
+    # заголовок FU — двухбайтный заголовок NAL с типом 49; слои и TID — от исходного NAL
+    payload_header = bytes([(nal[0] & 0x81) | (H265_FU << 1), nal[1]])
+    kind, body = nal_type(nal, True), nal[2:]
+    size = MTU_PAYLOAD - 3
+    chunks = [body[i : i + size] for i in range(0, len(body), size)]
+    out = []
+    for i, chunk in enumerate(chunks):
+        start, end = i == 0, i == len(chunks) - 1
+        fu_header = (0x80 if start else 0) | (0x40 if end else 0) | kind
+        out.append((payload_header + bytes([fu_header]) + chunk, last_in_frame and end))
     return out
 
 
@@ -206,8 +357,11 @@ class StreamFault:
 
 
 class _Session:
-    def __init__(self, path: str, frames, write, channels: dict[str, int], server, hang_up):
+    def __init__(
+        self, path: str, frames, write, channels: dict[str, int], server, hang_up, h265=False
+    ):
         self.path, self.frames, self.write = path, frames, write
+        self.h265 = h265
         self.server, self.hang_up = server, hang_up
         self.fault = server.faults.get(path, StreamFault())
         self.packets_made = 0
@@ -290,7 +444,7 @@ class _Session:
             skipped = fault.drop_every and (shown + 1) % fault.drop_every == 0
             if shown % fault.send_every == 0 and not skipped:
                 for n, nal in enumerate(frame):
-                    for payload, marker in rtp_packets(nal, n == len(frame) - 1):
+                    for payload, marker in rtp_packets(nal, n == len(frame) - 1, self.h265):
                         self._send("video", payload, marker, timestamp, 96, ext)
             index += 1
             shown += 1
@@ -318,6 +472,26 @@ class _Session:
             self.stop.wait(0.5)
 
 
+@dataclass
+class _Encoded:
+    """Поток кодировщика, выданный на DESCRIBE: им же идёт PLAY этого соединения."""
+
+    codec: str
+    frames: list[list[bytes]]
+    fmtp: str
+
+    @classmethod
+    def of(cls, codec: str, stream: bytes) -> "_Encoded":
+        h265 = codec == "H265"
+        frames, sets = coded_frames(stream, h265)
+        coded = [base64.b64encode(x).decode() for x in sets]
+        if h265 and len(coded) == 3:
+            fmtp = f"sprop-vps={coded[0]};sprop-sps={coded[1]};sprop-pps={coded[2]}"
+        else:
+            fmtp = f"packetization-mode=1;sprop-parameter-sets={','.join(coded)}"
+        return cls(codec, frames, fmtp)
+
+
 class MockRtspServer:
     """RTSP-сервер на 127.0.0.1; без ffmpeg отвечает только на OPTIONS (как раньше)."""
 
@@ -342,9 +516,13 @@ class MockRtspServer:
         first_frame_delay_s: float = 0.0,
         range_silent: bool = False,
         picture: Callable[[], bytes | None] | None = None,
+        video: Callable[[str], tuple[str, bytes] | None] | None = None,
     ):
         self.metadata = metadata
         self.picture = picture  # видео по текущим настройкам картинки; None — общее тестовое
+        # путь → (кодек, Annex-B) по текущим настройкам кодировщика; спрашивается на DESCRIBE,
+        # как камера, которая после смены кодека отдаёт новый SDP
+        self.video = video
         self.reject_password = reject_password  # 401 на любой пароль
         self.password_tries = 0  # сколько запросов пришло с отвергнутым паролем
         self.silent_teardown = silent_teardown  # видео идёт, на TEARDOWN ответа нет
@@ -399,11 +577,14 @@ class MockRtspServer:
             return ["metadata"]
         return ["video", "metadata"] if path.startswith("/live") and self.metadata else ["video"]
 
-    def sdp(self, path: str) -> str:
+    def sdp(self, path: str, own: "_Encoded | None" = None) -> str:
         media = ""
         for n, kind in enumerate(self.tracks(path), start=1):
             if kind == "metadata":
                 media += "m=application 0 RTP/AVP 107\r\na=rtpmap:107 vnd.onvif.metadata/90000\r\n"
+            elif own is not None:
+                media += f"m=video 0 RTP/AVP 96\r\na=rtpmap:96 {own.codec}/90000\r\n"
+                media += f"a=fmtp:96 {own.fmtp}\r\n"
             else:
                 media += (
                     "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
@@ -421,6 +602,7 @@ class MockRtspServer:
             def handle(self):
                 lock = threading.Lock()
                 session: _Session | None = None
+                own: _Encoded | None = None  # поток кодировщика этого соединения
                 udp_target: tuple[str, int] | None = None
                 channels: dict[str, int] = {}
 
@@ -516,14 +698,16 @@ class MockRtspServer:
                         if method == "OPTIONS":
                             extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n"
                         elif method == "DESCRIBE" and server.frames:
-                            body = server.sdp(path)
+                            made = server.video(path) if server.video else None
+                            own = _Encoded.of(*made) if made else None
+                            body = server.sdp(path, own)
                             extra = f"Content-Type: application/sdp\r\nContent-Base: {url}/\r\n"
                         elif method == "SETUP":
                             transport = headers.get("transport", "")
                             if "client_port=" in transport and server.udp:
                                 ports = transport.split("client_port=")[1].split(";")[0]
                                 udp_target = ("127.0.0.1", int(ports.split("-")[0]))
-                                own = server.udp_socket.getsockname()[1]
+                                port = server.udp_socket.getsockname()[1]
                                 lease = (
                                     f";timeout={server.session_timeout}"
                                     if server.session_timeout
@@ -533,7 +717,7 @@ class MockRtspServer:
                                     f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n"
                                     f"Session: 1A2B3C{lease}\r\n"
                                     f"Transport: RTP/AVP;unicast;client_port={ports};"
-                                    f"server_port={own}-{own + 1}\r\n\r\n".encode()
+                                    f"server_port={port}-{port + 1}\r\n\r\n".encode()
                                 )
                                 channels["video"] = 0
                                 continue
@@ -563,6 +747,8 @@ class MockRtspServer:
                             drawn = server.picture() if server.picture and frames else None
                             if drawn:
                                 frames = access_units(drawn)[0]
+                            if own is not None and frames:
+                                frames = own.frames
                             with server.play_lock:
                                 full = server.max_plays and server.playing >= server.max_plays
                                 server.playing += 0 if full else 1
@@ -571,7 +757,10 @@ class MockRtspServer:
                                     f"RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: {cseq}\r\n\r\n".encode()
                                 )
                                 continue
-                            session = _Session(path, frames, write, dict(channels), server, hang_up)
+                            h265 = own is not None and own.codec == "H265"
+                            session = _Session(
+                                path, frames, write, dict(channels), server, hang_up, h265
+                            )
                             session.udp_target = udp_target
                             extra = "Session: 1A2B3C\r\nRange: npt=0.000-\r\n"
                         elif method == "TEARDOWN" and session:

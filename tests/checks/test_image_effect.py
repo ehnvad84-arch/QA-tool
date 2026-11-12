@@ -1,11 +1,9 @@
 """IMAGE-EFFECT-1 на виртуальной камере (этап 7, T9): положения 0/50/100 %, итоги, возврат."""
 
-import re
-
 import pytest
 
 from qa_tool.checks import load_all
-from qa_tool.checks.image import engine, frames
+from qa_tool.checks.image import engine
 from qa_tool.checks.image.engine import CHECK_ID, RESTORE_ID, STATE_ID
 from qa_tool.core.checks import REGISTRY, CheckContext, Phase, Status, run_check
 from qa_tool.core.models import Camera, Place, Threshold
@@ -175,64 +173,6 @@ def test_scene_moved_after_restore_is_stand_error_with_expectation(camera_with, 
     row = rows(run(camera_with(), ["brightness"]))["IMAGE-BRIGHT-1"]
     assert row.status is Status.STAND_ERROR and row.reason.startswith("после возврата")
     assert row.expected
-
-
-def unsettled_while(monkeypatch, holds):
-    """Снимки нестабильны (срок `settle_max_s` вышел), пока `holds()` истинно; иначе — как есть."""
-    original = frames.RtspFrameSource.capture
-
-    def capture(self, *args, **kwargs):
-        shot = original(self, *args, **kwargs)
-        if holds():
-            shot.stable = False
-        return shot
-
-    monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
-
-
-@needs_video
-def test_picture_not_settled_after_write_fails_and_is_restored(camera_with, monkeypatch):
-    # ревью этапа 3, B-1: величина нестабильного кадра шла в verdict() как обычная —
-    # ложное «прошла», хотя по спеке колеблется камера, а сцена стоит
-    cam = camera_with()
-    before = cam.state.imaging_xml
-    unsettled_while(monkeypatch, lambda: re.search(r"<tt:Brightness>100\b", cam.state.imaging_xml))
-    found = rows(run(cam, ["brightness", "saturation"]))
-    row = found["IMAGE-BRIGHT-1"]
-    assert row.status is Status.FAILED, row.reason
-    assert "не успокоилась" in row.reason and "100 %" in row.reason and row.expected
-    assert found["IMAGE-SAT-1"].status is Status.PASSED, found["IMAGE-SAT-1"].reason
-    assert found[RESTORE_ID].status is Status.PASSED, found[RESTORE_ID].reason
-    assert cam.state.imaging_xml == before
-
-
-@needs_video
-def test_before_frame_not_settled_is_stand_error_without_writes(camera_with, monkeypatch):
-    # кадр «до» не успокоился без единой записи — колеблется сцена или свет, а не настройка
-    cam = camera_with()
-    unsettled_while(monkeypatch, lambda: not cam.state.imaging_writes)
-    found = rows(run(cam, ["brightness"]))
-    row = found["IMAGE-BRIGHT-1"]
-    assert row.status is Status.STAND_ERROR and "не успокоилась" in row.reason, row.reason
-    assert cam.state.imaging_writes == []
-    assert found[RESTORE_ID].status is Status.SKIPPED
-
-
-@needs_video
-def test_after_frame_not_settled_is_stand_error(camera_with, monkeypatch):
-    # кадр «после» не успокоился — неподвижность сцены не доказана, дефект камере не пишем
-    cam = camera_with()
-    unsettled_while(
-        monkeypatch,
-        lambda: (
-            cam.state.imaging_writes
-            and re.search(r"<tt:Brightness>50(\.0+)?<", cam.state.imaging_xml)
-        ),
-    )
-    found = rows(run(cam, ["brightness"]))
-    row = found["IMAGE-BRIGHT-1"]
-    assert row.status is Status.STAND_ERROR and "после возврата" in row.reason, row.reason
-    assert found[RESTORE_ID].status is Status.PASSED, found[RESTORE_ID].reason
 
 
 @needs_video

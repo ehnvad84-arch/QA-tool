@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from qa_tool.core.store import RunStore
+from qa_tool.report.codec_compare import build_codec_compare, publish_codec_compare
 from qa_tool.report.html import render_protocol, render_summary, write_html
 from qa_tool.report.image_compare import build_image_compare, publish_image_compare
 from qa_tool.report.model import build_summary
@@ -11,7 +12,7 @@ from qa_tool.report.xlsx import write_protocol_xlsx, write_summary_xlsx
 
 
 def publish(store: RunStore) -> list[Path]:
-    """Выпустить протоколы всех камер, сводку и, если есть, сравнение картинки в папку прогона.
+    """Выпустить протоколы всех камер, сводку и, если есть, сравнения картинки и кодеков.
 
     Returns:
         Пути записанных файлов.
@@ -23,6 +24,10 @@ def publish(store: RunStore) -> list[Path]:
     if compare is not None:
         written += publish_image_compare(compare, out)
         summary.image_compare = True
+    codecs = build_codec_compare(summary, out)
+    if codecs is not None:
+        written += publish_codec_compare(codecs, out)
+        summary.codec_compare = True
     for p in summary.protocols:
         html = render_protocol(p)
         written += [

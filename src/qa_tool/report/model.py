@@ -8,6 +8,8 @@ from qa_tool.core.checks import Status
 from qa_tool.core.models import Place
 from qa_tool.core.secrets import redact
 from qa_tool.core.store import RunStore
+from qa_tool.report.codec import CodecAppendix, build_codec_appendix
+from qa_tool.report.codec_history import attach_history
 from qa_tool.report.image import ImageAppendix, build_image_appendix
 
 MODULE_TITLES = {
@@ -84,6 +86,17 @@ class Protocol:
     camera_name: str = field(default="")
     profiles: dict = field(default_factory=dict)  # матрица RUV-PROFILES-1: declared, matrix
     image: ImageAppendix | None = None  # Приложение 1 «Картинка»; None — строк IMAGE-* нет
+    codec: CodecAppendix | None = None  # «Кодеки» — после «Картинки»; None — строк CODEC-* нет
+
+    @property
+    def appendices(self) -> list[tuple[int, str]]:
+        """Выпущенные приложения по порядку: номер и название — для строки «Приложения»."""
+        found = []
+        if self.image:
+            found.append((1, "Картинка: снимки и замеры"))
+        if self.codec:
+            found.append((self.codec.number, "Кодеки: качество на битрейт"))
+        return found
 
 
 def _threshold(row) -> str:
@@ -183,6 +196,11 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
     for row in rows:
         modules.setdefault(row.module, []).append(row.status)
     text, kind = verdict(counts)
+    allowed = bool(scenario.get("allow_writes"))
+    image = build_image_appendix(rows, store.run_dir, allowed)
+    codec = build_codec_appendix(rows, store.run_dir, allowed, 2 if image else 1)
+    if codec is not None:
+        attach_history(codec, store.run_dir, passport)
     return Protocol(
         protocol_id=store.protocol_id(slot),
         run_id=store.run_id,
@@ -203,7 +221,8 @@ def build_protocol(store: RunStore, slot: int) -> Protocol:
         verdict_kind=kind,
         camera_name=model,
         profiles=_profiles_matrix(store, rows),
-        image=build_image_appendix(rows, store.run_dir, bool(scenario.get("allow_writes"))),
+        image=image,
+        codec=codec,
     )
 
 
@@ -232,6 +251,7 @@ class Summary:
     checks: list[tuple[str, str]]  # (check_id, название) — строки матрицы
     matrix: dict[str, dict[int, str]]  # check_id → место → статус
     image_compare: bool = False  # выпущено «Сравнение картинки» — в сводке ссылка на него
+    codec_compare: bool = False  # выпущено «Сравнение кодеков» — в сводке ссылка на него
 
 
 def build_summary(store: RunStore) -> Summary:
