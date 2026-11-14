@@ -272,6 +272,19 @@ def test_taboo_on_restore_keeps_codec_rows_and_blames_the_restore(camera_with, m
     assert "мультикаста" in restore_row.reason or "мультикаста" in restore_row.actual
 
 
+@needs_vmaf
+def test_shots_include_the_native_resolution_center(camera_with):
+    # W8 (б): в листе было два снимка вместо четырёх — центра 1:1 не сохранялось вовсе, а
+    # уменьшенный целый кадр прячет блочность, о которой и вся проверка
+    found = rows(run(camera_with(encoder_codecs=("H264",))))
+    row = found["CODEC-H264-1"]
+    names = {e.name for e in row.result.evidence}
+    assert "ref.jpg" in names and "ref_c.jpg" in names, sorted(names)
+    centers = [e for e in row.result.evidence if e.name.endswith("_c.jpg")]
+    assert centers and all(e.kind == "image" and e.content for e in centers)
+    assert any(e.name.startswith("s") for e in centers), sorted(n.name for n in centers)
+
+
 def test_without_checkbox_nothing_is_written(camera_with):
     cam = camera_with()
     found = rows(run(cam, allow_writes=False))

@@ -172,10 +172,13 @@ def label(settings: EncoderSettings) -> str:
 def _jpeg(name: str, capture: Capture | None) -> list[Evidence]:
     if capture is None:
         return []
-    return [
+    found = [
         Evidence(f"{name}.jpg", capture.preview_jpeg, kind="image"),
         Evidence(f"{name}_t.jpg", capture.thumb_jpeg, kind="image"),
     ]
+    if capture.center_jpeg:  # W8: центр 1:1 — на нём видны артефакты сжатия
+        found.append(Evidence(f"{name}_c.jpg", capture.center_jpeg, kind="image"))
+    return found
 
 
 def _stat(found: Quality | None) -> dict | None:
@@ -541,7 +544,7 @@ class Engine:
             settle_frames=2,
             settle_max_s=0.0,
         )
-        source = RtspFrameSource(self.ctx, uri, timings, prefix=CODEC_PREFIX)
+        source = RtspFrameSource(self.ctx, uri, timings, prefix=CODEC_PREFIX, center=True)
         meter = StreamMeter(shot.codec)
         try:
             capture = source.capture(keep_clip=True, on_packet=meter.add)

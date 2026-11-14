@@ -370,7 +370,23 @@ def _shots(
     if worst is not None:
         _vmaf, folder, name, caption = worst
         shots.append((f"{folder}/{name}_t.jpg", f"{folder}/{name}.jpg", caption))
+    # W8: центр 1:1 рядом с целым кадром — на уменьшенном блочность не видна
+    for folder, name, caption in _center_pairs(ref_codec, folders, worst):
+        if (run_dir / folder / f"{name}_c.jpg").exists():
+            shots.append((f"{folder}/{name}_c.jpg", f"{folder}/{name}_c.jpg", caption))
     return shots
+
+
+def _center_pairs(ref_codec: str, folders: dict[str, str], worst) -> list[tuple[str, str, str]]:
+    """Какие снимки центра 1:1 показывать: эталон и худшая ступень (спека, UI, п. 4)."""
+    pairs = []
+    if ref_codec in folders:
+        title = CODEC_TITLES.get(ref_codec, ref_codec)
+        pairs.append((folders[ref_codec], "ref", f"{title} · эталон · центр 1:1"))
+    if worst is not None:
+        _vmaf, folder, name, caption = worst
+        pairs.append((folder, name, f"{caption} · центр 1:1"))
+    return pairs
 
 
 def build_codec_appendix(
