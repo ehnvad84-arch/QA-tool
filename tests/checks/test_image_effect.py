@@ -87,6 +87,19 @@ def test_healthy_settings_pass_with_three_snapshots_and_are_restored(camera_with
 
 
 @needs_video
+def test_restore_sends_only_the_changed_block(camera_with):
+    # W-6: возврат шёл целым блоком с ForcePersistence, и во флеш уходили экспозиция, ИК-фильтр
+    # и фокус; у части камер исходные параметры фокуса запускают перефокусировку
+    cam = camera_with()
+    found = rows(run(cam, ["brightness"]))
+    assert found[RESTORE_ID].status is Status.PASSED, found[RESTORE_ID].reason
+    last = cam.state.imaging_writes[-1]  # последняя запись — возврат
+    assert "<tt:Brightness>" in last, last
+    assert "<tt:Exposure>" not in last and "<tt:Focus>" not in last, last
+    assert "<tt:IrCutFilter>" not in last, last
+
+
+@needs_video
 def test_deaf_and_reversed_settings_fail(camera_with):
     cam = camera_with(imaging_effects={"saturation": "none", "contrast": "reverse"})
     found = rows(run(cam, ["saturation", "contrast"]))
