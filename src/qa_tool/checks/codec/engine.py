@@ -215,6 +215,8 @@ class Engine:
         self._calc: list = []  # кодировщик, сделано и всего сравнений — для строки хода
         self._restore_notes: list[str] = []
         self._halted = ""  # W5: почему запись на этой камере прекращена (как `halted` в «Вебе»)
+        self._last_target: dict[str, EncoderSettings] = {}  # W6: что писали последним
+        self._uri: dict[str, str] = {}  # W7: адрес потока после смены кодека
 
     # --- проход --------------------------------------------------------------------------------
 
@@ -455,6 +457,7 @@ class Engine:
         self._say(plan, what)
         shot = Shot(codec, kbps)
         target = EncoderSettings(codec, kbps=kbps, constant=True)
+        self._last_target[config.token] = target
         self._journal(config, target, "intent")
         if config.token not in self.touched:
             self.touched.append(config.token)
@@ -495,12 +498,18 @@ class Engine:
         """
         assert self.writer is not None
         token = plan.config.token
-        uri = self.writer.stream_uri(token) if switching else plan.config.uri
+        if switching:
+            # W7: камера может сменить адрес вместе с кодеком; остальные ступени этого кодека
+            # идут по уже полученному адресу, иначе каждая открывалась бы со второй попытки
+            uri = self._uri[token] = self.writer.stream_uri(token)
+        else:
+            uri = self._uri.get(token, plan.config.uri)
         for attempt in range(2):
             if attempt:
                 time.sleep(limit(self.ctx, "codec.restart_wait_s").value)
                 self._check_time()
-                uri = self.writer.stream_uri(token)  # CameraUnreachable — обрыв, а не поток
+                # CameraUnreachable — обрыв, а не поток
+                uri = self._uri[token] = self.writer.stream_uri(token)
             try:
                 self._capture(plan, shot, uri)
                 return
@@ -792,7 +801,7 @@ class Engine:
         assert self.writer is not None
         config = plan.config
         snapshot = self.writer.snapshots[config.token]
-        self._journal(config, snapshot.settings, "restoring")
+        self._journal(config, self._written(config), "restoring")
         self._say(plan, "возврат настроек")
         try:
             report = self.writer.restore(snapshot)
@@ -851,7 +860,7 @@ class Engine:
                 snapshot = self.writer.snapshots[config.token]
                 report = compare_config(snapshot, self.writer.read(config.token))
                 if report.left:
-                    self._journal(config, snapshot.settings, "restoring")
+                    self._journal(config, self._written(config), "restoring")
                     report = self.writer.restore(snapshot)
                 names = profile_names(config)
                 total_report.left += [(f"{names}: {f}", was, now) for f, was, now in report.left]
@@ -873,6 +882,17 @@ class Engine:
         return total_report, ""
 
     # --- журнал --------------------------------------------------------------------------------
+
+    def _written(self, config: EncoderConfig) -> EncoderSettings:
+        """Последнее записанное в кодировщик — для журнала на стадии возврата (W6).
+
+        Раньше на этой стадии в `new` уходил снимок, то есть `new == old`. Если процесс снимали
+        во время возврата, следующий прогон видел «сейчас» ≠ `new` и писал блокер «его поменял
+        кто-то другой» вместо возврата из журнала. «Картинка» хранит для этого `_last_written`.
+        """
+        assert self.writer is not None
+        snapshot = self.writer.snapshots[config.token]
+        return self._last_target.get(config.token, snapshot.settings)
 
     def _journal(self, config: EncoderConfig, target: EncoderSettings, stage: str) -> None:
         assert self.writer is not None

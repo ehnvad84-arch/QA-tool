@@ -369,6 +369,55 @@ def test_write_left_by_previous_run_is_returned_with_checkbox(camera_with, tmp_p
     assert load(tmp_path, "127.0.0.1", cam.port) is None
 
 
+@needs_vmaf
+def test_journal_on_restore_holds_the_last_written_value(camera_with, monkeypatch, tmp_path):
+    # W6: на стадии возврата в журнал уходил снимок, то есть `new == old`. Снятый во время
+    # возврата процесс оставлял следующему прогону блокер «поменял кто-то другой»
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import encoder as encoder_driver
+    from qa_tool.drivers.camera.soap import CameraUnreachable
+
+    def restore(self, config):
+        raise CameraUnreachable("нет ответа (ReadTimeout)")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    cam = camera_with(encoder_codecs=("H264",))
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    run_check(SPEC, context(cam, extra))
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None and kept.stage == "restoring"
+    assert kept.new != kept.old, kept.new  # иначе следующий прогон решит, что менял не он
+    assert "кбит/с" in kept.new
+
+
+def test_steps_after_codec_switch_use_the_new_stream_address(camera_with, monkeypatch):
+    # W7: адрес брался из плана, прочитанного до смены кодека, и каждая ступень второго кодека
+    # открывалась со второй попытки после `restart_wait_s`
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    if len(CODECS) < 2:
+        pytest.skip("нет H.265 в ffmpeg: смены кодека не будет")
+    seen = []
+
+    def capture(self, plan, shot, uri):
+        seen.append(uri)
+
+    original_uri = encoder_driver.EncoderWriter.stream_uri
+
+    def stream_uri(self, token):
+        # адрес меняется только после первой выборки: до неё план берёт настоящий адрес камеры,
+        # иначе подмена попала бы и в план, и тест перестал бы различать правку
+        return "rtsp://new/path" if seen else original_uri(self, token)
+
+    monkeypatch.setattr(engine.Engine, "_capture", capture)
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "stream_uri", stream_uri)
+    run(camera_with())
+    assert "rtsp://new/path" in seen, seen
+    switched = seen.index("rtsp://new/path")
+    assert len(seen) > switched + 1, seen  # после смены кодека есть ещё ступени
+    assert all(u == "rtsp://new/path" for u in seen[switched:]), seen
+
+
 def test_stand_error_after_old_journal_keeps_its_blocker(camera_with, monkeypatch, tmp_path):
     # W2: журнал прошлого прогона разобран и удалён, а `GetVideoEncoderConfigurationOptions`
     # ответил Fault — без строк в `children` блокер пропал бы из протокола насовсем
