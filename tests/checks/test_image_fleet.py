@@ -46,6 +46,39 @@ def fleet(monkeypatch):
         cam.stop()
 
 
+def test_compare_without_checkbox_shows_current_frames_and_values(tmp_path, fleet):
+    # W-8: без галочки сравнение состояло из матрицы «пропущена» и девяти листов с «—»,
+    # хотя спека (S7, S10) требует текущие кадры и прочитанные значения
+    cameras = [
+        Camera(
+            slot=i,
+            address="127.0.0.1",
+            port=m.port,
+            rtsp_port=m.rtsp_port,
+            username="admin",
+            vendor=m.passport.manufacturer.lower(),
+        )
+        for i, m in enumerate(fleet[:2], start=1)
+    ]
+    stand = Stand(place=Place.COLOR_BOX, runs_dir=tmp_path / "runs", cameras=cameras)
+    thresholds = {k: Threshold(v, "", "тест") for k, v in FAST.items()}
+    store = Runner(
+        stand, Scenario(checks=[CHECK_ID], allow_writes=False), thresholds=thresholds
+    ).run()
+    publish(store)
+    run_dir = store.run_dir
+    html = (run_dir / "image_compare.html").read_text(encoding="utf-8")
+    assert "Изменяющие проверки были запрещены сценарием" in html
+    assert "Текущие кадры и значения" in html
+    assert "state.jpg" in html  # кадр каждой камеры, а не пустая матрица
+    book = load_workbook(run_dir / "image_compare.xlsx")
+    assert "Камеры" in book.sheetnames
+    values = [row[2] for row in book["Камеры"].iter_rows(min_row=2, values_only=True)]
+    assert values and all(value for value in values), values
+    for cam in fleet[:2]:
+        assert cam.state.imaging_writes == []  # без галочки камеру не трогали
+
+
 def test_eight_cameras_at_once_give_rows_for_nine_settings_and_progress(tmp_path, fleet):
     cameras = [
         Camera(
