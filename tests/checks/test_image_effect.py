@@ -110,6 +110,24 @@ def test_deaf_and_reversed_settings_fail(camera_with):
 
 
 @needs_video
+def test_failed_row_carries_stream_clips_and_passed_one_does_not(camera_with):
+    # W-9: спека обещает `clip_pNNN` у «не прошла», а `keep_clip` нигде не передавался —
+    # выборок не было ни у одной строки, и повторить дефект декодером было нечем
+    cam = camera_with(imaging_effects={"saturation": "none"})
+    found = rows(run(cam, ["saturation", "brightness"]))
+    failed = found["IMAGE-SAT-1"]
+    assert failed.status is Status.FAILED
+    clips = [e.name for e in failed.evidence if e.name.startswith("clip_")]
+    assert clips and all(e.endswith((".h264", ".h265")) for e in clips), clips
+    assert all(
+        e.kind == "video" and e.content for e in failed.evidence if e.name.startswith("clip_")
+    )
+    passed = found["IMAGE-BRIGHT-1"]
+    assert passed.status is Status.PASSED
+    assert not [e for e in passed.evidence if e.name.startswith("clip_")]
+
+
+@needs_video
 def test_camera_that_does_not_take_a_value_fails_that_setting_only(camera_with):
     cam = camera_with(imaging_sticky={"Sharpness": "50"})
     found = rows(run(cam, ["sharpness", "saturation"]))

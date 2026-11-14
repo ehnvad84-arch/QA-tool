@@ -115,6 +115,22 @@ def _jpeg(name: str, capture: Capture | None) -> list[Evidence]:
     ]
 
 
+def _clips(positions: list["Position"]) -> list[Evidence]:
+    """Выборки потока положений — `clip_pNNN.h264|h265` (спека, «Доказательства»).
+
+    Нужны только у «не прошла»: без них программист не может повторить дефект декодером
+    (W-9). У «прошла» выборки отбрасываются — прогон восьми камер иначе раздуется.
+    """
+    found = []
+    for position in positions:
+        capture = position.capture
+        if capture is None or not capture.clip:
+            continue
+        extension = "h265" if capture.codec in ("hevc", "h265") else "h264"
+        found.append(Evidence(f"clip_{position.name}.{extension}", capture.clip, kind="video"))
+    return found
+
+
 def _positions_text(positions: list["Position"], setting: Setting) -> str:
     """«0 % — 82,4; 50 % — 121,0; 100 % — 163,5 (средняя яркость кадра)» — графа «Факт»."""
     two = len(positions) == 2
@@ -197,6 +213,7 @@ class Engine:
         self.out = Outcome()
         self._last_written = 0.0  # для журнала на стадии возврата: что могло остаться
         self.halted = ""  # W-3: почему запись на этой камере прекращена (как `halted` в «Вебе»)
+        self._positions: list[Position] = []  # положения текущей настройки — для выборок (W-9)
         self.ranges: dict = {}
         self.writes = WritePass(ctx, IMAGE)
 
@@ -268,6 +285,8 @@ class Engine:
                     for rest in self.settings[number - 1 :]:
                         self._row(rest, CheckResult.skipped(STOPPED), before)
                     break
+                # выборки прошлой настройки не должны уехать в строку этой (W-9)
+                self._positions = []
                 if self.halted:
                     self._row(setting, CheckResult.stand_error(self.halted), before)
                     continue
@@ -313,6 +332,7 @@ class Engine:
         self.out.touched.append(setting.key)
         problem: CheckResult | None = None
         after: Capture | None = None
+        self._positions = positions  # для выборок потока в `_row` (W-9)
         try:
             for position in positions:
                 self._progress(
@@ -325,7 +345,8 @@ class Engine:
                     break
                 self._stop_on_protected_drift(setting, position)
                 time.sleep(limit(self.ctx, "image.apply_delay_s").value)
-                position.capture = self._capture()
+                # выборка потока нужна у «не прошла» (W-9); у «прошла» её отбросит `_row`
+                position.capture = self._capture(keep_clip=True)
                 position.measurement = measure(setting.metric, position.capture, masks)
             back = self._restore_one(setting)
             after = self._capture()
@@ -461,9 +482,9 @@ class Engine:
             return CheckResult.stand_error(f"проверьте thresholds.yaml: {rule.problem}")
         return None
 
-    def _capture(self) -> Capture:
+    def _capture(self, keep_clip: bool = False) -> Capture:
         assert self.frames is not None
-        return self.frames.capture()
+        return self.frames.capture(keep_clip=keep_clip)
 
     def _write(self, setting: Setting, position: Position) -> str:
         """Записать положение; причина «не прошла», если камера не приняла значение."""
@@ -570,6 +591,8 @@ class Engine:
     ) -> None:
         if result.status is not Status.PASSED and not evidence:
             evidence = _jpeg("before1", before)
+        if result.status is not Status.PASSED:
+            evidence = [*(evidence or []), *_clips(self._positions)]
         result.evidence = [*result.evidence, *(evidence or [])]
         description = (
             f"Ставим «{setting.title}» в 0, 50 и 100 % диапазона камеры и снимаем кадр в каждом "
