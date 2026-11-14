@@ -325,6 +325,27 @@ class Engine:
             self._row(setting, skip, before)
             return
         rule = rule_for(self.ctx, setting.key)
+        # W-7: спека (S5) требует пару кадров «до» перед настройкой, а не одну пару на всю
+        # проверку. За шесть-десять минут лампы бокса нагреваются, свет уходит на три уровня,
+        # и поздние настройки получали «после возврата сцена менялась» на пустом месте
+        try:
+            self._progress(f"{setting.title} · кадры «до»")
+            own = self._capture()
+            time.sleep(limit(self.ctx, "image.before_gap_s").value)
+            second = self._capture()
+        except FRAMES_ERRORS as e:
+            self._row(setting, self._frames_failed(e), before)
+            return
+        unstable = (
+            moved(own, second, self.ctx)
+            or _not_settled(own, self.ctx, "до записи")
+            or _not_settled(second, self.ctx, "до записи")
+        )
+        if unstable:
+            # сцена или свет меняются без единой записи — это стенд, а не настройка (S5)
+            self._row(setting, CheckResult.stand_error(unstable), own)
+            return
+        before, masks = own, masks_of(own.work)
         assert isinstance(declared, Declared)
         shares = (0.0, 1.0) if declared.two_positions else SHARES
         positions = [Position(share, declared.at(share)) for share in shares]
@@ -424,8 +445,13 @@ class Engine:
                 )
                 return
         values = [p.measurement.value for p in positions if p.measurement]
+        # знак говорит, в какую сторону упёрлась сцена: пересвет вверх, чернота вниз (W-10)
         clips = [
-            max(p.measurement.clip_pct, p.measurement.crush_pct) for p in positions if p.measurement
+            p.measurement.clip_pct
+            if p.measurement.clip_pct >= p.measurement.crush_pct
+            else -p.measurement.crush_pct
+            for p in positions
+            if p.measurement
         ]
         found = verdict(rule, values, clips, self.state.exposure_mode)
         result = CheckResult(

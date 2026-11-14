@@ -87,6 +87,26 @@ def test_healthy_settings_pass_with_three_snapshots_and_are_restored(camera_with
 
 
 @needs_video
+def test_each_setting_gets_its_own_before_frames(camera_with, monkeypatch):
+    # W-7: пара кадров «до» снималась один раз на всю проверку, и уход света за время проверки
+    # давал поздним настройкам «после возврата сцена менялась» на пустом месте
+    original = frames.RtspFrameSource.capture
+    moments = []
+
+    def capture(self, *args, **kwargs):
+        moments.append(len(moments))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
+    cam = camera_with()
+    found = rows(run(cam, ["brightness", "saturation"]))
+    assert found["IMAGE-BRIGHT-1"].status is Status.PASSED
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    # две пары «до» проверки и по паре на каждую из двух настроек: снимков стало больше
+    assert len(moments) >= 2 + 2 * 2 + 2 * 3
+
+
+@needs_video
 def test_restore_sends_only_the_changed_block(camera_with):
     # W-6: возврат шёл целым блоком с ForcePersistence, и во флеш уходили экспозиция, ИК-фильтр
     # и фокус; у части камер исходные параметры фокуса запускают перефокусировку
@@ -200,7 +220,9 @@ def test_scene_moved_after_restore_is_stand_error_with_expectation(camera_with, 
 
     def moved(*_args):
         calls.append(1)
-        return "" if len(calls) == 1 else "средняя яркость ушла на 12 уровней"
+        # первые два вызова — пара «до» проверки и своя пара «до» настройки (W-7): до записи
+        # сцена стоит. Сдвиг наступает только на контрольном кадре после возврата
+        return "" if len(calls) <= 2 else "средняя яркость ушла на 12 уровней"
 
     monkeypatch.setattr(engine, "moved", moved)
     row = rows(run(camera_with(), ["brightness"]))["IMAGE-BRIGHT-1"]
