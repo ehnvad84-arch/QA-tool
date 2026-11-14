@@ -88,6 +88,20 @@ def test_login_page_reads_approved_by_director_reach_camera():
     assert stopped == []
 
 
+def test_dangerous_query_name_on_approved_read_is_stopped(monkeypatch):
+    # ревью, круг 4, m23: после белого списка адресов запросу достаётся второй слой запретов.
+    # Сейчас разрешены только метки времени, поэтому ветка закрепляется подменой списка имён —
+    # при его расширении тест сработает без правок
+    from qa_tool.core import taboo
+
+    monkeypatch.setattr(
+        taboo, "WEB_APPROVED_QUERY_NAMES", taboo.WEB_APPROVED_QUERY_NAMES | {"reboot"}
+    )
+    camera, stopped = visit(fire("/api/auth/create_session?reboot=1", "GET", ""))
+    assert camera.arrived == [("GET", "/")]
+    assert stopped[0].verdict is Verdict.STOP_DANGER
+
+
 def test_taboo_stops_even_in_write_window():
     camera, stopped = visit(fire("/api/users/delete"), lambda s: s.write_window())
     assert camera.writes() == []

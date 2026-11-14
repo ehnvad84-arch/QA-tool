@@ -13,7 +13,6 @@
 эффект: поиск на камере останавливается (решение директора 09.11, S5).
 """
 
-import contextlib
 import fnmatch
 import json
 import math
@@ -28,6 +27,7 @@ from qa_tool.checks.api.catalog import BY_N, CATALOG, ENCODER, IMAGE, Entry
 from qa_tool.checks.api.compare import number
 from qa_tool.checks.image.settings import BY_KEY
 from qa_tool.core.api_map import Change, NativeMap, Pair, Scale, canonical, diff, finite_number
+from qa_tool.core.secrets import redact
 from qa_tool.drivers.camera import encoder as encoder_driver
 from qa_tool.drivers.camera import imaging as imaging_driver
 from qa_tool.drivers.camera.encoder import CodecOptions, EncoderConfig, EncoderWriter, compare
@@ -664,12 +664,14 @@ class Search:
                     raise
                 self.out.stand = f"сбой ONVIF на чтении: {error}"
                 verdict, pair = f"ошибка стенда: {self.out.stand}", None
-            except Exception:
-                # непредвиденный сбой: вернуть по ONVIF что получится; журнал остаётся
-                # открытым — следующий прогон увидит незакрытую запись
-                with contextlib.suppress(Exception):
-                    knob.restore()
-                raise
+            except Exception as error:
+                # m21 (решение владельца 2026-11-14) по образцу «Картинки» (image/engine.py):
+                # непредвиденный сбой на одной настройке — её «ошибка стенда» и стоп поиска,
+                # а не потеря всей карты. Возврат идёт обычным путём, поэтому журнал
+                # закрывается. Пароль вызывающего здесь неизвестен, и `redact` чистит по
+                # образцам: адрес с логином, Authorization, UsernameToken, cookie
+                self.out.stand = redact(f"сбой проверки: {type(error).__name__}: {error}")
+                verdict, pair = f"ошибка стенда: {self.out.stand}", None
             left, native_left = self._returned(knob)
             self.out.trace.append(
                 {
@@ -691,7 +693,7 @@ class Search:
                 elif self.out.unchecked:
                     why = f"прерван на п. {entry.n}: возврат не сверен"
                 elif self.out.stand:
-                    why = f"прерван на п. {entry.n}: сбой ONVIF на чтении"
+                    why = f"прерван на п. {entry.n}: {self.out.stand}"
                 else:
                     why = f"остановлен на п. {entry.n}"
                 n = self.knobs.index(knob)

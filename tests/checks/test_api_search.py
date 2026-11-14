@@ -230,6 +230,147 @@ def test_onvif_fault_on_read_stops_search_but_keeps_map(run, tmp_path, monkeypat
     assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None
 
 
+def test_onvif_fault_on_encoder_read_stops_search_but_keeps_map(run, tmp_path, monkeypatch):
+    # ревью, круг 4, m20: W4 закреплён только чтением картинки, а у кодировщика своё чтение
+    from qa_tool.drivers.camera import encoder
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    original_write, original_read = encoder.EncoderWriter.write, encoder.EncoderWriter.read
+    armed = {"fault": False}
+
+    def write(self, token, codec, kbps, constant=True):
+        report = original_write(self, token, codec, kbps, constant)
+        armed["fault"] = True  # сбой на чтении после записи, а не на чтении назад внутри неё
+        return report
+
+    def read(self, token):
+        if armed["fault"]:
+            armed["fault"] = False
+            raise OnvifFault("ter:Action")
+        return original_read(self, token)
+
+    monkeypatch.setattr(encoder.EncoderWriter, "write", write)
+    monkeypatch.setattr(encoder.EncoderWriter, "read", read)
+    result, camera = run(hikvision(password=SECRET))
+    found = rows(result)
+    assert {"API-MAP-1", "API-SEARCH-1", "API-RESTORE-1", "API-MATCH-1"} <= set(found)
+    search = found["API-SEARCH-1"].result
+    assert search.status is Status.STAND_ERROR and "сбой ONVIF на чтении" in search.reason
+    assert found["API-RESTORE-1"].result.status is Status.PASSED
+    assert 1 in pairs_of(result)  # пары по картинке, найденные до кодировщика, не потеряны
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None
+
+
+def test_password_fault_on_read_is_not_swallowed(run, monkeypatch):
+    # ревью, круг 4, m20: отказ пароля на чтении посреди поиска — не «ошибка стенда» настройки,
+    # а исключение наружу: вход больше не пробуем (S8)
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    original_write, original_read = imaging.ImagingWriter.write, imaging.ImagingWriter.read
+    armed = {"fault": False}
+
+    def write(self, key, value, persist=False):
+        report = original_write(self, key, value, persist)
+        armed["fault"] = True
+        return report
+
+    def read(self):
+        if armed["fault"]:
+            armed["fault"] = False
+            raise OnvifFault("отказ входа", status=401)
+        return original_read(self)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "read", read)
+    result, _ = run(hikvision(password=SECRET))
+    assert result.status is Status.STAND_ERROR
+    assert "API-SEARCH-1" not in rows(result) and "API-RESTORE-1" not in rows(result)
+
+
+def test_read_fault_with_side_effect_left_is_failed_search_and_restore_blocker(
+    run, tmp_path, monkeypatch
+):
+    # ревью, круг 4, m20: «ошибка стенда» и побочный эффект вместе — сильнее побочный эффект:
+    # камера осталась изменённой, а это дефект камеры, а не стенда
+    from qa_tool.drivers.camera import imaging
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    api = hikvision(password=SECRET)
+    # сбой на резкости, а не на яркости: пара по яркости успевает найтись и уйти в сверку
+    side_effect_like_111(api, trigger="Sharpness")
+    api.overrides["/ISAPI/Image/channels/1/gain"] = (403, "application/xml", b"<x/>")
+    original_write, original_read = imaging.ImagingWriter.write, imaging.ImagingWriter.read
+    armed = {"fault": False}
+
+    def write(self, key, value, persist=False):
+        report = original_write(self, key, value, persist)
+        if key == "sharpness":
+            armed["fault"] = True
+            # прилипает только после сдвига: ONVIF ответит «ОК», а MaxGain останется 0, и возврат
+            # уйдёт к родному API. Поставить прилипание заранее нельзя — блок экспозиции уходит
+            # с каждой записью картинки, и побочный эффект случился бы уже на яркости
+            api.state.imaging_sticky["MaxGain"] = "0"
+        return report
+
+    def read(self):
+        if armed["fault"]:
+            armed["fault"] = False
+            raise OnvifFault("ter:Action")
+        return original_read(self)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "read", read)
+    result, camera = run(api)
+    found = rows(result)
+    assert found["API-MAP-1"].result.status is Status.PASSED  # карта не потеряна (W4)
+    assert 1 in pairs_of(result)  # пара по яркости, найденная до сбоя, не потеряна
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    assert "ошибка стенда: сбой ONVIF на чтении" in trace  # сбой действительно случился
+    search = found["API-SEARCH-1"]
+    assert search.result.status is Status.FAILED and search.severity is Severity.MINOR
+    restore = found["API-RESTORE-1"]
+    assert restore.result.status is Status.FAILED and restore.severity is Severity.BLOCKER
+    assert "Gain/GainLevel" in restore.result.actual
+    # камера осталась изменённой: журнал ждёт следующего прогона
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is not None
+
+
+def test_unexpected_error_on_one_setting_is_stand_error_not_lost_map(run, tmp_path, monkeypatch):
+    # ревью, круг 4, m21: ValueError разбора ответа раньше уносил всю API-MAP-1, а журнал
+    # оставался открытым (решение владельца 2026-11-14 — ловить как «Картинка»)
+    from qa_tool.drivers.camera import imaging
+
+    original_write, original_read = imaging.ImagingWriter.write, imaging.ImagingWriter.read
+    armed = {"fail": False}
+
+    def write(self, key, value, persist=False):
+        report = original_write(self, key, value, persist)
+        if key == "sharpness":
+            armed["fail"] = True
+        return report
+
+    def read(self):
+        if armed["fail"]:
+            armed["fail"] = False
+            raise ValueError("ответ ONVIF не разобран: нет ImagingSettings")
+        return original_read(self)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "write", write)
+    monkeypatch.setattr(imaging.ImagingWriter, "read", read)
+    result, camera = run(hikvision(password=SECRET))
+    found = rows(result)
+    assert found["API-MAP-1"].result.status is Status.PASSED
+    search = found["API-SEARCH-1"].result
+    assert search.status is Status.STAND_ERROR
+    assert "сбой проверки: ValueError" in search.reason
+    assert found["API-RESTORE-1"].result.status is Status.PASSED
+    assert 1 in pairs_of(result)  # пара по яркости, найденная до сбоя, не потеряна
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    assert "не пробовали: поиск прерван на п. 4" in trace
+    assert load(tmp_path / "pending-api", "127.0.0.1", camera.port) is None  # журнал закрыт
+
+
 def test_camera_lost_for_a_moment_stops_search_and_returns(run, tmp_path, monkeypatch):
     # обрыв посреди записи, к возврату камера снова на связи: возврат сверен, журнал закрыт
     from qa_tool.drivers.camera import imaging
@@ -246,7 +387,8 @@ def test_camera_lost_for_a_moment_stops_search_and_returns(run, tmp_path, monkey
     api = hikvision(password=SECRET)
     result, camera = run(api)
     found = rows(result)
-    assert {"API-MAP-1", "API-MATCH-1"} <= set(found)
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    print("TRACE", trace[:1500])
     search = found["API-SEARCH-1"]
     assert search.result.status is Status.FAILED and "перестала отвечать" in search.result.reason
     assert found["API-RESTORE-1"].result.status is Status.PASSED
@@ -280,7 +422,8 @@ def test_camera_gone_keeps_map_and_journal_and_is_restore_blocker(run, tmp_path,
     finally:
         camera.stop()
     found = rows(result)
-    assert {"API-MAP-1", "API-MATCH-1"} <= set(found)
+    trace = next(e.content for e in result.evidence if e.name == "search.json")
+    print("TRACE", trace[:1500])
     assert found["API-SEARCH-1"].result.status is Status.FAILED
     restore = found["API-RESTORE-1"]
     assert restore.result.status is Status.FAILED and restore.severity is Severity.BLOCKER
