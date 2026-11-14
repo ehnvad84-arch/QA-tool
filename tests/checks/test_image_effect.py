@@ -336,6 +336,75 @@ def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
 
 
 @needs_video
+def test_taboo_on_final_restore_keeps_rows_and_is_a_restore_blocker(camera_with, monkeypatch):
+    # W-2 (1): этот возврат идёт из `finally`, и исключение отсюда уносило все строки проверки
+    from qa_tool.core.taboo import TabooViolation
+    from qa_tool.drivers.camera import imaging
+
+    original = imaging.ImagingWriter.restore
+
+    def restore(self, state, touched):
+        # полный возврат в конце шлёт все настройки сразу, возврат после настройки — одну
+        if len(touched) > 1:
+            raise TabooViolation("SetUser в блоке настроек: запрос не отправлен")
+        return original(self, state, touched)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    found = rows(run(camera_with(), ["brightness", "saturation"]))
+    assert found["IMAGE-BRIGHT-1"].status is Status.PASSED
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    restore_row = found[RESTORE_ID]
+    assert restore_row.status is Status.FAILED
+    assert "возврат не выполнен" in restore_row.reason and "SetUser" in restore_row.reason
+
+
+@needs_video
+def test_unexpected_error_on_setting_returns_it_before_the_next_one(camera_with, monkeypatch):
+    # W-2 (2): без возврата здесь следующая настройка снималась бы с изменённой предыдущей
+    from qa_tool.checks.image import engine as image_engine
+
+    original_measure = image_engine.measure
+    armed = {"fail": True}
+    seen = {}
+
+    def measure(metric, capture, masks):
+        if armed["fail"] and metric == "mean_luma":
+            armed["fail"] = False
+            raise RuntimeError("метрика не посчиталась")
+        return original_measure(metric, capture, masks)
+
+    monkeypatch.setattr(image_engine, "measure", measure)
+    cam = camera_with()
+    before = cam.state.imaging_xml
+    target = Camera(
+        slot=1, address="127.0.0.1", port=cam.port, rtsp_port=cam.rtsp_port, username="admin"
+    )
+    thresholds = {k: Threshold(v, "", "тест") for k, v in FAST.items()}
+    ctx = CheckContext(
+        target,
+        "admin",
+        Place.COLOR_BOX,
+        thresholds,
+        {image_engine.SETTINGS_KEY: ["brightness", "saturation"]},
+        allow_writes=True,
+    )
+
+    def progress(text):
+        # момент наблюдения: яркость обязана быть уже возвращена, а не ждать конца проверки
+        if text.startswith("Насыщенность · 0") and "яркость" not in seen:
+            seen["яркость"] = cam.state.imaging_xml
+
+    ctx.progress = progress
+    found = rows(run_check(SPEC, ctx))
+    assert "<tt:Brightness>50</tt:Brightness>" in seen["яркость"], seen["яркость"]
+    bright = found["IMAGE-BRIGHT-1"]
+    assert bright.status is Status.STAND_ERROR and "RuntimeError" in bright.reason
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    assert found[RESTORE_ID].status is Status.PASSED
+    assert cam.state.imaging_xml == before  # камера ушла такой, какой пришла (AD-3)
+
+
+@needs_video
 def test_frame_not_received_is_stand_error_with_evidence(camera_with, monkeypatch):
     # CI 11.11: ветка «кадр не получен» падала TypeError и теряла все строки картинки
     def refuse(self, *args, **kwargs):

@@ -206,6 +206,27 @@ def test_undeclared_second_codec_is_skipped(camera_with):
     assert found["CODEC-H264-1"].result.status is Status.PASSED, found["CODEC-H264-1"].result.reason
 
 
+@needs_vmaf
+def test_taboo_on_restore_keeps_codec_rows_and_blames_the_restore(camera_with, monkeypatch):
+    # W4: сторож табу на возврате выходил из `Engine.run`, и `run_check` терял все строки
+    # кодеков вместе со строкой возврата — в протоколе оставалась одна «ошибка стенда»
+    from qa_tool.core.taboo import TabooViolation
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    def restore(self, config):
+        raise TabooViolation("порт мультикаста изменился: запрос не отправлен")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    cam = camera_with(encoder_codecs=("H264",))
+    result = run(cam)
+    found = rows(result)
+    assert "CODEC-H264-1" in found  # строка кодека не потеряна
+    restore_row = found[RESTORE_ID].result
+    assert restore_row.status is Status.FAILED
+    assert "возврат не выполнен" in restore_row.reason
+    assert "мультикаста" in restore_row.reason or "мультикаста" in restore_row.actual
+
+
 def test_without_checkbox_nothing_is_written(camera_with):
     cam = camera_with()
     found = rows(run(cam, allow_writes=False))

@@ -253,6 +253,11 @@ class Engine:
                     break
                 except Exception as e:  # сбой на одной настройке не должен унести строки и возврат
                     text = redact(f"сбой проверки: {type(e).__name__}: {e}", [self.ctx.password])
+                    # W-2: без возврата здесь следующие настройки снимались бы с изменённой
+                    # предыдущей, и их итоги были бы неверны: полный возврат идёт только в конце
+                    left = self._restore_after_error(setting)
+                    if left:
+                        text = f"{text}; {left}"
                     self._row(setting, CheckResult.stand_error(text), before)
         finally:
             report, problem = self._restore_all()
@@ -475,8 +480,15 @@ class Engine:
             return None, absent
         try:
             report = self.writer.restore(self.state, self.out.touched)
-        except (CameraUnreachable, OnvifFault, ImageWriteRefused) as e:
+        except (CameraUnreachable, OnvifFault, ImageWriteRefused, TabooViolation) as e:
             return None, f"возврат не выполнен: {e}"
+        except Exception as e:
+            # W-2: этот возврат идёт из `finally`, поэтому исключение отсюда уносило все строки
+            # проверки и строку возврата — `run_check` оставлял одну «ошибку стенда». Тип
+            # исключения в причине: сбой здесь обычно дефект программы, и его видно по типу
+            return None, redact(
+                f"возврат не выполнен: {type(e).__name__}: {e}", [self.ctx.password]
+            )
         if report.restored:
             self.writes.close()
         return report, ""

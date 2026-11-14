@@ -786,8 +786,19 @@ class Engine:
         self._say(plan, "возврат настроек")
         try:
             report = self.writer.restore(snapshot)
-        except (OnvifFault, ValueRejected, EncoderWriteRefused) as e:
+        except (OnvifFault, ValueRejected, EncoderWriteRefused, TabooViolation) as e:
             self._restore_notes.append(f"{profile_names(config)}: возврат не выполнен: {e}")
+            return
+        except Exception as e:
+            # W4: сторож табу и любой непредвиденный сбой выходили из `Engine.run`, и `run_check`
+            # терял все строки кодеков вместе со строкой возврата. Обрыв связи — по-прежнему
+            # наружу: его решает `_encoders`
+            self._restore_notes.append(
+                redact(
+                    f"{profile_names(config)}: возврат не выполнен: {type(e).__name__}: {e}",
+                    [self.ctx.password],
+                )
+            )
             return
         if report.restored:
             self.writes.close()
@@ -815,8 +826,18 @@ class Engine:
                 names = profile_names(config)
                 total_report.left += [(f"{names}: {f}", was, now) for f, was, now in report.left]
                 total_report.other += [f"{names}: {text}" for text in report.other]
-        except (CameraUnreachable, OnvifFault, ValueRejected, EncoderWriteRefused) as e:
+        except (
+            CameraUnreachable,
+            OnvifFault,
+            ValueRejected,
+            EncoderWriteRefused,
+            TabooViolation,
+        ) as e:
             return None, f"возврат не выполнен: {e}"
+        except Exception as e:  # W4: иначе уносит все строки кодеков и строку возврата
+            return None, redact(
+                f"возврат не выполнен: {type(e).__name__}: {e}", [self.ctx.password]
+            )
         if total_report.restored:
             self.writes.close()
         return total_report, ""
