@@ -242,8 +242,14 @@ class Engine:
             self.configs = [self.writer.snapshots[c.token] for c in self.configs]
             plans = [self._plan(c, n) for n, c in enumerate(self.configs, start=1)]
         except (CameraUnreachable, OnvifFault) as e:
-            return CheckResult.stand_error(
-                f"ONVIF: кодировщики не прочитаны: {e}", evidence=soap_evidence(self.soap)
+            # W2: строки журнала прошлого прогона уже собраны, а сам журнал уже удалён. Без
+            # `children` блокер `CODEC-WRITE-LOST` пропал бы из протокола, и ни этот прогон,
+            # ни следующий о незакрытой записи не сказали бы
+            return CheckResult(
+                Status.STAND_ERROR,
+                reason=f"ONVIF: кодировщики не прочитаны: {e}",
+                evidence=soap_evidence(self.soap),
+                children=self.rows,
             )
         checked, extra = plans[:MAX_ENCODERS], plans[MAX_ENCODERS:]
         self._total = len(checked)

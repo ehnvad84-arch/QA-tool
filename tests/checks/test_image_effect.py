@@ -302,6 +302,24 @@ def test_write_left_by_previous_run_without_checkbox_is_a_blocker(camera_with, t
     assert cam.state.imaging_writes == []
 
 
+def test_stand_error_after_old_journal_keeps_its_blocker(camera_with, monkeypatch, tmp_path):
+    # тот же дефект, что «Кодеки» W2: журнал прошлого прогона к этому моменту уже разобран и
+    # удалён, и без строк в `children` его блокер пропал бы из протокола насовсем
+    from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, save
+
+    def refuse(self, *args, **kwargs):
+        raise frames.StreamRefused("поток не открывается: камера закрыла соединение RTSP")
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", refuse)
+    cam = camera_with(xml=MANUAL.replace("<tt:Contrast>50<", "<tt:Contrast>100<"))
+    save(tmp_path, journal_entry(port=cam.port))
+    extra = {IMAGE.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NEW"}
+    result = run(cam, ["saturation"], allow_writes=False, **extra)
+    assert result.status is Status.STAND_ERROR and "RTSP" in result.reason
+    old = next(c for c in result.children if c.check_id == IMAGE.lost_spec.id)
+    assert old.result.status is Status.FAILED and old.severity.value == "блокер"
+
+
 @needs_video
 def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
     from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, load

@@ -204,15 +204,15 @@ class Engine:
             self.writes.settle_old(self._now_of, self._put_back, (ImageWriteRefused,))
             self.out.rows.extend(self.writes.rows)
         except (CameraUnreachable, OnvifFault) as e:
-            return CheckResult.stand_error(
+            return self._stand(
                 f"ONVIF: журнал прошлого прогона не разобран: {e}",
-                evidence=soap_evidence(self.soap),
+                soap_evidence(self.soap),
             )
         self.frames = RtspFrameSource(self.ctx, uri)
         try:
             unready = self.scene.prepare(self.ctx)
             if unready:
-                return CheckResult.stand_error(unready)
+                return self._stand(unready)
             self._progress("кадры «до»")
             before = self.frames.capture()
             time.sleep(limit(self.ctx, "image.before_gap_s").value)
@@ -665,7 +665,19 @@ class Engine:
         evidence = soap_evidence(self.soap)
         if self.frames is not None:
             evidence.append(Evidence("rtsp.txt", "\n".join(self.frames.exchanges)))
-        return CheckResult.stand_error(reason, evidence=evidence)
+        return self._stand(reason, evidence)
+
+    def _stand(self, reason: str, evidence: list[Evidence] | None = None) -> CheckResult:
+        """«Ошибка стенда» вместе с уже собранными строками.
+
+        Строки журнала прошлого прогона собираются до первого кадра, а сам журнал к этому
+        моменту уже удалён: без них блокер `IMAGE-WRITE-LOST` пропал бы из протокола, и ни
+        этот прогон, ни следующий о незакрытой записи не сказали бы (тот же дефект — «Кодеки»
+        W2). Поэтому все выходы «ошибкой стенда» после `settle_old` идут через этот метод.
+        """
+        return CheckResult(
+            Status.STAND_ERROR, reason=reason, evidence=evidence or [], children=self.out.rows
+        )
 
     def _result(self) -> CheckResult:
         return total(self.out.rows)

@@ -369,6 +369,27 @@ def test_write_left_by_previous_run_is_returned_with_checkbox(camera_with, tmp_p
     assert load(tmp_path, "127.0.0.1", cam.port) is None
 
 
+def test_stand_error_after_old_journal_keeps_its_blocker(camera_with, monkeypatch, tmp_path):
+    # W2: журнал прошлого прогона разобран и удалён, а `GetVideoEncoderConfigurationOptions`
+    # ответил Fault — без строк в `children` блокер пропал бы из протокола насовсем
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY
+    from qa_tool.drivers.camera import encoder as encoder_driver
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    cam = camera_with(encoder_codecs=("H264",))
+    leave_previous_write(cam, tmp_path)
+
+    def options(self, token):
+        raise OnvifFault("ter:Action")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "options", options)
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NEW"}
+    result = run_check(SPEC, context(cam, extra, allow_writes=False))
+    assert result.status is Status.STAND_ERROR and "не прочитаны" in result.reason
+    old = next(c for c in result.children if c.check_id == CODEC.lost_spec.id)
+    assert old.result.status is Status.FAILED and old.severity.value == "блокер"
+
+
 def test_write_left_by_previous_run_without_checkbox_is_a_blocker(camera_with, tmp_path):
     from qa_tool.core.write_journal import CODEC, RUN_ID_KEY
 
