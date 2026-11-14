@@ -131,6 +131,29 @@ def _shown(value: float | None) -> str:
     return "—" if value is None else f"{value:.6g}"
 
 
+def _few_frames(capture: Capture, ctx: CheckContext) -> str:
+    """Почему выборка коротка; пусто — кадров достаточно.
+
+    `stable` ложно не только когда картинка колеблется, но и когда кадров в выборке меньше
+    `settle_frames`: при `clip_s` 2 с и пяти кадрах это поток медленнее 2,5 к/с или декодер,
+    уложившийся в срок с частью кадров. Причина «колеблется на 0,0» в этом случае вводит в
+    заблуждение, и инженер не понимает, что надо увеличить `image.clip_s` (W-11).
+    """
+    if capture.stable:
+        return ""
+    timings = Timings.of(ctx)
+    if len(capture.lumas) >= timings.settle_frames:
+        return ""
+    fps = timings.settle_frames / timings.clip_s if timings.clip_s else 0.0
+    # запятая — только в числе: замена по всей строке превратила бы и `image.clip_s` в
+    # `image,clip_s`, а это имя порога, которое инженер будет искать в thresholds.yaml
+    shown = f"{fps:.1f}".replace(".", ",")
+    return (
+        f"кадров в выборке {len(capture.lumas)}, нужно не меньше {timings.settle_frames}: "
+        f"поток камеры медленнее {shown} к/с — увеличьте image.clip_s"
+    )
+
+
 def _not_settled(capture: Capture, ctx: CheckContext, moment: str) -> str:
     """Почему снимок не успокоился за `settle_max_s`; пусто — снимок стабилен.
 
@@ -142,6 +165,9 @@ def _not_settled(capture: Capture, ctx: CheckContext, moment: str) -> str:
     """
     if capture.stable:
         return ""
+    few = _few_frames(capture, ctx)
+    if few:
+        return few
     timings = Timings.of(ctx)
     window = capture.lumas[-timings.settle_frames :]
     swing = max(window) - min(window) if window else 0.0
@@ -361,10 +387,13 @@ class Engine:
             moment = f"после записи {round(position.share * 100)} %"
             unsettled = _not_settled(position.capture, self.ctx, moment) if position.capture else ""
             if unsettled:
+                # W-11: короткая выборка — дефект стенда (медленный поток или декодер), а не
+                # камеры: «не прошла» ей за это писать нельзя
+                few = _few_frames(position.capture, self.ctx) if position.capture else ""
                 self._row(
                     setting,
                     CheckResult(
-                        Status.FAILED,
+                        Status.STAND_ERROR if few else Status.FAILED,
                         reason=unsettled,
                         expected=rule.expected,
                         actual=_positions_text(positions, setting),
@@ -632,7 +661,7 @@ class Engine:
         )
 
     def _restore_row(self, report: RestoreReport | None, problem: str) -> ChildResult:
-        return restore_row(
+        row = restore_row(
             RESTORE_ID,
             "Картинка: возврат настроек",
             self.out.touched,
@@ -640,6 +669,9 @@ class Engine:
             problem,
             NOTHING_CHANGED,
         )
+        if row.result.status is Status.FAILED:
+            self.writes.mark_reported()  # W-1: блокер уже здесь, второй был бы с ложной причиной
+        return row
 
     def _read_only_rows(self, ranges: dict) -> None:
         for setting in self.settings:

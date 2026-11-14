@@ -190,6 +190,31 @@ def unsettled_while(monkeypatch, holds):
     monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
 
 
+def few_frames_while(monkeypatch, holds):
+    """Выборка короче `settle_frames` — медленный поток камеры, пока `holds()` истинно."""
+    original = frames.RtspFrameSource.capture
+
+    def capture(self, *args, **kwargs):
+        shot = original(self, *args, **kwargs)
+        if holds():
+            shot.lumas = shot.lumas[:1]
+            shot.stable = False
+        return shot
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
+
+
+@needs_video
+def test_short_sample_is_stand_error_with_the_real_cause(camera_with, monkeypatch):
+    # W-11: камера с медленным потоком получала «не прошла» с причиной «колеблется на 0,0»,
+    # и по ней не понять, что надо увеличить image.clip_s
+    cam = camera_with()
+    few_frames_while(monkeypatch, lambda: re.search(r"<tt:Brightness>100\b", cam.state.imaging_xml))
+    row = rows(run(cam, ["brightness"]))["IMAGE-BRIGHT-1"]
+    assert row.status is Status.STAND_ERROR, row.reason
+    assert "кадров в выборке 1" in row.reason and "image.clip_s" in row.reason
+
+
 @needs_video
 def test_picture_not_settled_after_write_fails_and_is_restored(camera_with, monkeypatch):
     # ревью этапа 3, B-1: величина нестабильного кадра шла в verdict() как обычная —
@@ -381,6 +406,9 @@ def test_setting_that_did_not_return_stops_writing_on_this_camera(
     assert found[RESTORE_ID].status is Status.FAILED
     kept = load(tmp_path, "127.0.0.1", cam.port)
     assert kept is not None and kept.kind == "brightness"  # журнал невернувшейся не затёрт
+    # W-1: блокер возврата уже в протоколе, поэтому планировщик не добавит второй с ложной
+    # причиной «процесс проверки камеры был снят»
+    assert kept.reported is True
 
 
 @needs_video

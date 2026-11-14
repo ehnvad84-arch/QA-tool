@@ -994,7 +994,7 @@ class Engine:
 
     def _restore_row(self, report: RestoreReport | None, problem: str) -> ChildResult:
         names = [profile_names(c) for c in self.configs if c.token in self.touched]
-        return restore_row(
+        row = restore_row(
             RESTORE_ID,
             "Кодеки: возврат настроек",
             names,
@@ -1002,6 +1002,9 @@ class Engine:
             problem,
             NOTHING_WRITTEN if self.ctx.allow_writes else NOTHING_CHANGED,
         )
+        if row.result.status is Status.FAILED:
+            self.writes.mark_reported()  # image W-1: тот же ложный второй блокер
+        return row
 
     # --- служебное -----------------------------------------------------------------------------
 

@@ -568,6 +568,9 @@ def _key_of(fields: Mapping[str, FieldSpec], spec: FieldSpec) -> str:
     return next(key for key, candidate in fields.items() if candidate is spec)
 
 
+MIN_INTEGER_SPAN = 2.0  # меньше — округлять нечего: целых значений в диапазоне всего два
+
+
 def _range(element: Element | None, name: str) -> Declared | Unsupported | BadRange:
     """Диапазон Min…Max из GetOptions."""
     if element is None:
@@ -583,4 +586,8 @@ def _range(element: Element | None, name: str) -> Declared | Unsupported | BadRa
         return BadRange(f"диапазон «{name}» перевёрнут: {_format(low)} > {_format(high)}")
     if low == high:
         return Unsupported(f"диапазон «{name}» из одной точки ({_format(low)})")
-    return Declared(low, high, integer=low.is_integer() and high.is_integer())
+    # W-4: целыми границы считаются только при размахе от двух шагов. У нормированного
+    # диапазона 0…1 границы тоже целые, и округление превращало «положение 50 %» в 0 %:
+    # сдвиг получался нулевым, а настройка — «не прошла» ни за что
+    integer = low.is_integer() and high.is_integer() and high - low >= MIN_INTEGER_SPAN
+    return Declared(low, high, integer=integer)
