@@ -214,6 +214,7 @@ class Engine:
         self._total = 0  # кодировщиков в проходе — для строки хода «Профиль 1 из 3»
         self._calc: list = []  # кодировщик, сделано и всего сравнений — для строки хода
         self._restore_notes: list[str] = []
+        self._halted = ""  # W5: почему запись на этой камере прекращена (как `halted` в «Вебе»)
 
     # --- проход --------------------------------------------------------------------------------
 
@@ -295,6 +296,9 @@ class Engine:
                 for rest in plans[index:]:
                     self._fill(rest, CheckResult.skipped(STOPPED))
                 return
+            if self._halted:
+                self._fill(plan, CheckResult.stand_error(self._halted))
+                continue
             try:
                 self._encoder(plan)
             except (Abort, CameraUnreachable) as e:
@@ -788,6 +792,7 @@ class Engine:
             report = self.writer.restore(snapshot)
         except (OnvifFault, ValueRejected, EncoderWriteRefused, TabooViolation) as e:
             self._restore_notes.append(f"{profile_names(config)}: возврат не выполнен: {e}")
+            self._halt(config, str(e))
             return
         except Exception as e:
             # W4: сторож табу и любой непредвиденный сбой выходили из `Engine.run`, и `run_check`
@@ -799,9 +804,28 @@ class Engine:
                     [self.ctx.password],
                 )
             )
+            self._halt(config, f"{type(e).__name__}: {e}")
             return
         if report.restored:
             self.writes.close()
+        else:
+            self._halt(
+                config,
+                "; ".join(f"{f}: было {was}, осталось {now}" for f, was, now in report.left),
+            )
+
+    def _halt(self, config: EncoderConfig, why: str) -> None:
+        """W5: прекратить запись на этой камере — кодировщик не вернулся.
+
+        Журнал записи — один файл на камеру, поэтому запись следующего кодировщика затёрла бы
+        незакрытую запись этого. Тогда при снятии процесса следующий прогон вернул бы только
+        последний кодировщик, а этот остался бы изменённым и без блокера (AD-3).
+        """
+        if not self._halted:
+            self._halted = redact(
+                f"запись прекращена: кодировщик {profile_names(config)} не вернулся: {why}",
+                [self.ctx.password],
+            )
 
     def _restore_all(self) -> tuple[RestoreReport | None, str]:
         """В конце — перечитать все кодировщики и вернуть, что не как в снимке.

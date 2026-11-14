@@ -170,6 +170,7 @@ class Engine:
         self.state: ImagingState | None = None
         self.out = Outcome()
         self._last_written = 0.0  # для журнала на стадии возврата: что могло остаться
+        self.halted = ""  # W-3: почему запись на этой камере прекращена (как `halted` в «Вебе»)
         self.ranges: dict = {}
         self.writes = WritePass(ctx, IMAGE)
 
@@ -241,6 +242,9 @@ class Engine:
                     for rest in self.settings[number - 1 :]:
                         self._row(rest, CheckResult.skipped(STOPPED), before)
                     break
+                if self.halted:
+                    self._row(setting, CheckResult.stand_error(self.halted), before)
+                    continue
                 try:
                     self._one(setting, ranges[setting.key], before, masks, number)
                 except (Abort, CameraUnreachable) as e:
@@ -320,6 +324,10 @@ class Engine:
             # итог по положениям верен, а то, что камера осталась изменённой, скажет строка
             # возврата; здесь — пометка для разбора
             evidence.append(Evidence("restore.txt", back))
+            # W-3: журнал — один файл на камеру, и запись следующей настройки затёрла бы
+            # незакрытую запись этой, а её успешный возврат удалил бы файл. Тогда при снятии
+            # процесса следующий прогон принял бы изменённую настройку за исходную (AD-3)
+            self.halted = f"запись прекращена: настройка «{setting.title}» не вернулась: {back}"
         if problem is not None:
             self._row(setting, problem, before, evidence)
             return

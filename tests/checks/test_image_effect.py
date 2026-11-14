@@ -336,6 +336,36 @@ def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
 
 
 @needs_video
+def test_setting_that_did_not_return_stops_writing_on_this_camera(
+    camera_with, monkeypatch, tmp_path
+):
+    # W-3: журнал — один файл на камеру. Запись следующей настройки затирала незакрытую запись
+    # невернувшейся, а её успешный возврат удалял файл: при снятии процесса следующий прогон
+    # принял бы изменённую настройку за исходную (AD-3)
+    from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import imaging
+
+    original = imaging.ImagingWriter.restore
+
+    def restore(self, state, touched):
+        original(self, state, touched)
+        if "brightness" in touched:
+            return imaging.RestoreReport(left=[("Яркость", "50", "0")])
+        return imaging.RestoreReport()
+
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    cam = camera_with()
+    extra = {IMAGE.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    found = rows(run(cam, ["brightness", "saturation"], **extra))
+    saturation = found["IMAGE-SAT-1"]
+    assert saturation.status is Status.STAND_ERROR
+    assert "запись прекращена" in saturation.reason and "Яркость" in saturation.reason
+    assert found[RESTORE_ID].status is Status.FAILED
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None and kept.kind == "brightness"  # журнал невернувшейся не затёрт
+
+
+@needs_video
 def test_taboo_on_final_restore_keeps_rows_and_is_a_restore_blocker(camera_with, monkeypatch):
     # W-2 (1): этот возврат идёт из `finally`, и исключение отсюда уносило все строки проверки
     from qa_tool.core.taboo import TabooViolation

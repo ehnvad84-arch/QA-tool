@@ -207,6 +207,34 @@ def test_undeclared_second_codec_is_skipped(camera_with):
 
 
 @needs_vmaf
+def test_encoder_that_did_not_return_stops_writing_on_this_camera(
+    camera_with, monkeypatch, tmp_path
+):
+    # W5: журнал — один файл на камеру, и запись второго кодировщика затирала незакрытую запись
+    # первого: при снятии процесса следующий прогон вернул бы только второй (AD-3)
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    def restore(self, config):
+        # камера действительно осталась изменённой: возврат не отправляем вовсе
+        return encoder_driver.RestoreReport(left=[("Битрейт", "2048", "1024")])
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    streams = (MockStream("main", path="/live"), MockStream("sub", path="/sub", kbps=1000))
+    cam = camera_with(streams=streams, encoder_codecs=("H264",))
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    found = rows(run_check(SPEC, context(cam, extra)))
+    second = found["CODEC-H264-2"].result
+    assert second.status is Status.STAND_ERROR
+    assert "запись прекращена" in second.reason and "не вернулся" in second.reason
+    written = " ".join(str(w) for w in cam.state.encoder_writes)
+    assert "sub" not in written  # до второго кодировщика запись не дошла
+    assert found[RESTORE_ID].result.status is Status.FAILED
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None  # журнал первого кодировщика не затёрт вторым
+
+
+@needs_vmaf
 def test_taboo_on_restore_keeps_codec_rows_and_blames_the_restore(camera_with, monkeypatch):
     # W4: сторож табу на возврате выходил из `Engine.run`, и `run_check` терял все строки
     # кодеков вместе со строкой возврата — в протоколе оставалась одна «ошибка стенда»
