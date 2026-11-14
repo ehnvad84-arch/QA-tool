@@ -199,6 +199,23 @@ def test_fault_on_write_fails_row_and_nothing_is_left_changed(camera_with):
 
 
 @needs_vmaf
+def test_refused_reference_of_first_codec_does_not_lose_the_second(camera_with):
+    # W3: камера отвергла эталон текущего кодека (Tiandy 09.11) — второй кодек не снимался
+    # вовсе, хотя спека S4 требует продолжать остальные
+    if len(CODECS) < 2:
+        pytest.skip("нет H.265 в ffmpeg: второго кодека не будет")
+    # потолок ниже эталона (максимум 8192), но выше исходных 4000: возврат остаётся возможным
+    cam = camera_with(encoder_kbps_cap={"H264": 4000})
+    found = rows(run(cam))
+    first = found["CODEC-H264-1"].result
+    second = found["CODEC-H265-1"].result
+    assert first.status is Status.FAILED and "не приняла значение" in first.reason
+    assert second.status is Status.PASSED, second.reason
+    assert "VMAF" in second.reason  # ступени второго кодека сравнены со своим максимумом
+    assert found[RESTORE_ID].result.status is Status.PASSED, found[RESTORE_ID].result.reason
+
+
+@needs_vmaf
 def test_undeclared_second_codec_is_skipped(camera_with):
     cam = camera_with(encoder_codecs=("H264",))
     found = rows(run(cam))

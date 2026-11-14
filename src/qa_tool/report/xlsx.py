@@ -304,6 +304,8 @@ def _codec_sheet(ws: Worksheet, p: Protocol) -> None:
         for column, number_format in _CODEC_NUMBERS.items():
             ws.cell(index, column).number_format = number_format
         for column, link in enumerate(line.links[:2], start=19):
+            if not link:
+                continue  # место в списке закреплено за столбцом, пустое — просто пропускаем
             cell = ws.cell(index, column)
             cell.value = link.rsplit("/", 1)[-1]
             cell.data_type = "s"

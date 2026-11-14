@@ -423,9 +423,9 @@ class Engine:
         top_a = int(plan.options[a].kbps_max)
         self._current = row_id(a, plan.number)
         taken.top[a] = self._shot(plan, a, top_a, f"эталон в начале · {_named(a, top_a)}")
-        if taken.top[a].problem:
-            return
-        taken.steps[a] = self._steps(plan, a)
+        a_ready = not taken.top[a].problem
+        if a_ready:
+            taken.steps[a] = self._steps(plan, a)
         if b:
             self._current = row_id(b, plan.number)
             top_b = int(plan.options[b].kbps_max)
@@ -433,6 +433,12 @@ class Engine:
             taken.top[b] = self._shot(plan, b, top_b, what, switching=True)
             if not taken.top[b].problem:
                 taken.steps[b] = self._steps(plan, b)
+        if not a_ready:
+            # W3: камера отвергла эталон текущего кодека (живой случай Tiandy 09.11, 16 Мбит/с).
+            # Его строка — «не прошла», но второй кодек проверяется: спека S4 «эта ступень или
+            # кодек — не прошла, остальные продолжаются». Повтор эталона в конце сравнивать не с
+            # чем, поэтому его не снимаем
+            return
         self._current = row_id(a, plan.number)
         what = f"эталон в конце · {_named(a, top_a)}"
         taken.repeat = self._shot(plan, a, top_a, what, switching=bool(b))
@@ -571,6 +577,14 @@ class Engine:
             errors[b] += fail_b
             errors[a] += fail_a
         reference, why = choose_reference(cross.get(b or ""), cross.get(a), a, b or a, a, spread)
+        if b and top_a and top_a.problem and top_b and not top_b.problem:
+            # W3: эталон текущего кодека камера отвергла (Tiandy 09.11) — эталоном служит
+            # максимум второго, иначе его ступени остались бы без качества («эталон не снят»)
+            reference = b
+            why = (
+                f"эталон {codec_title(a)} камера не приняла — сравнение по "
+                f"максимуму {codec_title(b)}"
+            )
         ref = taken.top.get(reference)
         repeat_q, repeat_errors = (None, [])
         drift = ""
@@ -597,14 +611,25 @@ class Engine:
             elif codec != reference and codec in cross:
                 # ступень на том же битрейте уже есть — вторая точка сломала бы проверку роста
                 if all(s.kbps != top.kbps for s in taken.steps.get(codec, [])):
-                    curve.points.append(Point(top.kbps, top.measured_kbps, cross[codec]))
-            for shot in taken.steps.get(codec, []):
+                    curve.points.append(
+                        Point(top.kbps, top.measured_kbps, cross[codec], shot="ref")
+                    )
+            for number, shot in enumerate(taken.steps.get(codec, []), start=1):
                 found, failed = (None, [])
                 if not shot.problem and ref and ref.clip:
                     found, failed = self._quality(shot, ref)
                 errors[codec] += failed + ([shot.error] if shot.error else [])
+                # имя снимка — то, под которым его сохранит `_evidence`: по порядку ступеней,
+                # а не по месту точки в отсортированном списке (W1)
                 curve.points.append(
-                    Point(shot.kbps, shot.measured_kbps, found, shot.refused, shot.no_stream)
+                    Point(
+                        shot.kbps,
+                        shot.measured_kbps,
+                        found,
+                        shot.refused,
+                        shot.no_stream,
+                        shot=f"s{number}",
+                    )
                 )
             back = taken.repeat
             if codec == a and back is not None and (back.refused or back.no_stream):
@@ -731,6 +756,7 @@ class Engine:
                     "не принято": p.refused,
                     "поток не вернулся": p.no_stream,
                     "качество": _stat(p.quality),
+                    "снимок": p.shot or None,
                 }
                 for p in sorted(curve.points, key=lambda p: p.kbps)
             ],
