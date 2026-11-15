@@ -51,7 +51,7 @@
 
 Прочитай в начале сессии, если их ещё нет в контексте: docs/rules/conventions.md, docs/rules/architecture.md, docs/rules/never.md, docs/rules/security.md, docs/rules/comments.md.
 
-**Перед каждым push** — `.githooks/pre-push` (линтер с ERA001 и D1, `scripts/check_comments.py`, тесты; подключить один раз: `git config core.hooksPath .githooks`) и просмотр комментариев в диффе по docs/rules/comments.md: «почему, а не что», актуальность, без пересказа кода. Хук не обходить (`--no-verify` — нельзя).
+**Перед каждым push** — `.githooks/pre-push` (сверка замка `uv lock --check`, линтер с ERA001 и D1, `scripts/check_comments.py`, тесты; подключить один раз: `git config core.hooksPath .githooks`) и просмотр комментариев в диффе по docs/rules/comments.md: «почему, а не что», актуальность, без пересказа кода. Хук не обходить (`--no-verify` — нельзя).
 
 ## Как работаем
 
