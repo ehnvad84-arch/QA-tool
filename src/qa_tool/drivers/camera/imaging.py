@@ -491,7 +491,7 @@ class ImagingWriter:
         return found
 
     def restore(self, state: ImagingState, touched: list[str]) -> RestoreReport:
-        """Вернуть блок `state` целиком с ForcePersistence и сверить.
+        """Вернуть изменявшиеся блоки `state` с ForcePersistence и сверить.
 
         Args:
             state: снимок до записи.
@@ -501,8 +501,23 @@ class ImagingWriter:
             ImageWriteRefused: снимок трогает защищённое (не бывает: он и есть снимок).
             CameraUnreachable, OnvifFault: нет связи или отказ — возврат не подтверждён.
         """
-        self._send(state.element, None, persist=True)
+        self._send(self._to_restore(state, touched), None, persist=True)
         return self.verify(state, touched)
+
+    def _to_restore(self, state: ImagingState, touched: list[str]) -> Element:
+        """Блоки снимка для возврата: изменявшиеся и те защищённые, что камера сдвинула сама.
+
+        Возврат целого блока уходил во флеш вместе с экспозицией, ИК-фильтром и фокусом (W-6).
+        У части камер исходные параметры фокуса запускают перефокусировку, а в режиме AUTO в
+        экспозиции лежат мгновенные выдержка и усиление, то есть во флеш попадало случайное
+        значение. Защищённые блоки возвращаются только когда они действительно уехали — тот
+        самый случай Hikvision .111 09.11 (never.md). Цена — одно лишнее чтение настроек.
+        """
+        keep = {self.fields[key].path[0] for key in touched if key in self.fields}
+        keep |= {name for name, _was, _now in self.protected_drift()}
+        trimmed = Element(state.element.tag, dict(state.element.attrib))
+        trimmed.extend(child for child in state.element if _local(child.tag) in keep)
+        return trimmed if len(trimmed) else state.element
 
     def verify(self, state: ImagingState, touched: list[str]) -> RestoreReport:
         """Сверить картинку камеры со снимком `state` без записи (после возврата родным API).
@@ -568,6 +583,9 @@ def _key_of(fields: Mapping[str, FieldSpec], spec: FieldSpec) -> str:
     return next(key for key, candidate in fields.items() if candidate is spec)
 
 
+MIN_INTEGER_SPAN = 2.0  # меньше — округлять нечего: целых значений в диапазоне всего два
+
+
 def _range(element: Element | None, name: str) -> Declared | Unsupported | BadRange:
     """Диапазон Min…Max из GetOptions."""
     if element is None:
@@ -583,4 +601,8 @@ def _range(element: Element | None, name: str) -> Declared | Unsupported | BadRa
         return BadRange(f"диапазон «{name}» перевёрнут: {_format(low)} > {_format(high)}")
     if low == high:
         return Unsupported(f"диапазон «{name}» из одной точки ({_format(low)})")
-    return Declared(low, high, integer=low.is_integer() and high.is_integer())
+    # W-4: целыми границы считаются только при размахе от двух шагов. У нормированного
+    # диапазона 0…1 границы тоже целые, и округление превращало «положение 50 %» в 0 %:
+    # сдвиг получался нулевым, а настройка — «не прошла» ни за что
+    integer = low.is_integer() and high.is_integer() and high - low >= MIN_INTEGER_SPAN
+    return Declared(low, high, integer=integer)

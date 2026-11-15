@@ -8,6 +8,24 @@
 Камеры с разными диапазонами настроек сравниваются по процентам диапазона: 0 %, 50 %, 100 %.</p>
 <p>{% for slot, name in c.cameras %}<b>М{{ slot }}</b> — {{ name }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
 
+{% if not c.allowed %}
+<p class="note"><b>Изменяющие проверки были запрещены сценарием</b> — камеры снимались как есть,
+без записи настроек. Сравнивать можно только текущие кадры и прочитанные значения.</p>
+{% endif %}
+
+{% if c.state %}
+<h2>Текущие кадры и значения</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+  <tr>{% for cell in c.state %}<th>М{{ cell.slot }}</th>{% endfor %}</tr>
+  <tr>{% for cell in c.state %}
+    <td align="center">{% if cell.image %}<a href="{{ cell.image }}"><img src="{{ cell.image }}" width="200"></a>{% else %}—{% endif %}</td>
+  {% endfor %}</tr>
+  <tr>{% for cell in c.state %}
+    <td>{% for line in cell.lines %}{{ line }}<br>{% endfor %}</td>
+  {% endfor %}</tr>
+</table>
+{% endif %}
+
 <h2>Матрица: настройка × камера</h2>
 <table border="1" cellspacing="0" cellpadding="4">
   <thead><tr><th>Настройка</th>{% for slot, name in c.cameras %}<th>М{{ slot }}</th>{% endfor %}</tr></thead>

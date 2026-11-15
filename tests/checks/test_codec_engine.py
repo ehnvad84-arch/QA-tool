@@ -199,11 +199,90 @@ def test_fault_on_write_fails_row_and_nothing_is_left_changed(camera_with):
 
 
 @needs_vmaf
+def test_refused_reference_of_first_codec_does_not_lose_the_second(camera_with):
+    # W3: камера отвергла эталон текущего кодека (Tiandy 09.11) — второй кодек не снимался
+    # вовсе, хотя спека S4 требует продолжать остальные
+    if len(CODECS) < 2:
+        pytest.skip("нет H.265 в ffmpeg: второго кодека не будет")
+    # потолок ниже эталона (максимум 8192), но выше исходных 4000: возврат остаётся возможным
+    cam = camera_with(encoder_kbps_cap={"H264": 4000})
+    found = rows(run(cam))
+    first = found["CODEC-H264-1"].result
+    second = found["CODEC-H265-1"].result
+    assert first.status is Status.FAILED and "не приняла значение" in first.reason
+    assert second.status is Status.PASSED, second.reason
+    assert "VMAF" in second.reason  # ступени второго кодека сравнены со своим максимумом
+    assert found[RESTORE_ID].result.status is Status.PASSED, found[RESTORE_ID].result.reason
+
+
+@needs_vmaf
 def test_undeclared_second_codec_is_skipped(camera_with):
     cam = camera_with(encoder_codecs=("H264",))
     found = rows(run(cam))
     assert found["CODEC-H265-1"].result.status is Status.SKIPPED
     assert found["CODEC-H264-1"].result.status is Status.PASSED, found["CODEC-H264-1"].result.reason
+
+
+@needs_vmaf
+def test_encoder_that_did_not_return_stops_writing_on_this_camera(
+    camera_with, monkeypatch, tmp_path
+):
+    # W5: журнал — один файл на камеру, и запись второго кодировщика затирала незакрытую запись
+    # первого: при снятии процесса следующий прогон вернул бы только второй (AD-3)
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    def restore(self, config):
+        # камера действительно осталась изменённой: возврат не отправляем вовсе
+        return encoder_driver.RestoreReport(left=[("Битрейт", "2048", "1024")])
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    streams = (MockStream("main", path="/live"), MockStream("sub", path="/sub", kbps=1000))
+    cam = camera_with(streams=streams, encoder_codecs=("H264",))
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    found = rows(run_check(SPEC, context(cam, extra)))
+    second = found["CODEC-H264-2"].result
+    assert second.status is Status.STAND_ERROR
+    assert "запись прекращена" in second.reason and "не вернулся" in second.reason
+    written = " ".join(str(w) for w in cam.state.encoder_writes)
+    assert "sub" not in written  # до второго кодировщика запись не дошла
+    assert found[RESTORE_ID].result.status is Status.FAILED
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None  # журнал первого кодировщика не затёрт вторым
+
+
+@needs_vmaf
+def test_taboo_on_restore_keeps_codec_rows_and_blames_the_restore(camera_with, monkeypatch):
+    # W4: сторож табу на возврате выходил из `Engine.run`, и `run_check` терял все строки
+    # кодеков вместе со строкой возврата — в протоколе оставалась одна «ошибка стенда»
+    from qa_tool.core.taboo import TabooViolation
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    def restore(self, config):
+        raise TabooViolation("порт мультикаста изменился: запрос не отправлен")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    cam = camera_with(encoder_codecs=("H264",))
+    result = run(cam)
+    found = rows(result)
+    assert "CODEC-H264-1" in found  # строка кодека не потеряна
+    restore_row = found[RESTORE_ID].result
+    assert restore_row.status is Status.FAILED
+    assert "возврат не выполнен" in restore_row.reason
+    assert "мультикаста" in restore_row.reason or "мультикаста" in restore_row.actual
+
+
+@needs_vmaf
+def test_shots_include_the_native_resolution_center(camera_with):
+    # W8 (б): в листе было два снимка вместо четырёх — центра 1:1 не сохранялось вовсе, а
+    # уменьшенный целый кадр прячет блочность, о которой и вся проверка
+    found = rows(run(camera_with(encoder_codecs=("H264",))))
+    row = found["CODEC-H264-1"]
+    names = {e.name for e in row.result.evidence}
+    assert "ref.jpg" in names and "ref_c.jpg" in names, sorted(names)
+    centers = [e for e in row.result.evidence if e.name.endswith("_c.jpg")]
+    assert centers and all(e.kind == "image" and e.content for e in centers)
+    assert any(e.name.startswith("s") for e in centers), sorted(n.name for n in centers)
 
 
 def test_without_checkbox_nothing_is_written(camera_with):
@@ -318,6 +397,76 @@ def test_write_left_by_previous_run_is_returned_with_checkbox(camera_with, tmp_p
     now = settings_of(cam)
     assert (now["kbps"], now["constant"]) == (4000, False)
     assert load(tmp_path, "127.0.0.1", cam.port) is None
+
+
+@needs_vmaf
+def test_journal_on_restore_holds_the_last_written_value(camera_with, monkeypatch, tmp_path):
+    # W6: на стадии возврата в журнал уходил снимок, то есть `new == old`. Снятый во время
+    # возврата процесс оставлял следующему прогону блокер «поменял кто-то другой»
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import encoder as encoder_driver
+    from qa_tool.drivers.camera.soap import CameraUnreachable
+
+    def restore(self, config):
+        raise CameraUnreachable("нет ответа (ReadTimeout)")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "restore", restore)
+    cam = camera_with(encoder_codecs=("H264",))
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    run_check(SPEC, context(cam, extra))
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None and kept.stage == "restoring"
+    assert kept.new != kept.old, kept.new  # иначе следующий прогон решит, что менял не он
+    assert "кбит/с" in kept.new
+
+
+def test_steps_after_codec_switch_use_the_new_stream_address(camera_with, monkeypatch):
+    # W7: адрес брался из плана, прочитанного до смены кодека, и каждая ступень второго кодека
+    # открывалась со второй попытки после `restart_wait_s`
+    from qa_tool.drivers.camera import encoder as encoder_driver
+
+    if len(CODECS) < 2:
+        pytest.skip("нет H.265 в ffmpeg: смены кодека не будет")
+    seen = []
+
+    def capture(self, plan, shot, uri):
+        seen.append(uri)
+
+    original_uri = encoder_driver.EncoderWriter.stream_uri
+
+    def stream_uri(self, token):
+        # адрес меняется только после первой выборки: до неё план берёт настоящий адрес камеры,
+        # иначе подмена попала бы и в план, и тест перестал бы различать правку
+        return "rtsp://new/path" if seen else original_uri(self, token)
+
+    monkeypatch.setattr(engine.Engine, "_capture", capture)
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "stream_uri", stream_uri)
+    run(camera_with())
+    assert "rtsp://new/path" in seen, seen
+    switched = seen.index("rtsp://new/path")
+    assert len(seen) > switched + 1, seen  # после смены кодека есть ещё ступени
+    assert all(u == "rtsp://new/path" for u in seen[switched:]), seen
+
+
+def test_stand_error_after_old_journal_keeps_its_blocker(camera_with, monkeypatch, tmp_path):
+    # W2: журнал прошлого прогона разобран и удалён, а `GetVideoEncoderConfigurationOptions`
+    # ответил Fault — без строк в `children` блокер пропал бы из протокола насовсем
+    from qa_tool.core.write_journal import CODEC, RUN_ID_KEY
+    from qa_tool.drivers.camera import encoder as encoder_driver
+    from qa_tool.drivers.camera.soap import OnvifFault
+
+    cam = camera_with(encoder_codecs=("H264",))
+    leave_previous_write(cam, tmp_path)
+
+    def options(self, token):
+        raise OnvifFault("ter:Action")
+
+    monkeypatch.setattr(encoder_driver.EncoderWriter, "options", options)
+    extra = {CODEC.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NEW"}
+    result = run_check(SPEC, context(cam, extra, allow_writes=False))
+    assert result.status is Status.STAND_ERROR and "не прочитаны" in result.reason
+    old = next(c for c in result.children if c.check_id == CODEC.lost_spec.id)
+    assert old.result.status is Status.FAILED and old.severity.value == "блокер"
 
 
 def test_write_left_by_previous_run_without_checkbox_is_a_blocker(camera_with, tmp_path):

@@ -110,6 +110,7 @@ class Capture:
     clip: bytes | None = None  # выборка потока — только если просили
     preview_jpeg: bytes = b""
     thumb_jpeg: bytes = b""
+    center_jpeg: bytes = b""  # центр кадра в родном разрешении — только если просили
 
 
 def luma(rgb: np.ndarray) -> np.ndarray:
@@ -172,12 +173,14 @@ class RtspFrameSource:
         timings: Timings | None = None,
         sample_bytes: int = SAMPLE_BYTES,
         prefix: str = IMAGE_PREFIX,
+        center: bool = False,
     ):
         self.ctx = ctx
         self.url = to_stand_address(uri, ctx.camera.address, ctx.camera.rtsp_port)
         self.timings = timings or Timings.of(ctx)
         self.sample_bytes = sample_bytes
         self.prefix = prefix
+        self.center = center  # «Кодеки»: снимок центра 1:1, на нём видны артефакты сжатия
         self.exchanges: list[str] = []  # обмен RTSP без секретов — в доказательства
 
     def capture(
@@ -216,6 +219,8 @@ class RtspFrameSource:
                     on_packet(packet)
             capture.clip = sample.read_bytes() if keep_clip else None
             capture.preview_jpeg, capture.thumb_jpeg = self._jpeg(ffmpeg, folder, capture.work)
+            if self.center:
+                capture.center_jpeg = self._center(ffmpeg, folder, capture.fragment)
             return capture
         finally:
             shutil.rmtree(folder, ignore_errors=True)
@@ -341,6 +346,30 @@ class RtspFrameSource:
             return int(stream.get("width", 0)), int(stream.get("height", 0))
         except (ValueError, TypeError, AttributeError):
             return 0, 0
+
+    @staticmethod
+    def _center(ffmpeg: str, folder: Path, fragment: np.ndarray) -> bytes:
+        """Центр кадра в родном разрешении, качество почти без потерь.
+
+        Уменьшенный целый кадр прячет блочность и размытие, а проверка кодеков как раз о них
+        (W8). Поэтому центр сохраняется как есть, 1:1.
+        """
+        height, width = fragment.shape[:2]
+        header = f"P6\n{width} {height}\n255\n".encode()
+        target = folder / "center.jpg"
+        command = [ffmpeg, "-hide_banner", "-v", "error", "-y", "-f", "image2pipe", "-c:v", "ppm"]
+        command += ["-i", "-", "-q:v", "2", "-frames:v", "1", str(target)]
+        done = subprocess.run(
+            command,
+            input=header + fragment.tobytes(),
+            capture_output=True,
+            timeout=DECODE_TIMEOUT_S,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if done.returncode or not target.exists():
+            raise DecoderFailed(f"ffmpeg не сохранил центр кадра (код {done.returncode})")
+        return target.read_bytes()
 
     @staticmethod
     def _jpeg(ffmpeg: str, folder: Path, work: np.ndarray) -> tuple[bytes, bytes]:

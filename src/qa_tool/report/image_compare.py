@@ -52,6 +52,15 @@ class SettingSheet:
 
 
 @dataclass
+class StateCell:
+    """Текущее состояние одной камеры: кадр и прочитанные значения настроек (S7, S10)."""
+
+    slot: int
+    image: str
+    lines: list[str]
+
+
+@dataclass
 class ImageCompare:
     """Содержимое отчёта сравнения картинки."""
 
@@ -59,6 +68,8 @@ class ImageCompare:
     cameras: list[tuple[int, str]]  # (место, «Производитель Модель»)
     matrix: list[tuple[str, str, dict[int, str]]]  # (ID, настройка, место → итог)
     sheets: list[SettingSheet]
+    allowed: bool = True  # хоть одна камера писала настройки
+    state: list[StateCell] = field(default_factory=list)  # текущие кадры и значения (W-8)
 
 
 def _relative(numbers: list[float | None]) -> list[float | None]:
@@ -123,7 +134,15 @@ def build_image_compare(summary: Summary, run_dir: Path) -> ImageCompare | None:
                 )
             )
         sheets.append(sheet)
-    return ImageCompare(summary.run_id, cameras, matrix, sheets)
+    # W-8: без галочки строки настроек — «пропущена» без кадров и величин, и сравнение
+    # получалось из девяти листов с «—». Спека (S7, S10) требует текущие кадры и значения
+    allowed = any(p.image.allowed for p in protocols)
+    state = [
+        StateCell(p.slot, p.image.state_image, list(p.image.state_lines))
+        for p in protocols
+        if p.image.state_image or p.image.state_lines
+    ]
+    return ImageCompare(summary.run_id, cameras, matrix, sheets, allowed, state)
 
 
 def publish_image_compare(compare: ImageCompare, run_dir: Path) -> list[Path]:
@@ -145,6 +164,17 @@ def _xlsx(compare: ImageCompare, path: Path) -> Path:
         for check_id, title, results in compare.matrix
     ]
     table(ws, headers, rows, {1: 18, 2: 30})
+    if compare.state:
+        # W-8: лист «Камеры» — текущие значения настроек каждой камеры; без галочки он
+        # единственный, где вообще есть числа
+        ws = wb.create_sheet("Камеры")
+        names = dict(compare.cameras)
+        body = [
+            [f"М{cell.slot}", names.get(cell.slot, ""), line]
+            for cell in compare.state
+            for line in (cell.lines or ["—"])
+        ]
+        table(ws, ["Место", "Камера", "Текущее значение"], body, {2: 28, 3: 60})
     for sheet in compare.sheets:
         ws = wb.create_sheet(sheet.check_id[:31])
         heads = ["Место", "Камера", "Результат", "Эффект", *(f"Величина {x}" for x in sheet.labels)]

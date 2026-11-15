@@ -87,6 +87,39 @@ def test_healthy_settings_pass_with_three_snapshots_and_are_restored(camera_with
 
 
 @needs_video
+def test_each_setting_gets_its_own_before_frames(camera_with, monkeypatch):
+    # W-7: пара кадров «до» снималась один раз на всю проверку, и уход света за время проверки
+    # давал поздним настройкам «после возврата сцена менялась» на пустом месте
+    original = frames.RtspFrameSource.capture
+    moments = []
+
+    def capture(self, *args, **kwargs):
+        moments.append(len(moments))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
+    cam = camera_with()
+    found = rows(run(cam, ["brightness", "saturation"]))
+    assert found["IMAGE-BRIGHT-1"].status is Status.PASSED
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    # две пары «до» проверки и по паре на каждую из двух настроек: снимков стало больше
+    assert len(moments) >= 2 + 2 * 2 + 2 * 3
+
+
+@needs_video
+def test_restore_sends_only_the_changed_block(camera_with):
+    # W-6: возврат шёл целым блоком с ForcePersistence, и во флеш уходили экспозиция, ИК-фильтр
+    # и фокус; у части камер исходные параметры фокуса запускают перефокусировку
+    cam = camera_with()
+    found = rows(run(cam, ["brightness"]))
+    assert found[RESTORE_ID].status is Status.PASSED, found[RESTORE_ID].reason
+    last = cam.state.imaging_writes[-1]  # последняя запись — возврат
+    assert "<tt:Brightness>" in last, last
+    assert "<tt:Exposure>" not in last and "<tt:Focus>" not in last, last
+    assert "<tt:IrCutFilter>" not in last, last
+
+
+@needs_video
 def test_deaf_and_reversed_settings_fail(camera_with):
     cam = camera_with(imaging_effects={"saturation": "none", "contrast": "reverse"})
     found = rows(run(cam, ["saturation", "contrast"]))
@@ -94,6 +127,24 @@ def test_deaf_and_reversed_settings_fail(camera_with):
     assert deaf.status is Status.FAILED and "эффекта нет" in deaf.reason
     assert reversed_.status is Status.FAILED and reversed_.reason.startswith("эффект обратный")
     assert found[RESTORE_ID].status is Status.PASSED
+
+
+@needs_video
+def test_failed_row_carries_stream_clips_and_passed_one_does_not(camera_with):
+    # W-9: спека обещает `clip_pNNN` у «не прошла», а `keep_clip` нигде не передавался —
+    # выборок не было ни у одной строки, и повторить дефект декодером было нечем
+    cam = camera_with(imaging_effects={"saturation": "none"})
+    found = rows(run(cam, ["saturation", "brightness"]))
+    failed = found["IMAGE-SAT-1"]
+    assert failed.status is Status.FAILED
+    clips = [e.name for e in failed.evidence if e.name.startswith("clip_")]
+    assert clips and all(e.endswith((".h264", ".h265")) for e in clips), clips
+    assert all(
+        e.kind == "video" and e.content for e in failed.evidence if e.name.startswith("clip_")
+    )
+    passed = found["IMAGE-BRIGHT-1"]
+    assert passed.status is Status.PASSED
+    assert not [e for e in passed.evidence if e.name.startswith("clip_")]
 
 
 @needs_video
@@ -169,7 +220,9 @@ def test_scene_moved_after_restore_is_stand_error_with_expectation(camera_with, 
 
     def moved(*_args):
         calls.append(1)
-        return "" if len(calls) == 1 else "средняя яркость ушла на 12 уровней"
+        # первые два вызова — пара «до» проверки и своя пара «до» настройки (W-7): до записи
+        # сцена стоит. Сдвиг наступает только на контрольном кадре после возврата
+        return "" if len(calls) <= 2 else "средняя яркость ушла на 12 уровней"
 
     monkeypatch.setattr(engine, "moved", moved)
     row = rows(run(camera_with(), ["brightness"]))["IMAGE-BRIGHT-1"]
@@ -188,6 +241,31 @@ def unsettled_while(monkeypatch, holds):
         return shot
 
     monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
+
+
+def few_frames_while(monkeypatch, holds):
+    """Выборка короче `settle_frames` — медленный поток камеры, пока `holds()` истинно."""
+    original = frames.RtspFrameSource.capture
+
+    def capture(self, *args, **kwargs):
+        shot = original(self, *args, **kwargs)
+        if holds():
+            shot.lumas = shot.lumas[:1]
+            shot.stable = False
+        return shot
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", capture)
+
+
+@needs_video
+def test_short_sample_is_stand_error_with_the_real_cause(camera_with, monkeypatch):
+    # W-11: камера с медленным потоком получала «не прошла» с причиной «колеблется на 0,0»,
+    # и по ней не понять, что надо увеличить image.clip_s
+    cam = camera_with()
+    few_frames_while(monkeypatch, lambda: re.search(r"<tt:Brightness>100\b", cam.state.imaging_xml))
+    row = rows(run(cam, ["brightness"]))["IMAGE-BRIGHT-1"]
+    assert row.status is Status.STAND_ERROR, row.reason
+    assert "кадров в выборке 1" in row.reason and "image.clip_s" in row.reason
 
 
 @needs_video
@@ -302,6 +380,24 @@ def test_write_left_by_previous_run_without_checkbox_is_a_blocker(camera_with, t
     assert cam.state.imaging_writes == []
 
 
+def test_stand_error_after_old_journal_keeps_its_blocker(camera_with, monkeypatch, tmp_path):
+    # тот же дефект, что «Кодеки» W2: журнал прошлого прогона к этому моменту уже разобран и
+    # удалён, и без строк в `children` его блокер пропал бы из протокола насовсем
+    from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, save
+
+    def refuse(self, *args, **kwargs):
+        raise frames.StreamRefused("поток не открывается: камера закрыла соединение RTSP")
+
+    monkeypatch.setattr(frames.RtspFrameSource, "capture", refuse)
+    cam = camera_with(xml=MANUAL.replace("<tt:Contrast>50<", "<tt:Contrast>100<"))
+    save(tmp_path, journal_entry(port=cam.port))
+    extra = {IMAGE.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NEW"}
+    result = run(cam, ["saturation"], allow_writes=False, **extra)
+    assert result.status is Status.STAND_ERROR and "RTSP" in result.reason
+    old = next(c for c in result.children if c.check_id == IMAGE.lost_spec.id)
+    assert old.result.status is Status.FAILED and old.severity.value == "блокер"
+
+
 @needs_video
 def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
     from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, load
@@ -333,6 +429,108 @@ def test_camera_lost_midway_keeps_rows_and_journal(camera_with, tmp_path):
     assert restore.status is Status.FAILED and "не вернулась" in restore.reason
     kept = load(tmp_path, "127.0.0.1", cam.port)
     assert kept is not None and kept.kind == "saturation"
+
+
+@needs_video
+def test_setting_that_did_not_return_stops_writing_on_this_camera(
+    camera_with, monkeypatch, tmp_path
+):
+    # W-3: журнал — один файл на камеру. Запись следующей настройки затирала незакрытую запись
+    # невернувшейся, а её успешный возврат удалял файл: при снятии процесса следующий прогон
+    # принял бы изменённую настройку за исходную (AD-3)
+    from qa_tool.core.write_journal import IMAGE, RUN_ID_KEY, load
+    from qa_tool.drivers.camera import imaging
+
+    original = imaging.ImagingWriter.restore
+
+    def restore(self, state, touched):
+        original(self, state, touched)
+        if "brightness" in touched:
+            return imaging.RestoreReport(left=[("Яркость", "50", "0")])
+        return imaging.RestoreReport()
+
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    cam = camera_with()
+    extra = {IMAGE.folder_key: str(tmp_path), RUN_ID_KEY: "QA-NOW"}
+    found = rows(run(cam, ["brightness", "saturation"], **extra))
+    saturation = found["IMAGE-SAT-1"]
+    assert saturation.status is Status.STAND_ERROR
+    assert "запись прекращена" in saturation.reason and "Яркость" in saturation.reason
+    assert found[RESTORE_ID].status is Status.FAILED
+    kept = load(tmp_path, "127.0.0.1", cam.port)
+    assert kept is not None and kept.kind == "brightness"  # журнал невернувшейся не затёрт
+    # W-1: блокер возврата уже в протоколе, поэтому планировщик не добавит второй с ложной
+    # причиной «процесс проверки камеры был снят»
+    assert kept.reported is True
+
+
+@needs_video
+def test_taboo_on_final_restore_keeps_rows_and_is_a_restore_blocker(camera_with, monkeypatch):
+    # W-2 (1): этот возврат идёт из `finally`, и исключение отсюда уносило все строки проверки
+    from qa_tool.core.taboo import TabooViolation
+    from qa_tool.drivers.camera import imaging
+
+    original = imaging.ImagingWriter.restore
+
+    def restore(self, state, touched):
+        # полный возврат в конце шлёт все настройки сразу, возврат после настройки — одну
+        if len(touched) > 1:
+            raise TabooViolation("SetUser в блоке настроек: запрос не отправлен")
+        return original(self, state, touched)
+
+    monkeypatch.setattr(imaging.ImagingWriter, "restore", restore)
+    found = rows(run(camera_with(), ["brightness", "saturation"]))
+    assert found["IMAGE-BRIGHT-1"].status is Status.PASSED
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    restore_row = found[RESTORE_ID]
+    assert restore_row.status is Status.FAILED
+    assert "возврат не выполнен" in restore_row.reason and "SetUser" in restore_row.reason
+
+
+@needs_video
+def test_unexpected_error_on_setting_returns_it_before_the_next_one(camera_with, monkeypatch):
+    # W-2 (2): без возврата здесь следующая настройка снималась бы с изменённой предыдущей
+    from qa_tool.checks.image import engine as image_engine
+
+    original_measure = image_engine.measure
+    armed = {"fail": True}
+    seen = {}
+
+    def measure(metric, capture, masks):
+        if armed["fail"] and metric == "mean_luma":
+            armed["fail"] = False
+            raise RuntimeError("метрика не посчиталась")
+        return original_measure(metric, capture, masks)
+
+    monkeypatch.setattr(image_engine, "measure", measure)
+    cam = camera_with()
+    before = cam.state.imaging_xml
+    target = Camera(
+        slot=1, address="127.0.0.1", port=cam.port, rtsp_port=cam.rtsp_port, username="admin"
+    )
+    thresholds = {k: Threshold(v, "", "тест") for k, v in FAST.items()}
+    ctx = CheckContext(
+        target,
+        "admin",
+        Place.COLOR_BOX,
+        thresholds,
+        {image_engine.SETTINGS_KEY: ["brightness", "saturation"]},
+        allow_writes=True,
+    )
+
+    def progress(text):
+        # момент наблюдения: яркость обязана быть уже возвращена, а не ждать конца проверки
+        if text.startswith("Насыщенность · 0") and "яркость" not in seen:
+            seen["яркость"] = cam.state.imaging_xml
+
+    ctx.progress = progress
+    found = rows(run_check(SPEC, ctx))
+    assert "<tt:Brightness>50</tt:Brightness>" in seen["яркость"], seen["яркость"]
+    bright = found["IMAGE-BRIGHT-1"]
+    assert bright.status is Status.STAND_ERROR and "RuntimeError" in bright.reason
+    assert found["IMAGE-SAT-1"].status is Status.PASSED
+    assert found[RESTORE_ID].status is Status.PASSED
+    assert cam.state.imaging_xml == before  # камера ушла такой, какой пришла (AD-3)
 
 
 @needs_video

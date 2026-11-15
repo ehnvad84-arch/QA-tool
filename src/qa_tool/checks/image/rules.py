@@ -53,6 +53,11 @@ def limit(ctx: CheckContext, key: str) -> Threshold:
     return ctx.thresholds.get(key, DEFAULTS[key])
 
 
+# Величины яркости: только им упор в пределы сцены (пересвет или чернота) мешает двигаться
+# дальше, поэтому только у них слабый шаг можно списать на этот упор (W-10)
+LUMA_METRICS = frozenset({"mean_luma", "luma_std", "center_luma", "luma_spread"})
+
+
 @dataclass(frozen=True)
 class Rule:
     """Правило одной настройки: в какую сторону и на сколько должна сдвинуться величина."""
@@ -64,6 +69,18 @@ class Rule:
     clip_pct: float
     relative: bool  # величина в % от значения в положении 0 %
     exposure: Exposure
+    metric: str = "mean_luma"
+
+    @property
+    def forgives_clip(self) -> bool:
+        """Можно ли списать слабый шаг на упор в пределы сцены (W-10).
+
+        Только яркостные величины: дальше пересвета или черноты яркость двигаться не может.
+        У насыщенности, баланса белого, резкости и шумоподавления упёршиеся точки из величины
+        и так исключены, а в кадре бокса пять процентов черноты есть почти всегда (тёмный фон,
+        корпус) — значит, прощалось бы постоянно и ровно там, где не должно.
+        """
+        return self.metric in LUMA_METRICS
 
     @property
     def problem(self) -> str:
@@ -98,6 +115,7 @@ def rule_for(ctx: CheckContext, key: str) -> Rule:
         limit(ctx, "image.clip_pct").value,
         BY_KEY[key].unit == RELATIVE_UNIT,
         BY_KEY[key].exposure,
+        BY_KEY[key].metric,
     )
 
 
@@ -129,7 +147,9 @@ def verdict(
     Args:
         rule: правило настройки.
         values: величины в положениях: три (0, 50, 100 %) или два (выкл, вкл).
-        clipped: доля пересвета или черноты в тех же положениях, %.
+        clipped: упор в пределы сцены в тех же положениях, %, со знаком: пересвет
+            положительный, чернота отрицательная. Знак нужен, чтобы прощать слабый шаг только
+            в сторону движения величины (W-10).
         exposure_mode: AUTO, MANUAL или None — камера не сообщила.
         scene_ok: условие сцены для настройки выполнено.
 
@@ -208,12 +228,14 @@ def verdict(
     weak_index = 0 if s * d1 < step else 1
     name, delta = steps[weak_index]
     weak = (0, 1) if weak_index == 0 else (1, 2)
-    if any(clipped[i] >= rule.clip_pct for i in weak):
+    # упор прощается только в сторону движения: пересвет при росте, чернота при падении (W-10)
+    if rule.forgives_clip and any(s * clipped[i] >= rule.clip_pct for i in weak):
+        at_limit = "пересвет" if s > 0 else "чернота"
         return Verdict(
             "effect",
             Status.PASSED,
             f"эффект есть: на шаге {name} изменение {_num(abs(delta))} {limit_text} — "
-            "упор в пределы сцены (пересвет или чернота)",
+            f"упор в пределы сцены ({at_limit})",
         )
     return Verdict(
         "partial",

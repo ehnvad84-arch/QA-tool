@@ -356,12 +356,12 @@ def _shots(
             (s for s in measure.get("ступени", []) if isinstance(s, dict)),
             key=lambda s: -(_finite(s.get("задано")) or 0),
         )
-        for index, step in enumerate(steps, start=1):
+        for step in steps:
             vmaf = _quality(step, "vmaf")
             if vmaf is None or (worst is not None and vmaf >= worst[0]):
                 continue
-            name = f"s{index}"
-            if (run_dir / folders[codec] / f"{name}_t.jpg").exists():
+            name = str(step.get("снимок") or "")
+            if name and (run_dir / folders[codec] / f"{name}_t.jpg").exists():
                 caption = (
                     f"{CODEC_TITLES.get(codec, codec)} · {mbit(step.get('задано'))} Мбит/с · "
                     f"VMAF {num(vmaf)}"
@@ -370,7 +370,23 @@ def _shots(
     if worst is not None:
         _vmaf, folder, name, caption = worst
         shots.append((f"{folder}/{name}_t.jpg", f"{folder}/{name}.jpg", caption))
+    # W8: центр 1:1 рядом с целым кадром — на уменьшенном блочность не видна
+    for folder, name, caption in _center_pairs(ref_codec, folders, worst):
+        if (run_dir / folder / f"{name}_c.jpg").exists():
+            shots.append((f"{folder}/{name}_c.jpg", f"{folder}/{name}_c.jpg", caption))
     return shots
+
+
+def _center_pairs(ref_codec: str, folders: dict[str, str], worst) -> list[tuple[str, str, str]]:
+    """Какие снимки центра 1:1 показывать: эталон и худшая ступень (спека, UI, п. 4)."""
+    pairs = []
+    if ref_codec in folders:
+        title = CODEC_TITLES.get(ref_codec, ref_codec)
+        pairs.append((folders[ref_codec], "ref", f"{title} · эталон · центр 1:1"))
+    if worst is not None:
+        _vmaf, folder, name, caption = worst
+        pairs.append((folder, name, f"{caption} · центр 1:1"))
+    return pairs
 
 
 def build_codec_appendix(
@@ -461,11 +477,18 @@ def _lines(number: int, row, run_dir: Path) -> list[CodecLine]:
     for index, step in enumerate(steps, start=1):
         target, got = _finite(step.get("задано")), _finite(step.get("в потоке"))
         place = f"{index} из {len(steps)}"
-        links = [
-            f"{row.evidence}/{name}.jpg"
-            for name in (f"s{index}", "ref")
-            if (run_dir / row.evidence / f"{name}.jpg").exists()
-        ]
+        # W1: имя снимка берётся у самой точки, иначе ссылки съезжали на одну, когда в
+        # `ступени` попадала лишняя точка (максимум второго кодека, неудачный возврат).
+        # Места в списке закреплены: пустая строка вместо пропуска, иначе снимок ступени
+        # оказался бы в столбце эталона
+        name = str(step.get("снимок") or "")
+        own = f"{row.evidence}/{name}.jpg"
+        step_link = own if name and (run_dir / own).exists() else ""
+        # `ref.jpg` строки — всегда её собственный максимум; у второго кодека он не эталон
+        ref_link = ""
+        if ref_codec == codec and (run_dir / row.evidence / "ref.jpg").exists():
+            ref_link = f"{row.evidence}/ref.jpg"
+        links = [step_link, ref_link]
         line = shown.get(place)
         out.append(
             CodecLine(

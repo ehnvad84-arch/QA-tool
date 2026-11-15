@@ -45,6 +45,24 @@ def test_cases_of_the_verdict_rule(key, values, mode, code, status):
     assert (found.code, found.status) == (code, status), found.reason
 
 
+def test_clipping_excuses_only_luma_metrics_and_only_towards_the_movement():
+    # W-10: упор прощался любой величине и с любой стороны. В кадре бокса пять процентов
+    # черноты есть почти всегда, и тогда «эффект на части диапазона» становился «прошла»
+    bright = rule_for(ctx(), "brightness")  # яркость растёт, величина — mean_luma
+    assert verdict(bright, [100, 140, 142], [0, 0, 40], "MANUAL").code == "effect"
+    # чернота при растущей величине упором не считается
+    assert verdict(bright, [100, 140, 142], [0, 0, -40], "MANUAL").code == "partial"
+    # величина не яркостная — упор не прощает вовсе
+    sharp = rule_for(ctx(), "sharpness")
+    assert not sharp.forgives_clip
+    assert verdict(sharp, [100, 105, 115], [0, 40, 40], "AUTO").code == "partial"
+    # у падающей величины упором служит чернота
+    wdr = rule_for(ctx(), "wdr")
+    assert wdr.direction < 0 and wdr.forgives_clip
+    assert verdict(wdr, [80, 40, 39], [0, 0, -40], "MANUAL").code == "effect"
+    assert verdict(wdr, [80, 40, 39], [0, 0, 40], "MANUAL").code == "partial"
+
+
 def test_partial_effect_is_minor_and_clipping_excuses_it():
     rule = rule_for(ctx(), "brightness")
     partial = verdict(rule, [100, 140, 142], NO_CLIP, "MANUAL")

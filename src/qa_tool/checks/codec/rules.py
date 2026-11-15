@@ -102,6 +102,7 @@ class Point:
     quality: Quality | None = None
     refused: str = ""
     no_stream: str = ""
+    shot: str = ""  # имя снимка точки без расширения: `ref`, `s1`… (W1); пусто — снимка нет
 
 
 @dataclass

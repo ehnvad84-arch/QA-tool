@@ -115,6 +115,22 @@ def _jpeg(name: str, capture: Capture | None) -> list[Evidence]:
     ]
 
 
+def _clips(positions: list["Position"]) -> list[Evidence]:
+    """Выборки потока положений — `clip_pNNN.h264|h265` (спека, «Доказательства»).
+
+    Нужны только у «не прошла»: без них программист не может повторить дефект декодером
+    (W-9). У «прошла» выборки отбрасываются — прогон восьми камер иначе раздуется.
+    """
+    found = []
+    for position in positions:
+        capture = position.capture
+        if capture is None or not capture.clip:
+            continue
+        extension = "h265" if capture.codec in ("hevc", "h265") else "h264"
+        found.append(Evidence(f"clip_{position.name}.{extension}", capture.clip, kind="video"))
+    return found
+
+
 def _positions_text(positions: list["Position"], setting: Setting) -> str:
     """«0 % — 82,4; 50 % — 121,0; 100 % — 163,5 (средняя яркость кадра)» — графа «Факт»."""
     two = len(positions) == 2
@@ -131,6 +147,29 @@ def _shown(value: float | None) -> str:
     return "—" if value is None else f"{value:.6g}"
 
 
+def _few_frames(capture: Capture, ctx: CheckContext) -> str:
+    """Почему выборка коротка; пусто — кадров достаточно.
+
+    `stable` ложно не только когда картинка колеблется, но и когда кадров в выборке меньше
+    `settle_frames`: при `clip_s` 2 с и пяти кадрах это поток медленнее 2,5 к/с или декодер,
+    уложившийся в срок с частью кадров. Причина «колеблется на 0,0» в этом случае вводит в
+    заблуждение, и инженер не понимает, что надо увеличить `image.clip_s` (W-11).
+    """
+    if capture.stable:
+        return ""
+    timings = Timings.of(ctx)
+    if len(capture.lumas) >= timings.settle_frames:
+        return ""
+    fps = timings.settle_frames / timings.clip_s if timings.clip_s else 0.0
+    # запятая — только в числе: замена по всей строке превратила бы и `image.clip_s` в
+    # `image,clip_s`, а это имя порога, которое инженер будет искать в thresholds.yaml
+    shown = f"{fps:.1f}".replace(".", ",")
+    return (
+        f"кадров в выборке {len(capture.lumas)}, нужно не меньше {timings.settle_frames}: "
+        f"поток камеры медленнее {shown} к/с — увеличьте image.clip_s"
+    )
+
+
 def _not_settled(capture: Capture, ctx: CheckContext, moment: str) -> str:
     """Почему снимок не успокоился за `settle_max_s`; пусто — снимок стабилен.
 
@@ -142,6 +181,9 @@ def _not_settled(capture: Capture, ctx: CheckContext, moment: str) -> str:
     """
     if capture.stable:
         return ""
+    few = _few_frames(capture, ctx)
+    if few:
+        return few
     timings = Timings.of(ctx)
     window = capture.lumas[-timings.settle_frames :]
     swing = max(window) - min(window) if window else 0.0
@@ -170,6 +212,8 @@ class Engine:
         self.state: ImagingState | None = None
         self.out = Outcome()
         self._last_written = 0.0  # для журнала на стадии возврата: что могло остаться
+        self.halted = ""  # W-3: почему запись на этой камере прекращена (как `halted` в «Вебе»)
+        self._positions: list[Position] = []  # положения текущей настройки — для выборок (W-9)
         self.ranges: dict = {}
         self.writes = WritePass(ctx, IMAGE)
 
@@ -203,15 +247,15 @@ class Engine:
             self.writes.settle_old(self._now_of, self._put_back, (ImageWriteRefused,))
             self.out.rows.extend(self.writes.rows)
         except (CameraUnreachable, OnvifFault) as e:
-            return CheckResult.stand_error(
+            return self._stand(
                 f"ONVIF: журнал прошлого прогона не разобран: {e}",
-                evidence=soap_evidence(self.soap),
+                soap_evidence(self.soap),
             )
         self.frames = RtspFrameSource(self.ctx, uri)
         try:
             unready = self.scene.prepare(self.ctx)
             if unready:
-                return CheckResult.stand_error(unready)
+                return self._stand(unready)
             self._progress("кадры «до»")
             before = self.frames.capture()
             time.sleep(limit(self.ctx, "image.before_gap_s").value)
@@ -241,6 +285,11 @@ class Engine:
                     for rest in self.settings[number - 1 :]:
                         self._row(rest, CheckResult.skipped(STOPPED), before)
                     break
+                # выборки прошлой настройки не должны уехать в строку этой (W-9)
+                self._positions = []
+                if self.halted:
+                    self._row(setting, CheckResult.stand_error(self.halted), before)
+                    continue
                 try:
                     self._one(setting, ranges[setting.key], before, masks, number)
                 except (Abort, CameraUnreachable) as e:
@@ -253,6 +302,11 @@ class Engine:
                     break
                 except Exception as e:  # сбой на одной настройке не должен унести строки и возврат
                     text = redact(f"сбой проверки: {type(e).__name__}: {e}", [self.ctx.password])
+                    # W-2: без возврата здесь следующие настройки снимались бы с изменённой
+                    # предыдущей, и их итоги были бы неверны: полный возврат идёт только в конце
+                    left = self._restore_after_error(setting)
+                    if left:
+                        text = f"{text}; {left}"
                     self._row(setting, CheckResult.stand_error(text), before)
         finally:
             report, problem = self._restore_all()
@@ -271,6 +325,27 @@ class Engine:
             self._row(setting, skip, before)
             return
         rule = rule_for(self.ctx, setting.key)
+        # W-7: спека (S5) требует пару кадров «до» перед настройкой, а не одну пару на всю
+        # проверку. За шесть-десять минут лампы бокса нагреваются, свет уходит на три уровня,
+        # и поздние настройки получали «после возврата сцена менялась» на пустом месте
+        try:
+            self._progress(f"{setting.title} · кадры «до»")
+            own = self._capture()
+            time.sleep(limit(self.ctx, "image.before_gap_s").value)
+            second = self._capture()
+        except FRAMES_ERRORS as e:
+            self._row(setting, self._frames_failed(e), before)
+            return
+        unstable = (
+            moved(own, second, self.ctx)
+            or _not_settled(own, self.ctx, "до записи")
+            or _not_settled(second, self.ctx, "до записи")
+        )
+        if unstable:
+            # сцена или свет меняются без единой записи — это стенд, а не настройка (S5)
+            self._row(setting, CheckResult.stand_error(unstable), own)
+            return
+        before, masks = own, masks_of(own.work)
         assert isinstance(declared, Declared)
         shares = (0.0, 1.0) if declared.two_positions else SHARES
         positions = [Position(share, declared.at(share)) for share in shares]
@@ -278,6 +353,7 @@ class Engine:
         self.out.touched.append(setting.key)
         problem: CheckResult | None = None
         after: Capture | None = None
+        self._positions = positions  # для выборок потока в `_row` (W-9)
         try:
             for position in positions:
                 self._progress(
@@ -290,7 +366,8 @@ class Engine:
                     break
                 self._stop_on_protected_drift(setting, position)
                 time.sleep(limit(self.ctx, "image.apply_delay_s").value)
-                position.capture = self._capture()
+                # выборка потока нужна у «не прошла» (W-9); у «прошла» её отбросит `_row`
+                position.capture = self._capture(keep_clip=True)
                 position.measurement = measure(setting.metric, position.capture, masks)
             back = self._restore_one(setting)
             after = self._capture()
@@ -315,6 +392,10 @@ class Engine:
             # итог по положениям верен, а то, что камера осталась изменённой, скажет строка
             # возврата; здесь — пометка для разбора
             evidence.append(Evidence("restore.txt", back))
+            # W-3: журнал — один файл на камеру, и запись следующей настройки затёрла бы
+            # незакрытую запись этой, а её успешный возврат удалил бы файл. Тогда при снятии
+            # процесса следующий прогон принял бы изменённую настройку за исходную (AD-3)
+            self.halted = f"запись прекращена: настройка «{setting.title}» не вернулась: {back}"
         if problem is not None:
             self._row(setting, problem, before, evidence)
             return
@@ -348,10 +429,13 @@ class Engine:
             moment = f"после записи {round(position.share * 100)} %"
             unsettled = _not_settled(position.capture, self.ctx, moment) if position.capture else ""
             if unsettled:
+                # W-11: короткая выборка — дефект стенда (медленный поток или декодер), а не
+                # камеры: «не прошла» ей за это писать нельзя
+                few = _few_frames(position.capture, self.ctx) if position.capture else ""
                 self._row(
                     setting,
                     CheckResult(
-                        Status.FAILED,
+                        Status.STAND_ERROR if few else Status.FAILED,
                         reason=unsettled,
                         expected=rule.expected,
                         actual=_positions_text(positions, setting),
@@ -361,8 +445,13 @@ class Engine:
                 )
                 return
         values = [p.measurement.value for p in positions if p.measurement]
+        # знак говорит, в какую сторону упёрлась сцена: пересвет вверх, чернота вниз (W-10)
         clips = [
-            max(p.measurement.clip_pct, p.measurement.crush_pct) for p in positions if p.measurement
+            p.measurement.clip_pct
+            if p.measurement.clip_pct >= p.measurement.crush_pct
+            else -p.measurement.crush_pct
+            for p in positions
+            if p.measurement
         ]
         found = verdict(rule, values, clips, self.state.exposure_mode)
         result = CheckResult(
@@ -419,9 +508,9 @@ class Engine:
             return CheckResult.stand_error(f"проверьте thresholds.yaml: {rule.problem}")
         return None
 
-    def _capture(self) -> Capture:
+    def _capture(self, keep_clip: bool = False) -> Capture:
         assert self.frames is not None
-        return self.frames.capture()
+        return self.frames.capture(keep_clip=keep_clip)
 
     def _write(self, setting: Setting, position: Position) -> str:
         """Записать положение; причина «не прошла», если камера не приняла значение."""
@@ -475,8 +564,15 @@ class Engine:
             return None, absent
         try:
             report = self.writer.restore(self.state, self.out.touched)
-        except (CameraUnreachable, OnvifFault, ImageWriteRefused) as e:
+        except (CameraUnreachable, OnvifFault, ImageWriteRefused, TabooViolation) as e:
             return None, f"возврат не выполнен: {e}"
+        except Exception as e:
+            # W-2: этот возврат идёт из `finally`, поэтому исключение отсюда уносило все строки
+            # проверки и строку возврата — `run_check` оставлял одну «ошибку стенда». Тип
+            # исключения в причине: сбой здесь обычно дефект программы, и его видно по типу
+            return None, redact(
+                f"возврат не выполнен: {type(e).__name__}: {e}", [self.ctx.password]
+            )
         if report.restored:
             self.writes.close()
         return report, ""
@@ -521,6 +617,8 @@ class Engine:
     ) -> None:
         if result.status is not Status.PASSED and not evidence:
             evidence = _jpeg("before1", before)
+        if result.status is not Status.PASSED:
+            evidence = [*(evidence or []), *_clips(self._positions)]
         result.evidence = [*result.evidence, *(evidence or [])]
         description = (
             f"Ставим «{setting.title}» в 0, 50 и 100 % диапазона камеры и снимаем кадр в каждом "
@@ -612,7 +710,7 @@ class Engine:
         )
 
     def _restore_row(self, report: RestoreReport | None, problem: str) -> ChildResult:
-        return restore_row(
+        row = restore_row(
             RESTORE_ID,
             "Картинка: возврат настроек",
             self.out.touched,
@@ -620,6 +718,9 @@ class Engine:
             problem,
             NOTHING_CHANGED,
         )
+        if row.result.status is Status.FAILED:
+            self.writes.mark_reported()  # W-1: блокер уже здесь, второй был бы с ложной причиной
+        return row
 
     def _read_only_rows(self, ranges: dict) -> None:
         for setting in self.settings:
@@ -645,7 +746,19 @@ class Engine:
         evidence = soap_evidence(self.soap)
         if self.frames is not None:
             evidence.append(Evidence("rtsp.txt", "\n".join(self.frames.exchanges)))
-        return CheckResult.stand_error(reason, evidence=evidence)
+        return self._stand(reason, evidence)
+
+    def _stand(self, reason: str, evidence: list[Evidence] | None = None) -> CheckResult:
+        """«Ошибка стенда» вместе с уже собранными строками.
+
+        Строки журнала прошлого прогона собираются до первого кадра, а сам журнал к этому
+        моменту уже удалён: без них блокер `IMAGE-WRITE-LOST` пропал бы из протокола, и ни
+        этот прогон, ни следующий о незакрытой записи не сказали бы (тот же дефект — «Кодеки»
+        W2). Поэтому все выходы «ошибкой стенда» после `settle_old` идут через этот метод.
+        """
+        return CheckResult(
+            Status.STAND_ERROR, reason=reason, evidence=evidence or [], children=self.out.rows
+        )
 
     def _result(self) -> CheckResult:
         return total(self.out.rows)

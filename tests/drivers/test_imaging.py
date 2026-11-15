@@ -50,6 +50,19 @@ def test_ranges_of_all_nine_settings_are_read(camera_with):
     assert all(isinstance(r, Declared) for r in ranges.values()), ranges
 
 
+def test_normalized_range_keeps_the_middle_position():
+    # W-4: у диапазона 0…1 границы целые, и округление делало из «50 %» ноль
+    import xml.etree.ElementTree as ET
+
+    from qa_tool.drivers.camera.imaging import _range
+
+    narrow = _range(ET.fromstring("<o><Min>0.0</Min><Max>1.0</Max></o>"), "шумоподавление")
+    assert narrow == Declared(0.0, 1.0, integer=False)
+    assert [narrow.at(share) for share in (0.0, 0.5, 1.0)] == [0.0, 0.5, 1.0]
+    wide = _range(ET.fromstring("<o><Min>0</Min><Max>100</Max></o>"), "яркость")
+    assert wide == Declared(0.0, 100.0, integer=True) and wide.at(0.5) == 50.0
+
+
 def test_write_within_range_is_read_back(camera_with):
     cam, writer = camera_with()
     writer.declared()

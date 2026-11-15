@@ -131,6 +131,22 @@ class WritePass:
         if self.folder is not None:
             clear(self.folder, self.ctx.camera.address, self.ctx.camera.port)
 
+    def mark_reported(self) -> None:
+        """Блокер возврата уже в протоколе: второй от планировщика был бы ложным.
+
+        Иначе в конце прогона `_report_lost_write` добавит `*-WRITE-LOST` с причиной «процесс
+        проверки камеры был снят» — а процесс не снимался: о незакрытой записи сказала сама
+        проверка (image W-1, как `entry.reported` в «Вебе»). Журнал при этом остаётся: его
+        должен увидеть и следующий прогон.
+        """
+        if self.folder is None:
+            return
+        camera = self.ctx.camera
+        entry = load(self.folder, camera.address, camera.port)
+        if entry is not None and not entry.reported:
+            entry.reported = True
+            save(self.folder, entry)
+
     # --- журнал прошлого прогона ---------------------------------------------------------------
 
     def settle_old(

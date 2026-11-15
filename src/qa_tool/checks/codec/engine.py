@@ -172,10 +172,13 @@ def label(settings: EncoderSettings) -> str:
 def _jpeg(name: str, capture: Capture | None) -> list[Evidence]:
     if capture is None:
         return []
-    return [
+    found = [
         Evidence(f"{name}.jpg", capture.preview_jpeg, kind="image"),
         Evidence(f"{name}_t.jpg", capture.thumb_jpeg, kind="image"),
     ]
+    if capture.center_jpeg:  # W8: центр 1:1 — на нём видны артефакты сжатия
+        found.append(Evidence(f"{name}_c.jpg", capture.center_jpeg, kind="image"))
+    return found
 
 
 def _stat(found: Quality | None) -> dict | None:
@@ -214,6 +217,9 @@ class Engine:
         self._total = 0  # кодировщиков в проходе — для строки хода «Профиль 1 из 3»
         self._calc: list = []  # кодировщик, сделано и всего сравнений — для строки хода
         self._restore_notes: list[str] = []
+        self._halted = ""  # W5: почему запись на этой камере прекращена (как `halted` в «Вебе»)
+        self._last_target: dict[str, EncoderSettings] = {}  # W6: что писали последним
+        self._uri: dict[str, str] = {}  # W7: адрес потока после смены кодека
 
     # --- проход --------------------------------------------------------------------------------
 
@@ -241,8 +247,14 @@ class Engine:
             self.configs = [self.writer.snapshots[c.token] for c in self.configs]
             plans = [self._plan(c, n) for n, c in enumerate(self.configs, start=1)]
         except (CameraUnreachable, OnvifFault) as e:
-            return CheckResult.stand_error(
-                f"ONVIF: кодировщики не прочитаны: {e}", evidence=soap_evidence(self.soap)
+            # W2: строки журнала прошлого прогона уже собраны, а сам журнал уже удалён. Без
+            # `children` блокер `CODEC-WRITE-LOST` пропал бы из протокола, и ни этот прогон,
+            # ни следующий о незакрытой записи не сказали бы
+            return CheckResult(
+                Status.STAND_ERROR,
+                reason=f"ONVIF: кодировщики не прочитаны: {e}",
+                evidence=soap_evidence(self.soap),
+                children=self.rows,
             )
         checked, extra = plans[:MAX_ENCODERS], plans[MAX_ENCODERS:]
         self._total = len(checked)
@@ -295,6 +307,9 @@ class Engine:
                 for rest in plans[index:]:
                     self._fill(rest, CheckResult.skipped(STOPPED))
                 return
+            if self._halted:
+                self._fill(plan, CheckResult.stand_error(self._halted))
+                continue
             try:
                 self._encoder(plan)
             except (Abort, CameraUnreachable) as e:
@@ -411,9 +426,9 @@ class Engine:
         top_a = int(plan.options[a].kbps_max)
         self._current = row_id(a, plan.number)
         taken.top[a] = self._shot(plan, a, top_a, f"эталон в начале · {_named(a, top_a)}")
-        if taken.top[a].problem:
-            return
-        taken.steps[a] = self._steps(plan, a)
+        a_ready = not taken.top[a].problem
+        if a_ready:
+            taken.steps[a] = self._steps(plan, a)
         if b:
             self._current = row_id(b, plan.number)
             top_b = int(plan.options[b].kbps_max)
@@ -421,6 +436,12 @@ class Engine:
             taken.top[b] = self._shot(plan, b, top_b, what, switching=True)
             if not taken.top[b].problem:
                 taken.steps[b] = self._steps(plan, b)
+        if not a_ready:
+            # W3: камера отвергла эталон текущего кодека (живой случай Tiandy 09.11, 16 Мбит/с).
+            # Его строка — «не прошла», но второй кодек проверяется: спека S4 «эта ступень или
+            # кодек — не прошла, остальные продолжаются». Повтор эталона в конце сравнивать не с
+            # чем, поэтому его не снимаем
+            return
         self._current = row_id(a, plan.number)
         what = f"эталон в конце · {_named(a, top_a)}"
         taken.repeat = self._shot(plan, a, top_a, what, switching=bool(b))
@@ -445,6 +466,7 @@ class Engine:
         self._say(plan, what)
         shot = Shot(codec, kbps)
         target = EncoderSettings(codec, kbps=kbps, constant=True)
+        self._last_target[config.token] = target
         self._journal(config, target, "intent")
         if config.token not in self.touched:
             self.touched.append(config.token)
@@ -485,12 +507,18 @@ class Engine:
         """
         assert self.writer is not None
         token = plan.config.token
-        uri = self.writer.stream_uri(token) if switching else plan.config.uri
+        if switching:
+            # W7: камера может сменить адрес вместе с кодеком; остальные ступени этого кодека
+            # идут по уже полученному адресу, иначе каждая открывалась бы со второй попытки
+            uri = self._uri[token] = self.writer.stream_uri(token)
+        else:
+            uri = self._uri.get(token, plan.config.uri)
         for attempt in range(2):
             if attempt:
                 time.sleep(limit(self.ctx, "codec.restart_wait_s").value)
                 self._check_time()
-                uri = self.writer.stream_uri(token)  # CameraUnreachable — обрыв, а не поток
+                # CameraUnreachable — обрыв, а не поток
+                uri = self._uri[token] = self.writer.stream_uri(token)
             try:
                 self._capture(plan, shot, uri)
                 return
@@ -516,7 +544,7 @@ class Engine:
             settle_frames=2,
             settle_max_s=0.0,
         )
-        source = RtspFrameSource(self.ctx, uri, timings, prefix=CODEC_PREFIX)
+        source = RtspFrameSource(self.ctx, uri, timings, prefix=CODEC_PREFIX, center=True)
         meter = StreamMeter(shot.codec)
         try:
             capture = source.capture(keep_clip=True, on_packet=meter.add)
@@ -552,6 +580,14 @@ class Engine:
             errors[b] += fail_b
             errors[a] += fail_a
         reference, why = choose_reference(cross.get(b or ""), cross.get(a), a, b or a, a, spread)
+        if b and top_a and top_a.problem and top_b and not top_b.problem:
+            # W3: эталон текущего кодека камера отвергла (Tiandy 09.11) — эталоном служит
+            # максимум второго, иначе его ступени остались бы без качества («эталон не снят»)
+            reference = b
+            why = (
+                f"эталон {codec_title(a)} камера не приняла — сравнение по "
+                f"максимуму {codec_title(b)}"
+            )
         ref = taken.top.get(reference)
         repeat_q, repeat_errors = (None, [])
         drift = ""
@@ -578,14 +614,25 @@ class Engine:
             elif codec != reference and codec in cross:
                 # ступень на том же битрейте уже есть — вторая точка сломала бы проверку роста
                 if all(s.kbps != top.kbps for s in taken.steps.get(codec, [])):
-                    curve.points.append(Point(top.kbps, top.measured_kbps, cross[codec]))
-            for shot in taken.steps.get(codec, []):
+                    curve.points.append(
+                        Point(top.kbps, top.measured_kbps, cross[codec], shot="ref")
+                    )
+            for number, shot in enumerate(taken.steps.get(codec, []), start=1):
                 found, failed = (None, [])
                 if not shot.problem and ref and ref.clip:
                     found, failed = self._quality(shot, ref)
                 errors[codec] += failed + ([shot.error] if shot.error else [])
+                # имя снимка — то, под которым его сохранит `_evidence`: по порядку ступеней,
+                # а не по месту точки в отсортированном списке (W1)
                 curve.points.append(
-                    Point(shot.kbps, shot.measured_kbps, found, shot.refused, shot.no_stream)
+                    Point(
+                        shot.kbps,
+                        shot.measured_kbps,
+                        found,
+                        shot.refused,
+                        shot.no_stream,
+                        shot=f"s{number}",
+                    )
                 )
             back = taken.repeat
             if codec == a and back is not None and (back.refused or back.no_stream):
@@ -712,6 +759,7 @@ class Engine:
                     "не принято": p.refused,
                     "поток не вернулся": p.no_stream,
                     "качество": _stat(p.quality),
+                    "снимок": p.shot or None,
                 }
                 for p in sorted(curve.points, key=lambda p: p.kbps)
             ],
@@ -782,15 +830,46 @@ class Engine:
         assert self.writer is not None
         config = plan.config
         snapshot = self.writer.snapshots[config.token]
-        self._journal(config, snapshot.settings, "restoring")
+        self._journal(config, self._written(config), "restoring")
         self._say(plan, "возврат настроек")
         try:
             report = self.writer.restore(snapshot)
-        except (OnvifFault, ValueRejected, EncoderWriteRefused) as e:
+        except (OnvifFault, ValueRejected, EncoderWriteRefused, TabooViolation) as e:
             self._restore_notes.append(f"{profile_names(config)}: возврат не выполнен: {e}")
+            self._halt(config, str(e))
+            return
+        except Exception as e:
+            # W4: сторож табу и любой непредвиденный сбой выходили из `Engine.run`, и `run_check`
+            # терял все строки кодеков вместе со строкой возврата. Обрыв связи — по-прежнему
+            # наружу: его решает `_encoders`
+            self._restore_notes.append(
+                redact(
+                    f"{profile_names(config)}: возврат не выполнен: {type(e).__name__}: {e}",
+                    [self.ctx.password],
+                )
+            )
+            self._halt(config, f"{type(e).__name__}: {e}")
             return
         if report.restored:
             self.writes.close()
+        else:
+            self._halt(
+                config,
+                "; ".join(f"{f}: было {was}, осталось {now}" for f, was, now in report.left),
+            )
+
+    def _halt(self, config: EncoderConfig, why: str) -> None:
+        """W5: прекратить запись на этой камере — кодировщик не вернулся.
+
+        Журнал записи — один файл на камеру, поэтому запись следующего кодировщика затёрла бы
+        незакрытую запись этого. Тогда при снятии процесса следующий прогон вернул бы только
+        последний кодировщик, а этот остался бы изменённым и без блокера (AD-3).
+        """
+        if not self._halted:
+            self._halted = redact(
+                f"запись прекращена: кодировщик {profile_names(config)} не вернулся: {why}",
+                [self.ctx.password],
+            )
 
     def _restore_all(self) -> tuple[RestoreReport | None, str]:
         """В конце — перечитать все кодировщики и вернуть, что не как в снимке.
@@ -810,18 +889,39 @@ class Engine:
                 snapshot = self.writer.snapshots[config.token]
                 report = compare_config(snapshot, self.writer.read(config.token))
                 if report.left:
-                    self._journal(config, snapshot.settings, "restoring")
+                    self._journal(config, self._written(config), "restoring")
                     report = self.writer.restore(snapshot)
                 names = profile_names(config)
                 total_report.left += [(f"{names}: {f}", was, now) for f, was, now in report.left]
                 total_report.other += [f"{names}: {text}" for text in report.other]
-        except (CameraUnreachable, OnvifFault, ValueRejected, EncoderWriteRefused) as e:
+        except (
+            CameraUnreachable,
+            OnvifFault,
+            ValueRejected,
+            EncoderWriteRefused,
+            TabooViolation,
+        ) as e:
             return None, f"возврат не выполнен: {e}"
+        except Exception as e:  # W4: иначе уносит все строки кодеков и строку возврата
+            return None, redact(
+                f"возврат не выполнен: {type(e).__name__}: {e}", [self.ctx.password]
+            )
         if total_report.restored:
             self.writes.close()
         return total_report, ""
 
     # --- журнал --------------------------------------------------------------------------------
+
+    def _written(self, config: EncoderConfig) -> EncoderSettings:
+        """Последнее записанное в кодировщик — для журнала на стадии возврата (W6).
+
+        Раньше на этой стадии в `new` уходил снимок, то есть `new == old`. Если процесс снимали
+        во время возврата, следующий прогон видел «сейчас» ≠ `new` и писал блокер «его поменял
+        кто-то другой» вместо возврата из журнала. «Картинка» хранит для этого `_last_written`.
+        """
+        assert self.writer is not None
+        snapshot = self.writer.snapshots[config.token]
+        return self._last_target.get(config.token, snapshot.settings)
 
     def _journal(self, config: EncoderConfig, target: EncoderSettings, stage: str) -> None:
         assert self.writer is not None
@@ -923,7 +1023,7 @@ class Engine:
 
     def _restore_row(self, report: RestoreReport | None, problem: str) -> ChildResult:
         names = [profile_names(c) for c in self.configs if c.token in self.touched]
-        return restore_row(
+        row = restore_row(
             RESTORE_ID,
             "Кодеки: возврат настроек",
             names,
@@ -931,6 +1031,9 @@ class Engine:
             problem,
             NOTHING_WRITTEN if self.ctx.allow_writes else NOTHING_CHANGED,
         )
+        if row.result.status is Status.FAILED:
+            self.writes.mark_reported()  # image W-1: тот же ложный второй блокер
+        return row
 
     # --- служебное -----------------------------------------------------------------------------
 

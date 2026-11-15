@@ -47,6 +47,49 @@ def stored(tmp_path_factory):
     return store
 
 
+def test_step_links_follow_the_point_snapshot(tmp_path):
+    # W1: имя снимка выводилось из порядка сортировки, и лишняя точка в «ступенях» (максимум
+    # второго кодека, неудачный возврат) сдвигала все ссылки Excel на одну
+    import json
+    from types import SimpleNamespace
+
+    from qa_tool.report.codec import _lines
+
+    folder = tmp_path / "evidence" / "r1"
+    folder.mkdir(parents=True)
+    for name in ("ref", "s1", "s2"):
+        (folder / f"{name}.jpg").write_bytes(b"x")
+        (folder / f"{name}_t.jpg").write_bytes(b"x")
+    measure = {
+        "версия": 1,
+        "кодек": "H264",
+        "эталон": {"кодек": "H265", "битрейт": 8192, "почему": "тест"},
+        "ступени": [
+            {"задано": 1024, "в потоке": 1000.0, "снимок": "s2", "качество": {"vmaf": [95, 0, 95]}},
+            {"задано": 2048, "в потоке": 2000.0, "снимок": "s1", "качество": {"vmaf": [97, 0, 97]}},
+            {
+                "задано": 8192,
+                "в потоке": 8000.0,
+                "снимок": "ref",
+                "качество": {"vmaf": [99, 0, 99]},
+            },
+        ],
+    }
+    (folder / "measure.json").write_text(json.dumps(measure, ensure_ascii=False), encoding="utf-8")
+    row = SimpleNamespace(
+        check_id="CODEC-H264-1", evidence="evidence/r1", reason="", title="", status=""
+    )
+    lines = _lines(1, row, tmp_path)
+    assert [line.target_kbps for line in lines] == [8192, 2048, 1024]
+    assert [line.links[0] for line in lines] == [
+        "evidence/r1/ref.jpg",
+        "evidence/r1/s1.jpg",
+        "evidence/r1/s2.jpg",
+    ]
+    # эталон — другой кодек: `ref.jpg` этой строки её собственный максимум, ссылку не ставим
+    assert all(line.links[1] == "" for line in lines)
+
+
 def test_mbit_and_ticks_cover_points():
     assert (mbit(512), mbit(2048), mbit(64)) == ("0,5", "2", "0,06")
     ticks = rate_ticks([(600.0, 70.0), (4100.0, 95.0)])
