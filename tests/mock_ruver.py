@@ -7,6 +7,7 @@
 
 import contextlib
 import hashlib
+import hmac
 import json
 import threading
 import time
@@ -59,6 +60,11 @@ class MockRuver:
 
     password: str = "admin"
     username: str = "admin"
+    # вход: «md5» — заводская прошивка, «both» — своя сборка (SSC), «challenge» — лёгкая rw-camd
+    login_mode: str = "md5"
+    iterations: int = 10000
+    challenge_answer: tuple[int, Any] | None = None  # подменить ответ на вызов
+    lockout_429: bool = False  # сторож попыток своей сборки: отказ 429 без кода
     busy_sessions: int = 0  # сеансы, занятые кем-то другим
     missing: set[str] = field(default_factory=set)  # адреса с ответом 404
     corrupt: set[str] = field(default_factory=set)  # ответ без обязательных полей
@@ -148,12 +154,36 @@ class MockRuver:
             "connectionsUsed": len(self.sessions) + self.busy_sessions,
         }
 
+    def salt(self) -> str:
+        """Соль пользователя, как в своей сборке: из имени, без записи состояния."""
+        return hashlib.sha256(f"rw-login-challenge:{self.username}".encode()).hexdigest()[:32]
+
+    def _challenge(self) -> tuple[int, Any]:
+        if self.challenge_answer is not None:
+            return self.challenge_answer
+        if self.login_mode == "md5":
+            return 404, {"errorCode": 1001, "errorDescription": "Not found"}
+        return 200, {
+            "salt": self.salt(),
+            "iterations": self.iterations,
+            "algorithm": "pbkdf2-sha256",
+        }
+
     def _login(self, session: str, body: dict) -> tuple[int, Any]:
         self.login_attempts += 1
+        if self.lockout_429:
+            return 429, {"errorDescription": "Too many attempts"}
         if session not in self.sessions:
             return 401, {"errorCode": 2001, "errorDescription": "Bad session"}
-        expected = hashlib.md5(f"{self.password}:{session}".encode()).hexdigest()
-        if body.get("username") != self.username or body.get("password") != expected:
+        accepted = set()
+        if self.login_mode in ("md5", "both"):
+            accepted.add(hashlib.md5(f"{self.password}:{session}".encode()).hexdigest())
+        if self.login_mode in ("both", "challenge"):
+            key = hashlib.pbkdf2_hmac(
+                "sha256", self.password.encode(), bytes.fromhex(self.salt()), self.iterations
+            )
+            accepted.add(hmac.new(key, session.encode(), "sha256").hexdigest())
+        if body.get("username") != self.username or body.get("password") not in accepted:
             return 401, {"errorCode": 2002, "errorDescription": "Bad credentials"}
         self.sessions[session] = True
         return 200, {"userRole": 2}
@@ -191,6 +221,8 @@ class MockRuver:
         """Ответ камеры: (код, тело): JSON, байты или None — пустое тело."""
         if (method, path) == ("GET", "/api/auth/create_session"):
             return self._create_session()
+        if (method, path) == ("POST", "/api/auth/challenge"):
+            return self._challenge()
         if (method, path) == ("POST", "/api/auth/login"):
             return self._login(session, body or {})
         if (method, path) == ("POST", "/api/auth/logout"):

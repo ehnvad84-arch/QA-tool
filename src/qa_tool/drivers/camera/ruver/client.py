@@ -9,12 +9,20 @@
 повторяется никогда. Повторный вход допустим один раз и только после успешного первого: камера
 сама закрыла сеанс по времени, пароль уже подтверждён.
 
+Входов у прошивки два: MD5 от «пароль:сеанс» (заводская прошивка и описание API 0.6.7_p4) и
+PBKDF2 с вызовом `POST /api/auth/challenge` (прошивка своей сборки с 04.11.2026; лёгкая `rw-camd`
+знает только его и каждый MD5-вход считает неудачей). Какой вход у камеры, клиент узнаёт по ответу
+на вызов: он ничего не меняет и попыткой не считается. Пробовать «сначала MD5, потом PBKDF2» нельзя:
+лишняя попытка тратит счётчик, общий для API, ONVIF и RTSP.
+
 Класс не потокобезопасен: один клиент — одна проверка в рабочем процессе камеры.
 """
 
 import contextlib
 import hashlib
+import hmac
 import json
+import re
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -35,6 +43,12 @@ MAP_FILE = Path(__file__).resolve().parents[3] / "data" / "ruver_api_map.json"
 SESSION_HEADER = "X-Session-ID"
 CREATE_SESSION = "/api/auth/create_session"
 LOGIN = "/api/auth/login"
+CHALLENGE = "/api/auth/challenge"
+CHALLENGE_ALGORITHM = "pbkdf2-sha256"
+# Прошивка отдаёт 10000. Предел — от камеры с чужим ответом: миллиард итераций занял бы
+# рабочий процесс на часы, а вход всё равно не состоялся бы.
+MAX_ITERATIONS = 1_000_000
+_SALT = re.compile(r"[0-9a-fA-F]{32}")
 LOGOUT = "/api/auth/logout"
 # Неверный или истёкший сеанс, а не отказ в правах. 1006, 1013 и 2001 — из описания API;
 # 105 («Session expired») описание не называет, его отдаёт прошивка 0.6.14 (живая камера TMID-018).
@@ -119,6 +133,43 @@ def password_hash(password: str, session_id: str) -> str:
     return hashlib.md5(text, usedforsecurity=False).hexdigest()
 
 
+def challenge_password(password: str, session_id: str, salt: str, iterations: int) -> str:
+    """Пароль для входа по вызову: HMAC-SHA256 сеанса ключом PBKDF2-SHA256 от пароля.
+
+    Так считают веб-клиент и сервер прошивки (`www/src/util/Pbkdf2.ts`, `fw/camd/core/Auth.cpp`).
+
+    Args:
+        password: пароль камеры.
+        session_id: идентификатор сеанса из `create_session`.
+        salt: соль из ответа на вызов, 32 шестнадцатеричных знака.
+        iterations: число итераций PBKDF2 из ответа на вызов.
+    """
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), iterations)
+    return hmac.new(key, session_id.encode(), "sha256").hexdigest()
+
+
+def parse_challenge(response: http.Response) -> tuple[str, int] | None:
+    """Соль и итерации из ответа на вызов; None — у камеры вход MD5.
+
+    Ответ проверяется строго: заводская прошивка на незнакомый адрес может ответить чем угодно,
+    и только полный правильный ответ означает вход PBKDF2.
+    """
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("algorithm") != CHALLENGE_ALGORITHM:
+        return None
+    salt, iterations = data.get("salt"), data.get("iterations")
+    if not isinstance(salt, str) or not _SALT.fullmatch(salt):
+        return None
+    if isinstance(iterations, bool) or not isinstance(iterations, int) or iterations < 1:
+        return None
+    return salt, iterations
+
+
 def error_code(response: http.Response) -> int | None:
     """Внутренний код ошибки камеры из ответа; None — ответ без кода."""
     try:
@@ -153,7 +204,7 @@ class RuverClient:
             address: адрес камеры из списка стенда.
             port: порт HTTP.
             username: логин.
-            password: пароль; в запрос попадает только как MD5 с сеансом.
+            password: пароль; в запрос попадает только как MD5 или HMAC с сеансом.
             api: карта API; по умолчанию — из файла программы.
             allow_writes: галочка сценария «изменяющие».
             allow_destructive: галочка сценария «разрушающие».
@@ -169,6 +220,10 @@ class RuverClient:
         self.session_id = ""
         self._relogin_used = False
         self._login_refused = False
+        # соль и итерации входа PBKDF2, None — вход MD5; узнаётся один раз на клиента
+        self._challenge: tuple[str, int] | None = None
+        self._challenge_known = False
+        self.login_method = ""  # «PBKDF2» или «MD5» после входа — для доказательства проверки
 
     def __enter__(self) -> "RuverClient":
         try:
@@ -202,10 +257,14 @@ class RuverClient:
             self.session_id = str(created.json()["sessionID"])
         except (ValueError, KeyError, TypeError) as e:
             raise LoginFailed("сеанс не открыт: в ответе нет sessionID") from e
-        body = {
-            "username": self.username,
-            "password": password_hash(self.password, self.session_id),
-        }
+        challenge = self._ask_challenge()
+        if challenge is None:
+            password = password_hash(self.password, self.session_id)
+            self.login_method = "MD5"
+        else:
+            password = challenge_password(self.password, self.session_id, *challenge)
+            self.login_method = "PBKDF2"
+        body = {"username": self.username, "password": password}
         answer = http.request(
             "POST",
             self.base + LOGIN,
@@ -218,13 +277,38 @@ class RuverClient:
         code = error_code(answer)
         if answer.status_code == 409:
             raise NoFreeSession("нет свободного сеанса: на камере заняты все сеансы")
-        if code == 2003:
+        # 429 — блокировка сторожа попыток прошивки своей сборки; код 2003 в ней бывает не всегда
+        if code == 2003 or answer.status_code == 429:
             self._login_refused = True
             raise LoginFailed("камера заблокировала вход: превышено число попыток")
         if answer.status_code in (401, 404):
             self._login_refused = True
             raise LoginRejected(f"камера не приняла логин или пароль (код {code})")
         raise LoginFailed(f"вход не состоялся: код {answer.status_code}")
+
+    def _ask_challenge(self) -> tuple[str, int] | None:
+        """Узнать вход камеры по вызову, один раз на клиента.
+
+        Raises:
+            LoginFailed: камера требует больше итераций, чем разумно считать.
+            http.TransportError: камера не ответила.
+        """
+        if not self._challenge_known:
+            answer = http.request(
+                "POST",
+                self.base + CHALLENGE,
+                content=json.dumps({"username": self.username}),
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            self._challenge = parse_challenge(answer)
+            self._challenge_known = True
+        if self._challenge and self._challenge[1] > MAX_ITERATIONS:
+            raise LoginFailed(
+                f"вход не начат: камера требует {self._challenge[1]} итераций PBKDF2, "
+                f"разумный предел — {MAX_ITERATIONS}"
+            )
+        return self._challenge
 
     def close(self) -> None:
         """Закрыть сеанс; сбой выхода не мешает итогу проверки. Повторный вызов безвреден."""

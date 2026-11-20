@@ -56,7 +56,7 @@ def run(camera, **options):
 
 def changing_requests(camera):
     """Всё, что дошло до камеры и меняет её: POST вне входа и чтений."""
-    allowed = {"/api/auth/login", "/api/auth/logout"}
+    allowed = {"/api/auth/challenge", "/api/auth/login", "/api/auth/logout"}
     allowed |= {op.path for op in API.operations if op.kind == READ and op.method == "POST"}
     return [r for r in camera.requests if r.method == "POST" and r.path not in allowed]
 

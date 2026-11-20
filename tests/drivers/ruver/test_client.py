@@ -10,6 +10,7 @@ from qa_tool.drivers.camera.ruver.client import (
     NoFreeSession,
     Operation,
     RuverClient,
+    challenge_password,
     load_map,
     password_hash,
 )
@@ -159,7 +160,8 @@ def test_expected_restart_does_not_lift_a_lockout(camera, monkeypatch):
     client = client_for(camera)
     locked = http.Response(401, json={"errorCode": 2003})
     created = http.Response(200, json={"sessionID": "s"})
-    answers = iter([created, locked])
+    no_challenge = http.Response(404)
+    answers = iter([created, no_challenge, locked])
     monkeypatch.setattr(http, "request", lambda *a, **k: next(answers))
     with pytest.raises(LoginFailed):
         client._login()
@@ -169,3 +171,97 @@ def test_expected_restart_does_not_lift_a_lockout(camera, monkeypatch):
 
 def test_map_file_is_in_the_package():
     assert client_module.MAP_FILE.exists()
+
+
+# --- вход PBKDF2 своей сборки прошивки (docs/work/ruver-login) ---------------------------------
+
+
+def test_challenge_password_matches_firmware_formula():
+    # Пример из лабораторного клиента прошивки tools/lab/camd-api.py: те же шаги на Python
+    import hashlib
+    import hmac
+
+    key = hashlib.pbkdf2_hmac("sha256", b"test-secret-1", bytes.fromhex("00" * 16), 3)
+    expected = hmac.new(key, b"sid-1", "sha256").hexdigest()
+    assert challenge_password("test-secret-1", "sid-1", "00" * 16, 3) == expected
+
+
+@pytest.mark.parametrize("mode", ["both", "challenge"])
+def test_challenge_camera_is_entered_with_pbkdf2_in_one_attempt(camera, mode):
+    camera.login_mode = mode
+    with client_for(camera) as client:
+        assert client.call(INFO).status_code == 200
+        assert client.login_method == "PBKDF2"
+    assert camera.login_attempts == 1
+    assert len(camera.sent("POST", "/api/auth/challenge")) == 1
+
+
+def test_factory_camera_without_challenge_is_entered_with_md5(camera):
+    with client_for(camera) as client:
+        assert client.login_method == "MD5"
+    assert camera.login_attempts == 1
+
+
+def test_wrong_password_on_challenge_camera_is_one_attempt(camera):
+    camera.login_mode = "challenge"
+    with pytest.raises(LoginRejected), client_for(camera, password="wrong"):
+        pass
+    assert camera.login_attempts == 1
+    assert camera.sessions == {}
+
+
+def test_challenge_password_does_not_travel_in_clear(camera):
+    camera.login_mode = "challenge"
+    camera.password = "test-secret-1"
+    with client_for(camera, password="test-secret-1"):
+        pass
+    assert "test-secret-1" not in str(camera.requests)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        (200, "<html>login</html>"),
+        (200, {"salt": "00" * 16, "iterations": 10000, "algorithm": "md5"}),
+        (200, {"salt": "zz" * 16, "iterations": 10000, "algorithm": "pbkdf2-sha256"}),
+        (200, {"salt": "00" * 16, "iterations": "10000", "algorithm": "pbkdf2-sha256"}),
+        (200, {"salt": "00" * 16, "iterations": True, "algorithm": "pbkdf2-sha256"}),
+        (200, {"salt": "00" * 16, "iterations": 0, "algorithm": "pbkdf2-sha256"}),
+        (405, None),
+    ],
+)
+def test_strange_challenge_answer_means_md5(camera, answer):
+    camera.challenge_answer = answer
+    with client_for(camera) as client:
+        assert client.login_method == "MD5"
+    assert camera.login_attempts == 1
+
+
+def test_huge_iterations_stop_before_login_attempt(camera):
+    camera.challenge_answer = (
+        200,
+        {"salt": "00" * 16, "iterations": 10**9, "algorithm": "pbkdf2-sha256"},
+    )
+    with pytest.raises(LoginFailed, match="итераций"), client_for(camera):
+        pass
+    assert camera.login_attempts == 0
+    assert camera.sessions == {}
+
+
+def test_relogin_reuses_known_login_without_new_challenge(camera):
+    camera.login_mode = "challenge"
+    camera.expire_session_after = 1
+    with client_for(camera) as client:
+        assert client.call(INFO).status_code == 200
+    assert camera.login_attempts == 2
+    assert len(camera.sent("POST", "/api/auth/challenge")) == 1
+
+
+def test_lockout_429_is_not_retried_after_restart(camera):
+    camera.lockout_429 = True
+    client = client_for(camera)
+    with pytest.raises(LoginFailed, match="заблокировала"):
+        client._login()
+    client.expect_restart()
+    assert client._relogin_used is True
+    client.close()

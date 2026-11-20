@@ -91,7 +91,7 @@ def test_only_map_reads_reach_camera(camera):
     read_all(camera)
     methods = {(r.method, r.path) for r in camera.requests}
     posts = {path for method, path in methods if method != "GET"}
-    assert posts <= {"/api/auth/login", "/api/auth/logout"}
+    assert posts <= {"/api/auth/challenge", "/api/auth/login", "/api/auth/logout"}
 
 
 def test_unknown_target_is_not_sent(camera):

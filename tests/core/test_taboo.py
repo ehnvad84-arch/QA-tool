@@ -301,6 +301,7 @@ def test_author_and_cloudy_not_blocked(title):
     "method, url",
     [
         ("GET", "http://cam/api/auth/create_session"),
+        ("POST", "http://cam/api/auth/challenge"),
         ("POST", "http://cam/api/auth/login"),
         ("POST", "http://cam/api/auth/logout"),
     ],
@@ -319,6 +320,7 @@ def test_camera_login_passes_word_filter(method, url):
         ("POST", "http://cam/api/auth/%6cogin"),
         ("POST", "http://cam/API/AUTH/LOGIN"),
         ("POST", "http://cam/api/auth/validate_session"),
+        ("POST", "http://cam/api/auth/challenge;/../users/set_password"),
         ("POST", "http://cam/api/auth/set_password"),
     ],
 )
