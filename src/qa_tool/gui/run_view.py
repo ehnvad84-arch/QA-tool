@@ -108,17 +108,29 @@ class SlotView:
         return self.total > 0 and self.done >= self.total and not self.stopped
 
     @property
+    def name(self) -> str:
+        """Чья камера: паспорт прогона, иначе паспорт из поиска, иначе производитель стенда.
+
+        Паспорт прогона приходит не сразу, а у камеры, отказавшей в ONVIF, не приходит вовсе:
+        без запасных источников инженер видел бы на месте один адрес.
+        """
+        parts = (self.passport.get("manufacturer", ""), self.passport.get("model", ""))
+        found = " ".join(p for p in parts if p)
+        if found or self.camera is None:
+            return found
+        return self.camera.title
+
+    @property
     def maker(self) -> str:
-        """Производитель из паспорта; до паспорта — адрес камеры из стенда."""
-        if self.passport.get("manufacturer"):
-            return self.passport["manufacturer"]
-        return self.camera.address if self.camera else "свободно"
+        """Строка места в списке камер: название и адрес."""
+        if self.camera is None:
+            return "свободно"
+        return " · ".join(p for p in (self.name, self.camera.address) if p)
 
     @property
     def model(self) -> str:
-        """Производитель и модель для шапки карточки."""
-        parts = (self.passport.get("manufacturer", ""), self.passport.get("model", ""))
-        return " ".join(p for p in parts if p) or self.maker
+        """Шапка карточки: название камеры, без него — адрес."""
+        return self.name or (self.camera.address if self.camera else "свободно")
 
     @property
     def percent(self) -> int:

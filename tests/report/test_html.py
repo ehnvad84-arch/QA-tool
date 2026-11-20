@@ -4,6 +4,7 @@ from qa_tool.core.checks import CheckResult, CheckSpec, Evidence, Severity, Stat
 from qa_tool.core.models import Camera, Place, Scenario, Stand
 from qa_tool.core.store import RunStore
 from qa_tool.report.html import render_protocol, render_summary
+from qa_tool.report.markdown import md_text, render_protocol_md, render_summary_md
 from qa_tool.report.model import build_protocol, build_summary
 from qa_tool.report.publish import publish
 
@@ -146,3 +147,31 @@ def test_stream_module_has_a_russian_title(store):
     ok = CheckResult(Status.PASSED, evidence=[Evidence("a.txt", "x")])
     store.add_result(1, row, ok, "t")
     assert "Поток и стресс" in render_protocol(build_protocol(store, 1))
+
+
+def test_markdown_protocol_escapes_camera_answers_and_hides_secrets(store):
+    md = render_protocol_md(build_protocol(store, 1))
+    assert "<script>" not in md and "&lt;script&gt;alert(1)&lt;/script&gt;" in md
+    assert "<b>401</b>" not in md
+    assert "s3cret" not in md
+    assert md.startswith(f"# Протокол испытаний IP-камеры № {store.run_id}-1")
+    results = md.split("## 2. Результаты проверок")[1].split("## 3.")[0]
+    assert len([line for line in results.splitlines() if line.startswith("| ")]) == 1 + 4
+    assert "### 1. " in md and "Важность: блокер" in md
+
+
+def test_markdown_cell_cannot_break_table():
+    assert md_text("a|b\nc *d* [e](f)") == "a\\|b<br>c \\*d\\* \\[e\\](f)"
+
+
+def test_markdown_summary_has_column_per_camera(store):
+    md = render_summary_md(build_summary(store))
+    header = next(line for line in md.splitlines() if line.startswith("| Проверка |"))
+    assert header.count("|") == 4  # проверка и две камеры
+    assert "| **T-OK** Проверка T-OK | прошла | прошла |" in md
+    assert "| **T-BAD** Проверка T-BAD | не прошла | — |" in md
+
+
+def test_publish_writes_markdown(store):
+    names = {p.name for p in publish(store)}
+    assert {"protocol_1.md", "protocol_2.md", "summary.md"} <= names

@@ -107,13 +107,13 @@ def test_protocols_screen_opens_all_formats(qtbot, tmp_path, fleet):
     assert protocols.docs_table.rowCount() == 3  # сводка + 2 камеры
     for row in range(3):
         protocols.docs_table.selectRow(row)
-        for fmt in ("pdf", "xlsx", "html"):
+        for fmt in ("pdf", "xlsx", "html", "md"):
             assert protocols.open_selected(fmt) is not None
     names = sorted(p.name for p in opened)
     assert names == sorted(
         f"{stem}.{fmt}"
         for stem in ("summary", "protocol_1", "protocol_2")
-        for fmt in ("pdf", "xlsx", "html")
+        for fmt in ("pdf", "xlsx", "html", "md")
     )
 
 
@@ -232,7 +232,7 @@ def test_codec_note_follows_writes_checkbox_and_sits_in_its_group(qtbot, tmp_pat
 
 
 def test_protocols_screen_lists_codec_comparison(qtbot, tmp_path, fleet):
-    from qa_tool.gui.screens.protocols import CODEC_COMPARE, ProtocolsScreen
+    from qa_tool.gui.screens.protocols import CODEC_COMPARE, NO_MD, ProtocolsScreen
 
     window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
     window.run_block.start_button.click()
@@ -249,6 +249,8 @@ def test_protocols_screen_lists_codec_comparison(qtbot, tmp_path, fleet):
     assert "Кривые качества" in protocols.docs_table.item(1, 0).toolTip()
     protocols.docs_table.selectRow(1)
     assert protocols.open_selected("html") == run_dir / f"{CODEC_COMPARE}.html"
+    assert protocols.open_selected("md") is None
+    assert protocols.empty.text() == NO_MD
 
 
 def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):
@@ -270,6 +272,31 @@ def test_protocols_screen_lists_image_comparison(qtbot, tmp_path, fleet):
     assert "0, 50 и 100 %" in protocols.docs_table.item(1, 0).toolTip()
     protocols.docs_table.selectRow(1)
     assert protocols.open_selected("html") == run_dir / f"{IMAGE_COMPARE}.html"
+
+
+def test_markdown_of_old_run_built_from_run_base(qtbot, tmp_path, fleet):
+    from qa_tool.gui.screens.protocols import IMAGE_COMPARE, ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:2], checks=["CORE-CONNECT-1"])
+    window.run_block.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+    run_dir = window.run_control.last_store.run_dir
+    # прогон версии до 0.6.4: Markdown не выпускался
+    for old in run_dir.glob("*.md"):
+        old.unlink()
+    (run_dir / f"{IMAGE_COMPARE}.html").write_text("<p>сравнение</p>", encoding="utf-8")
+    protocols = screen(window, ProtocolsScreen)
+    protocols.opener = lambda _path: None
+    window.menu.setCurrentRow(4)
+    protocols.refresh()
+    protocols.docs_table.selectRow(0)
+    summary = protocols.open_selected("md")
+    assert summary == run_dir / "summary.md"
+    assert "Сравнение картинки — image_compare.html" in summary.read_text(encoding="utf-8")
+    protocols.docs_table.selectRow(3)
+    protocol = protocols.open_selected("md")
+    assert protocol == run_dir / "protocol_2.md"
+    assert "# Протокол испытаний IP-камеры №" in protocol.read_text(encoding="utf-8")
 
 
 def test_api_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):

@@ -1,4 +1,4 @@
-"""Выпуск протоколов прогона в папку прогона: HTML, PDF, Excel по камере и сводные."""
+"""Выпуск протоколов прогона в папку прогона: HTML, PDF, Excel, Markdown по камере и сводные."""
 
 from pathlib import Path
 
@@ -7,6 +7,7 @@ from qa_tool.report.api_doc import build_api_document
 from qa_tool.report.codec_compare import build_codec_compare, publish_codec_compare
 from qa_tool.report.html import render_protocol, render_summary, render_template, write_html
 from qa_tool.report.image_compare import build_image_compare, publish_image_compare
+from qa_tool.report.markdown import render_protocol_md, render_summary_md, write_md
 from qa_tool.report.model import build_summary
 from qa_tool.report.pdf import write_pdf
 from qa_tool.report.xlsx import write_api_map_xlsx, write_protocol_xlsx, write_summary_xlsx
@@ -35,6 +36,7 @@ def publish(store: RunStore) -> list[Path]:
             write_html(out / f"protocol_{p.slot}.html", html),
             write_pdf(out / f"protocol_{p.slot}.pdf", html, f"Протокол {p.protocol_id}", out),
             write_protocol_xlsx(out / f"protocol_{p.slot}.xlsx", p),
+            write_md(out / f"protocol_{p.slot}.md", render_protocol_md(p)),
         ]
         doc = build_api_document(p, out)
         if doc is not None:
@@ -50,5 +52,6 @@ def publish(store: RunStore) -> list[Path]:
         write_html(out / "summary.html", html),
         write_pdf(out / "summary.pdf", html, f"Сводный отчёт {summary.run_id}"),
         write_summary_xlsx(out / "summary.xlsx", summary),
+        write_md(out / "summary.md", render_summary_md(summary)),
     ]
     return written

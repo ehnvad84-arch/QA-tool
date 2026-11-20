@@ -4,7 +4,7 @@ from qa_tool.core.config import load_stand
 from qa_tool.core.models import Camera, ConfigError, Place
 from qa_tool.gui.app import create_app
 from qa_tool.gui.main_window import MainWindow
-from qa_tool.gui.screens.cameras import NO_FREE_SLOTS, CamerasScreen
+from qa_tool.gui.screens.cameras import NO_FREE_SLOTS, PORT, CamerasScreen
 from qa_tool.gui.screens.stand import StandScreen
 from qa_tool.gui.state import AppState
 from tests.mock_camera import start_fleet
@@ -35,7 +35,7 @@ def test_eight_cameras_placed_ninth_rejected(window, tmp_path, memory_keyring):
     assert "pw" not in text and "password" not in text
     assert len(load_stand(tmp_path / "stand.yaml").cameras) == 8
     assert memory_keyring.store[("qa-tool", "10.0.0.3:80")] == "pw"
-    assert cameras.slot_labels[3].text().startswith("10.0.0.3")
+    assert "10.0.0.3:80" in cameras.slot_labels[3].text()
 
 
 def test_remove_camera_frees_slot(window, tmp_path):
@@ -60,7 +60,7 @@ def test_find_cameras_fills_table(window, qtbot):
         cameras = screen(window, CamerasScreen)
         cameras.find_cameras()
         qtbot.waitUntil(lambda: cameras.find_button.isEnabled(), timeout=10000)
-        ports = {int(cameras.table.item(r, 1).text()) for r in range(cameras.table.rowCount())}
+        ports = {int(cameras.table.item(r, PORT).text()) for r in range(cameras.table.rowCount())}
         assert {m.port for m in fleet} <= ports
     finally:
         responder.stop()
