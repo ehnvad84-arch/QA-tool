@@ -1,4 +1,4 @@
-"""Экран «Протоколы»: прогоны из папки прогонов, протоколы камер и сводка в трёх форматах."""
+"""Экран «Протоколы»: прогоны из папки прогонов, протоколы камер и сводка в четырёх форматах."""
 
 import re
 import sqlite3
@@ -13,7 +13,8 @@ from qa_tool.core.scheduler import summary_status
 from qa_tool.core.store import RunStore
 from qa_tool.gui.help import helped
 from qa_tool.gui.screens.base import Screen
-from qa_tool.report.model import build_protocol
+from qa_tool.report.markdown import render_protocol_md, render_summary_md, write_md
+from qa_tool.report.model import build_protocol, build_summary
 
 SUMMARY = "summary"
 IMAGE_COMPARE = "image_compare"
@@ -28,6 +29,8 @@ API_MAP_TIP = (
     "Итоги, пары с ONVIF и задачи — в протоколе камеры."
 )
 _SIZE = re.compile(r"разделов \d+, параметров \d+")
+_PROTOCOL = re.compile(r"protocol_(\d+)")
+NO_MD = "Markdown есть только у протоколов камер и сводного отчёта."
 
 
 def _api_size(protocol) -> str:
@@ -37,6 +40,29 @@ def _api_size(protocol) -> str:
     found = _SIZE.search(protocol.api.map_reason)
     size = found.group() if found else ""
     return f"по трафику веб-обхода: {size}" if protocol.api.traffic else size
+
+
+def write_markdown(run_dir: Path, stem: str) -> Path:
+    """Собрать Markdown сводки или протокола из базы прогона.
+
+    Прогоны версий до 0.6.4 выпускались без .md: файл появляется при первом открытии.
+
+    Args:
+        run_dir: папка прогона с run.sqlite.
+        stem: `summary` или `protocol_<место>`.
+    """
+    store = RunStore(run_dir, readonly=True)
+    try:
+        if stem == SUMMARY:
+            summary = build_summary(store)
+            summary.image_compare = (run_dir / f"{IMAGE_COMPARE}.html").exists()
+            summary.codec_compare = (run_dir / f"{CODEC_COMPARE}.html").exists()
+            text = render_summary_md(summary)
+        else:
+            text = render_protocol_md(build_protocol(store, int(stem.removeprefix("protocol_"))))
+    finally:
+        store.close()
+    return write_md(run_dir / f"{stem}.md", text)
 
 
 def open_file(path: Path) -> None:
@@ -80,7 +106,7 @@ def list_runs(runs_dir: Path) -> list[dict]:
 class ProtocolsScreen(Screen):
     title = "Протоколы"
     help_id = "protocols"
-    hint = "Готовые протоколы прогонов: открыть PDF, Excel или HTML"
+    hint = "Готовые протоколы прогонов: открыть PDF, Excel, HTML или Markdown"
     intro = "Выберите прогон, затем сводный отчёт или протокол камеры, и откройте нужный формат."
 
     def build(self) -> None:
@@ -118,6 +144,12 @@ class ProtocolsScreen(Screen):
                 "Таблицы проверок и задач — удобно фильтровать и передавать.",
             ),
             ("html", "Открыть HTML", "Протокол в браузере."),
+            (
+                "md",
+                "Открыть Markdown",
+                "Протокол текстом (.md): вставить в задачу, письмо или документ. "
+                "Для прогонов прошлых версий файл собирается из базы прогона при открытии.",
+            ),
         ]:
             button = helped(QPushButton(text), tip, "protocols-files")
             button.clicked.connect(lambda _=False, f=fmt: self.open_selected(f))
@@ -155,6 +187,7 @@ class ProtocolsScreen(Screen):
             ]
             for c, value in enumerate(values):
                 self.runs_table.setItem(r, c, QTableWidgetItem(value))
+        self.runs_table.resizeColumnsToContents()
         self.empty.setText(
             "" if self.runs else "Прогонов пока нет. Запустите прогон на экране «Прогон»."
         )
@@ -225,6 +258,7 @@ class ProtocolsScreen(Screen):
                 elif stem.startswith("api_map_"):
                     item.setToolTip(API_MAP_TIP)
                 self.docs_table.setItem(r, c, item)
+        self.docs_table.resizeColumnsToContents()
         self.docs_table.selectRow(0)
 
     def open_selected(self, fmt: str) -> Path | None:
@@ -232,7 +266,17 @@ class ProtocolsScreen(Screen):
         rows = self.docs_table.selectionModel().selectedRows()
         if run is None or not rows:
             return None
-        path = run["dir"] / f"{self.docs[rows[0].row()]}.{fmt}"
+        stem = self.docs[rows[0].row()]
+        path = run["dir"] / f"{stem}.{fmt}"
+        if fmt == "md" and not path.exists():
+            if stem != SUMMARY and not _PROTOCOL.fullmatch(stem):
+                self.empty.setText(NO_MD)
+                return None
+            try:
+                write_markdown(run["dir"], stem)
+            except (OSError, sqlite3.Error, KeyError, ValueError) as e:
+                self.empty.setText(f"Markdown не собран: {e}")
+                return None
         if not path.exists():
             self.empty.setText(f"Файла нет: {path.name}")
             return None

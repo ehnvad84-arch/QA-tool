@@ -45,7 +45,7 @@ def test_s1_slot_states_before_during_after():
         Event("result", 1, "CORE-CONNECT-1", "Камера отвечает", "прошла", severity="блокер"),
     )
     assert (slot.maker, slot.model, slot.percent, slot.summary) == (
-        "Dahua",
+        "Dahua X1 · 10.0.0.1",
         "Dahua X1",
         33,
         "ошибок нет",
@@ -249,3 +249,15 @@ def test_api_map_step_counts_rows_not_operations():
     assert step.label == "API камеры: карта и сверка с ONVIF: 5 строк"
     ruver = Step("09:12", "API-RUVER-1", "API «Рувер»", parts=["прошла"] * 2)
     assert ruver.label.endswith("2 операции")
+
+
+def test_name_before_passport_from_search_or_vendor():
+    view = RunView(8)
+    view.reset(1, Camera(slot=1, address="10.0.0.1", username="admin", name="Ruware-Hisi NVT"), 3)
+    view.reset(2, Camera(slot=2, address="10.0.0.2", username="admin", vendor="ruver"), 3)
+    view.reset(3, Camera(slot=3, address="10.0.0.3", username="admin", vendor="dahua"), 3)
+    assert view.slots[1].maker == "Ruware-Hisi NVT · 10.0.0.1"
+    assert view.slots[1].model == "Ruware-Hisi NVT"
+    assert view.slots[2].maker == "Рувер · 10.0.0.2"
+    assert view.slots[3].model == "Dahua"
+    assert view_with().slots[1].model == "10.0.0.1"  # generic без паспорта — только адрес

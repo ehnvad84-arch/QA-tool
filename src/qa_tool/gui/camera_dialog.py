@@ -1,5 +1,7 @@
 """Окно «Камера на место»: адрес, порты, логин, пароль, производитель, место."""
 
+import re
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -25,8 +27,13 @@ VENDORS = [
 ]
 
 
+# Паспорт ONVIF называет производителя по-своему: камеры «Рувер» пишут «Ruware-Hisi».
+_ALIASES = {"ruware": RUVER, "рувер": RUVER}
+
+
 def vendor_from_manufacturer(manufacturer: str) -> str:
-    word = (manufacturer.split() or ["generic"])[0].lower()
+    word = re.split(r"[\s_/,.-]+", manufacturer.strip().lower())[0]
+    word = _ALIASES.get(word, word)
     return word if word in VENDORS else "generic"
 
 
@@ -56,11 +63,10 @@ class CameraDialog(QDialog):
         self.username = helped(QLineEdit("admin"), "Логин администратора камеры.", "cameras-add")
         self.password = helped(
             QLineEdit(),
-            "Пароль камеры. Хранится в системном хранилище паролей, "
-            "в файлы стенда и протоколы не попадает.",
+            "Пароль камеры. Показан открыто: инженеру стенда он не секрет. "
+            "Хранится в системном хранилище паролей, в файлы стенда и протоколы не попадает.",
             "cameras-add",
         )
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.vendor = helped(
             QComboBox(),
             "Производитель. Любая камера проверяется по ONVIF, потоку, картинке и "

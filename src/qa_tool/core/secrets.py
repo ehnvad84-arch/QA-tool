@@ -1,5 +1,6 @@
 """Пароли камер и очистка доказательств от секретов (docs/rules/security.md)."""
 
+import contextlib
 import os
 import re
 
@@ -37,6 +38,19 @@ def set_password(camera: Camera, password: str) -> bool:
         return False
     _session.pop(_key(camera), None)
     return True
+
+
+def forget_password(camera: Camera) -> None:
+    """Убрать пароль камеры из хранилища и памяти; пароля нет — без ошибки.
+
+    Нужен, когда инженер стёр пароль в таблице: прогон тогда остановится с понятной причиной,
+    а не войдёт со старым паролем.
+    """
+    _session.pop(_key(camera), None)
+    for key in (_key(camera), camera.address):  # и ключ ранних версий — только адрес
+        # пароля нет или хранилища нет — забывать нечего
+        with contextlib.suppress(Exception):
+            keyring.delete_password(SERVICE, key)
 
 
 def _stored(camera: Camera) -> str | None:

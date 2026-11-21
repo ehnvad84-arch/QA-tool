@@ -6,6 +6,8 @@ from pathlib import Path
 
 MAX_SLOTS = 8
 RUVER = "ruver"
+# Как производитель звучит по-русски, когда паспорта камеры нет
+VENDOR_TITLES = {RUVER: "Рувер"}
 
 
 class ConfigError(ValueError):
@@ -46,6 +48,15 @@ class Camera:
             raise ConfigError(f"Место {self.slot}: не указан адрес камеры")
         if set(self.lan_address) & set("/@ :\\"):
             raise ConfigError(f"Место {self.slot}: адрес за туннелем — только IPv4 или имя хоста")
+
+    @property
+    def title(self) -> str:
+        """Название камеры для людей: паспорт ONVIF из поиска, иначе производитель; иначе пусто."""
+        if self.name:
+            return self.name
+        if self.vendor == "generic":
+            return ""
+        return VENDOR_TITLES.get(self.vendor, self.vendor.capitalize())
 
 
 @dataclass
