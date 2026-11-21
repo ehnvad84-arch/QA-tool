@@ -23,7 +23,8 @@ needs_video = pytest.mark.skipif(
     reason="нет ffmpeg или ffprobe",
 )
 needs_hevc = pytest.mark.skipif(
-    not mock_rtsp.hevc_available(), reason="в ffmpeg нет кодировщика H.265 (libx265, kvazaar)"
+    not mock_rtsp.hevc_available(),
+    reason="в ffmpeg нет рабочего кодировщика H.265 (libx265, kvazaar)",
 )
 ONE_SAMPLE = Timings(keyframe_wait_s=12.0, clip_s=2.0, settle_frames=2, settle_max_s=0.0)
 TOLERANCE_PCT = 15.0  # выборка 2 с захватывает ключевой кадр следующей группы

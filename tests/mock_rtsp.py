@@ -174,12 +174,27 @@ def _hevc_encoder(ffmpeg: str) -> tuple[str, ...] | None:
         params = f"bframes=0:keyint={FPS}:min-keyint={FPS}:scenecut=0:log-level=error"
         return ("-c:v", "libx265", "-x265-params", params)
     if "libkvazaar" in listed:
-        return ("-c:v", "libkvazaar", "-kvazaar-params", f"gop=0,period={FPS}")
+        kvazaar = ("-c:v", "libkvazaar", "-kvazaar-params", f"gop=0,period={FPS}")
+        return kvazaar if _encodes(ffmpeg, kvazaar) else None
     return None
 
 
+def _encodes(ffmpeg: str, encoder: tuple[str, ...]) -> bool:
+    """Кодирует ли кодировщик на деле: kvazaar сборки BtbN autobuild-2026-11-20 для Windows
+    падает с нарушением доступа к памяти (0xC0000005) на любом ролике, хотя в списке есть."""
+    trial = [ffmpeg, "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"]
+    trial += ["-frames:v", "1", *encoder, "-f", "null", "-"]
+    try:
+        return subprocess.run(trial, capture_output=True, timeout=30, check=False).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
 def hevc_available() -> bool:
-    """Можно ли собрать ролик H.265 для mock-камеры (для `skipif` тестов H.265)."""
+    """Можно ли собрать ролик H.265 для mock-камеры (для `skipif` тестов H.265).
+
+    Кодировщик проверяется пробным кодированием, а не только по списку ffmpeg.
+    """
     ffmpeg = find_ffmpeg()
     return ffmpeg is not None and _hevc_encoder(ffmpeg) is not None
 
