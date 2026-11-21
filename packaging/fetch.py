@@ -14,16 +14,16 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-_BTBN = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-02-12-51/"
+_BTBN = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-20-12-40/"
 PINS = {
     # ffmpeg 8.1.3, вариант LGPL (статический), — хэши из checksums.sha256 выпуска
     "ffmpeg-linux": (
-        _BTBN + "ffmpeg-n8.1.3-32-g760d10603e-linux64-lgpl-8.1.tar.xz",
-        "be5123da8ba6a1745814151ccdaaee5151212b65dde44cbe914e5b2cf10661a1",
+        _BTBN + "ffmpeg-n8.1.3-39-g660b5aa7db-linux64-lgpl-8.1.tar.xz",
+        "689ef2543987e4c67ebe2dfddb86e4d0b1469e965483df0aa2916bbe6b218752",
     ),
     "ffmpeg-windows": (
-        _BTBN + "ffmpeg-n8.1.3-32-g760d10603e-win64-lgpl-8.1.zip",
-        "d84ba8f0636333a242728908d8cdefa1496893cbc616c706a8379aa4570ced04",
+        _BTBN + "ffmpeg-n8.1.3-39-g660b5aa7db-win64-lgpl-8.1.zip",
+        "a16d63673d8b28ec0b4fb7311677fd8f6fa9f221f40bf00b48c01ce8e9122be8",
     ),
     # appimagetool 1.9.1 — у выпуска нет опубликованного хэша, закреплён хэш первой загрузки
     "appimagetool": (
