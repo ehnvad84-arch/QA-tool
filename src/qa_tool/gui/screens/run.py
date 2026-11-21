@@ -12,6 +12,7 @@ from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 from qa_tool.core.checks import Status
 from qa_tool.core.models import MAX_SLOTS
 from qa_tool.gui.help import helped
+from qa_tool.gui.preview import PreviewWorker
 from qa_tool.gui.run_view import RUNNING, RunView, SlotView
 from qa_tool.gui.screens.base import Screen
 from qa_tool.gui.screens.protocols import open_file
@@ -39,6 +41,7 @@ STEP_TONES = {
     Status.STAND_ERROR.value: "stand",
     RUNNING: "running",
 }
+PREVIEW_PAUSED = "превью на паузе: идёт прогон, лишнее подключение помешало бы проверкам потока"
 CARD_REFRESH_MS = 150  # onvif-tt шлёт сотни строк подряд: карточку перерисовываем пачкой
 
 
@@ -352,13 +355,15 @@ class CameraCard(QWidget):
         head = QHBoxLayout()
         head.setSpacing(18)
         self.preview = helped(
-            plain("превью потока — с этапа 4"),
-            "Здесь будет живое видео камеры: модуль «Поток» (этап 4).",
+            plain("превью потока"),
+            "Кадр с камеры раз в несколько секунд — второй, лёгкий поток. Во время прогона "
+            "превью на паузе: лишнее подключение могло бы сорвать проверки потока.",
             "run-card",
         )
         self.preview.setProperty("role", "preview")
         self.preview.setFixedSize(240, 135)
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setWordWrap(True)
         head.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignTop)
         info = QVBoxLayout()
         info.setSpacing(6)
@@ -392,6 +397,25 @@ class CameraCard(QWidget):
         panels.addWidget(self.steps, 1)
         panels.addWidget(self.tasks, 1)
         layout.addLayout(panels, 1)
+
+    def show_frame(self, jpeg: bytes) -> bool:
+        """Показать кадр превью; False — JPEG не разобрался, остался прежний вид."""
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(jpeg, "JPEG"):
+            return False
+        self.preview.setPixmap(
+            pixmap.scaled(
+                self.preview.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        return True
+
+    def show_preview_text(self, text: str) -> None:
+        """Надпись вместо кадра: подключение, пауза или почему кадра нет."""
+        self.preview.setPixmap(QPixmap())
+        self.preview.setText(text)
 
     def show_view(self, view: SlotView | None) -> None:
         """Показать место; None — на стенде нет камер."""
@@ -450,6 +474,10 @@ class RunScreen(Screen):
         self._card_timer.timeout.connect(self._show_card)
         self.control = None
         self.showing_run = False  # на экране итог прогона, а не ожидание
+        self.preview = PreviewWorker(self.state.stand.place)
+        self.preview.frame.connect(self._on_frame)
+        self.preview.status.connect(self._on_preview_status)
+        self._preview_slot: int | None = None
         self.warn = plain_warning  # тесты подставляют запись вместо окошка
         self.refresh()
 
@@ -510,10 +538,13 @@ class RunScreen(Screen):
 
     def _on_published(self, store, error: str) -> None:
         self._update_protocol_link()
+        # прогон закончился — превью снова идёт; после сигнала, когда `running` уже снят
+        QTimer.singleShot(0, self._watch_preview)
         if error:
             self.warn(self, "Прогон", error)
 
     def _on_failed(self, error: str) -> None:
+        QTimer.singleShot(0, self._watch_preview)
         started = any(v.started for v in self.view.slots.values())
         self.showing_run = started  # оборвался посреди проверок: сделанное остаётся на экране
         if started:
@@ -527,6 +558,42 @@ class RunScreen(Screen):
         slot = self.cameras.selected_slot()
         self.card.show_view(self.view.slots[slot] if slot else None)
         self._update_protocol_link()
+        self._watch_preview()
+
+    # --- превью потока -------------------------------------------------------------------------
+
+    def _watch_preview(self) -> None:
+        """Превью выбранной камеры; пауза, пока идёт прогон или экран не виден."""
+        slot = self.cameras.selected_slot()
+        camera = self.state.stand.camera_at(slot) if slot else None
+        paused = self.state.running or not self.isVisible()
+        if slot != self._preview_slot:
+            self._preview_slot = slot
+            self.card.show_preview_text("подключение…" if camera else "превью потока")
+        if self.state.running and camera is not None:
+            # последний кадр остаётся, пауза — в подсказке; без кадра — словами
+            if self.card.preview.pixmap().isNull():
+                self.card.show_preview_text(PREVIEW_PAUSED)
+            self.card.preview.setToolTip(PREVIEW_PAUSED)
+        self.preview.set_paused(paused)
+        self.preview.watch(camera)
+
+    def _on_frame(self, slot: int, jpeg: bytes) -> None:
+        if slot == self._preview_slot and not self.state.running:
+            self.card.show_frame(jpeg)
+
+    def _on_preview_status(self, slot: int, text: str) -> None:
+        if slot == self._preview_slot and not self.state.running:
+            self.card.show_preview_text(text)
+            self.card.preview.setToolTip(text)
+
+    def showEvent(self, event) -> None:  # noqa: N802 — имя метода задаёт Qt
+        super().showEvent(event)
+        self._watch_preview()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 — имя метода задаёт Qt
+        super().hideEvent(event)
+        self.preview.set_paused(True)
 
     def protocol_path(self) -> Path | None:
         """HTML-протокол выбранной камеры последнего прогона, если он выпущен."""

@@ -101,6 +101,14 @@ def user_settings(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_preview(monkeypatch):
+    """Превью потока в тестах окна выключено; свои тесты превью включают его сами."""
+    from qa_tool.gui import preview
+
+    monkeypatch.setattr(preview, "ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
 def memory_keyring(monkeypatch):
     backend = MemoryKeyring()
     previous = keyring.get_keyring()
