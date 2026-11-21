@@ -1,5 +1,7 @@
-"""Оформление окна: светлая и тёмная палитры варианта D, встроенные шрифты, выбор темы.
+"""Оформление окна в фирменном стиле «Рувер»: светлая и тёмная палитры, шрифты, логотип, выбор темы.
 
+Фирменный стиль — брендбук «Рувер» (docs/work/brand-style/feature-spec.md): красный #BA0000 —
+акцент и заголовки, чёрный, белый, серые #D8D8D8 и #F2F2F2 — фон и плашки, шрифт Montserrat.
 Цвета задаются только здесь (токены из docs/work/gui-layout/feature-spec.md, раздел UI):
 виджеты получают их через таблицу стилей по свойству `role` или берут `current()` при
 рисовании. Тема меняется на ходу, без перезапуска, выбор запоминается в настройках
@@ -9,13 +11,22 @@
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtCore import QRectF, QSettings, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication
 
 FONT_DIR = Path(__file__).parent / "fonts"
-FONT_FILES = ("PTSans-Regular.ttf", "PTSans-Bold.ttf", "PTMono-Regular.ttf")
-SANS, MONO = "PT Sans", "PT Mono"
+FONT_FILES = (
+    "Montserrat-Regular.ttf",
+    "Montserrat-Medium.ttf",
+    "Montserrat-Bold.ttf",
+    "PTMono-Regular.ttf",
+)
+SANS, MONO = "Montserrat", "PT Mono"
+IMAGE_DIR = Path(__file__).parent / "images"
+# Логотип и знак — из брендбука «Рувер»; для тёмной темы чёрные части логотипа белые
+LOGO_FILES = {"light": "ruver-logo.png", "dark": "ruver-logo-dark.png"}
+SIGN_FILE = "ruver-sign.png"
 SETTINGS_KEY = "theme"
 
 
@@ -53,59 +64,60 @@ class Palette:
 
 
 LIGHT = Palette(
-    window="#f7f5f2",
-    nav="#ece8e2",
-    list="#fbfaf8",
+    window="#f2f2f2",
+    nav="#ffffff",
+    list="#f7f7f7",
     card="#ffffff",
-    border="#e0dbd3",
-    text="#24211d",
-    muted="#5f584f",
-    accent="#4338ca",
+    border="#d8d8d8",
+    text="#000000",
+    muted="#555555",
+    accent="#ba0000",
     on_accent="#ffffff",
-    dot_running="#6b7fd7",
-    dot_failed="#c0392b",
+    dot_running="#555555",
+    dot_failed="#ba0000",
     dot_ok="#2e8b57",
     dot_stand="#c9871a",
-    dot_idle="#b1a99d",
+    dot_idle="#b5b5b5",
     passed_fg="#23633a",
     passed_bg="#e4f0e6",
-    failed_fg="#8f2a20",
-    failed_bg="#f7e1de",
-    running_fg="#3a4aa0",
-    skipped_fg="#5c554c",
-    skipped_bg="#ece8e2",
+    failed_fg="#ba0000",
+    failed_bg="#f9e0e0",
+    running_fg="#333333",
+    skipped_fg="#555555",
+    skipped_bg="#e8e8e8",
     stand_fg="#7a4b0c",
     stand_bg="#f6ead3",
-    preview="#2b2824",
-    preview_text="#b1a99d",
+    preview="#1a1a1a",
+    preview_text="#b5b5b5",
 )
 
+# Фирменный красный на тёмном фоне не читается (контраст 2,9), поэтому акцент светлее
 DARK = Palette(
-    window="#1c1a17",
-    nav="#24211d",
-    list="#201e1b",
-    card="#2a2723",
-    border="#3a362f",
-    text="#ece8e2",
-    muted="#a39b8f",
-    accent="#8b85f0",
-    on_accent="#16141f",
-    dot_running="#8a9be6",
-    dot_failed="#e0675a",
+    window="#141414",
+    nav="#0d0d0d",
+    list="#191919",
+    card="#1f1f1f",
+    border="#333333",
+    text="#f2f2f2",
+    muted="#a8a8a8",
+    accent="#ff5c5c",
+    on_accent="#141414",
+    dot_running="#bdbdbd",
+    dot_failed="#ff5c5c",
     dot_ok="#4fb07a",
     dot_stand="#e0a440",
-    dot_idle="#8a8276",
+    dot_idle="#6e6e6e",
     passed_fg="#7fd19f",
     passed_bg="#1f3a2a",
-    failed_fg="#f2b8b0",
-    failed_bg="#4a2522",
-    running_fg="#aab6f2",
-    skipped_fg="#cfc7bb",
-    skipped_bg="#3a362f",
+    failed_fg="#ff9a92",
+    failed_bg="#4a1c1c",
+    running_fg="#d8d8d8",
+    skipped_fg="#cfcfcf",
+    skipped_bg="#333333",
     stand_fg="#f0cd8a",
     stand_bg="#4a3a1c",
-    preview="#12110f",
-    preview_text="#a39b8f",
+    preview="#0a0a0a",
+    preview_text="#a8a8a8",
 )
 
 THEMES = {"light": LIGHT, "dark": DARK}
@@ -133,6 +145,41 @@ def current_name() -> str:
 def current() -> Palette:
     """Цвета темы, которая сейчас на окне: для виджетов, которые рисуют себя сами."""
     return THEMES[_current]
+
+
+def logo() -> QPixmap:
+    """Логотип «Рувер» для текущей темы."""
+    return QPixmap(str(IMAGE_DIR / LOGO_FILES[_current]))
+
+
+def draw_icon(size: int = 256) -> QImage:
+    """Значок программы: фирменный знак «<Р>» на светлом скруглённом квадрате.
+
+    Знак вытянут в ширину (≈3:1), поэтому лежит на подложке: без неё в панели задач
+    он был бы тонкой полоской.
+    """
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.setPen(QColor(LIGHT.border))
+    painter.setBrush(QColor(LIGHT.window))
+    margin = size * 0.03
+    painter.drawRoundedRect(
+        QRectF(margin, margin, size - 2 * margin, size - 2 * margin), size * 0.18, size * 0.18
+    )
+    sign = QImage(str(IMAGE_DIR / SIGN_FILE))
+    width = size * 0.8
+    height = width * sign.height() / sign.width()
+    painter.drawImage(QRectF((size - width) / 2, (size - height) / 2, width, height), sign)
+    painter.end()
+    return image
+
+
+def app_icon() -> QIcon:
+    """Значок окна и панели задач."""
+    return QIcon(QPixmap.fromImage(draw_icon()))
 
 
 def load_fonts() -> list[str]:
@@ -170,7 +217,8 @@ def apply(app: QApplication, name: str, remember: bool = False) -> Palette:
     _current = name
     app.setPalette(_qpalette(p))
     font = QFont(SANS)
-    font.setPixelSize(14)
+    # Montserrat шире PT Sans, под который раскладывали окно, поэтому кегль на пиксель меньше
+    font.setPixelSize(13)
     app.setFont(font)
     app.setStyleSheet(stylesheet(p))
     if remember:
@@ -210,7 +258,8 @@ def stylesheet(p: Palette) -> str:
     return f"""
 QMainWindow, QWidget[role="page"] {{ background: {p.window}; }}
 QWidget[role="nav"] {{ background: {p.nav}; }}
-QLabel[role="brand"] {{ font-size: 18px; font-weight: bold; padding: 0 10px 14px 10px; }}
+QLabel[role="brand"] {{
+    color: {p.muted}; font-size: 12px; font-weight: 500; padding: 4px 2px 14px 2px; }}
 QListWidget[role="nav-list"] {{ background: transparent; border: none; outline: none; }}
 QListWidget[role="nav-list"]::item {{ padding: 0 12px; border-radius: 8px; margin: 1px 0; }}
 QListWidget[role="nav-list"]::item:selected {{
@@ -226,8 +275,8 @@ QLabel[role="muted"] {{ color: {p.muted}; }}
 QLabel[role="progress"] {{ color: {p.muted}; font-size: 12px; }}
 QLabel[role="notice"] {{
     background: {p.stand_bg}; border-radius: 8px; padding: 8px 12px; font-weight: bold; }}
-QLabel[role="h1"] {{ font-size: 24px; font-weight: bold; }}
-QLabel[role="h2"] {{ font-size: 16px; font-weight: bold; }}
+QLabel[role="h1"] {{ color: {p.accent}; font-size: 22px; font-weight: bold; }}
+QLabel[role="h2"] {{ font-size: 15px; font-weight: bold; }}
 QLabel[role="time"] {{ font-family: "{MONO}"; font-size: 12px; color: {p.muted}; }}
 QLabel[role="preview"] {{
     background: {p.preview}; color: {p.preview_text}; border-radius: 10px; font-size: 12px; }}

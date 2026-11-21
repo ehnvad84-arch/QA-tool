@@ -1,7 +1,7 @@
 """Главное окно варианта D: колонка разделов с блоком прогона слева, экран справа."""
 
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QCursor, QKeySequence, QShortcut
+from PySide6.QtGui import QCursor, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from qa_tool import __version__
 from qa_tool.core.checks import Phase
 from qa_tool.core.models import MAX_SLOTS
+from qa_tool.gui import theme
 from qa_tool.gui.help import help_id_of, helped
 from qa_tool.gui.help_window import HelpWindow
 from qa_tool.gui.run_control import RunControl
@@ -169,6 +170,28 @@ class RunBlock(QFrame):
         self.protocols_button.setVisible(not running and c.last_store is not None)
 
 
+class BrandLogo(QWidget):
+    """Логотип «Рувер» над меню. Рисуется по текущей теме при каждой отрисовке,
+    поэтому смена темы перекрашивает его без отдельного сигнала."""
+
+    HEIGHT = 22
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(self.HEIGHT)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 — имя метода задаёт Qt
+        pixmap = theme.logo()
+        if pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        width = min(self.width(), round(self.HEIGHT * pixmap.width() / pixmap.height()))
+        height = round(width * pixmap.height() / pixmap.width())
+        painter.drawPixmap(0, (self.HEIGHT - height) // 2, width, height, pixmap)
+        painter.end()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, state: AppState | None = None):
         super().__init__()
@@ -203,7 +226,9 @@ class MainWindow(QMainWindow):
         nav.setFixedWidth(200)
         column = QVBoxLayout(nav)
         column.setContentsMargins(12, 20, 12, 20)
-        brand = QLabel("QA-tool")
+        column.addWidget(BrandLogo())
+        brand = QLabel("QA-tool · проверка камер")
+        brand.setWordWrap(True)
         brand.setProperty("role", "brand")
         column.addWidget(brand)
         column.addWidget(self.menu, 1)

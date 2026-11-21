@@ -143,7 +143,8 @@ def cmd_doctor() -> int:
     ok = ok and "index" in topics
     print(f"хранилище паролей: {storage_name()}")
     missing = font_files_missing()
-    print(f"шрифты окна: {'не хватает ' + ', '.join(missing) if missing else 'PT Sans, PT Mono'}")
+    fonts = "не хватает " + ", ".join(missing) if missing else "Montserrat, PT Mono"
+    print(f"шрифты окна: {fonts}")
     ok = ok and not missing
     return EXIT_OK if ok else EXIT_STAND
 

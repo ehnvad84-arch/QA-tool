@@ -75,3 +75,37 @@ def test_first_launch_and_garbage_setting_give_light_theme():
     assert theme.saved_theme() == "light"
     theme.settings().setValue(theme.SETTINGS_KEY, "neon")
     assert theme.saved_theme() == "light"
+
+
+# --- фирменный стиль «Рувер» (docs/work/brand-style) -------------------------------------------
+
+
+def test_light_theme_uses_ruver_brand_colors():
+    assert theme.LIGHT.accent == "#ba0000"
+    assert (theme.LIGHT.window, theme.LIGHT.border) == ("#f2f2f2", "#d8d8d8")
+    assert theme.SANS == "Montserrat"
+
+
+def test_headings_are_brand_red_in_stylesheet():
+    css = theme.stylesheet(theme.LIGHT)
+    assert 'QLabel[role="h1"] { color: #ba0000;' in css
+
+
+def test_logo_follows_theme_and_icon_is_drawn():
+    app = create_app()
+    for name in ("light", "dark"):
+        theme.apply(app, name)
+        assert not theme.logo().isNull()
+    theme.apply(app, "light")
+    icon = theme.draw_icon(64)
+    assert icon.width() == 64 and not icon.isNull()
+    assert icon.pixelColor(32, 32).alpha() == 255  # знак на подложке, не прозрачная дыра
+    assert not app.windowIcon().isNull()
+
+
+def test_sidebar_shows_logo(tmp_path):
+    from qa_tool.gui.main_window import BrandLogo
+
+    create_app()
+    window = MainWindow(AppState(stand_path=tmp_path / "stand.yaml"))
+    assert window.findChildren(BrandLogo)

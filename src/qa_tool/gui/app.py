@@ -20,6 +20,7 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     app.setApplicationName("QA-tool")
     theme.load_fonts()
     theme.apply(app, theme.saved_theme())
+    app.setWindowIcon(theme.app_icon())
     return app
 
 
