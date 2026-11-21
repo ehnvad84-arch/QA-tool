@@ -149,8 +149,8 @@ def test_s5_bad_value_explained_and_reverted(cameras, column, bad, message):
 
 def test_s5_bad_value_on_placed_camera_keeps_stand(cameras, tmp_path):
     cameras.place_camera(Camera(slot=2, address="192.0.2.10", username="admin"), "test-secret-1")
-    type_in(cameras, 1, "")  # пустой адрес
-    assert "не указан адрес" in cameras.warnings[0]
+    type_in(cameras, 1, "")  # адрес не правится: ячейку подменили в обход редактора
+    assert cameras.warnings == []
     assert load_stand(tmp_path / "stand.yaml").camera_at(2).address == "192.0.2.10"
 
 
@@ -193,3 +193,95 @@ def test_camera_markup_in_passport_shown_as_text(cameras):
     type_in(cameras, PASSWORD, "test-secret-1")
     cameras.choose_slot(0, 1)
     assert cameras.slot_labels[1].textFormat() == Qt.TextFormat.PlainText
+
+
+# --- находки ревью круга 1 (docs/work/cameras-table/review.md) ---------------------------------
+
+SECOND = FoundCamera("192.0.2.67", 80, [], manufacturer="Dahua", model="X1")
+# та же камера за NAT на другом порту — своя строка
+SAME_HOST = FoundCamera(FOUND.address, 8080, [], manufacturer="Dahua", model="X1")
+
+
+def test_r1_same_address_and_port_cannot_appear_twice(cameras):
+    cameras._on_found([FOUND, SAME_HOST])
+    type_in(cameras, PORT, "80", row=1)
+    assert "уже есть в таблице" in cameras.warnings[-1]
+    assert cameras.table.item(1, PORT).text() == "8080"
+
+
+def test_r1_slot_goes_to_the_row_it_was_chosen_in(cameras, tmp_path):
+    cameras._on_found([FOUND, SECOND])
+    type_in(cameras, USERNAME, "first", row=0)
+    type_in(cameras, USERNAME, "second", row=1)
+    type_in(cameras, PASSWORD, "test-secret-2", row=1)
+    cameras.choose_slot(1, 3)
+    assert cameras.rows[1].slot == 3 and cameras.rows[0].slot is None
+    assert cameras.rows[0].username == "first"
+    assert load_stand(tmp_path / "stand.yaml").camera_at(3).username == "second"
+
+
+def test_r2_password_keeps_edge_spaces(cameras, memory_keyring):
+    cameras._on_found([FOUND])
+    type_in(cameras, PASSWORD, " test-secret-1 ")
+    cameras.choose_slot(0, 1)
+    assert memory_keyring.store[("qa-tool", "192.0.2.66:80")] == " test-secret-1 "
+
+
+def test_r3_cleared_password_is_forgotten(cameras, memory_keyring):
+    from qa_tool.core import secrets
+    from qa_tool.core.models import ConfigError
+
+    cameras.place_camera(Camera(slot=1, address="192.0.2.10", username="admin"), "test-secret-1")
+    type_in(cameras, PASSWORD, "")
+    assert ("qa-tool", "192.0.2.10:80") not in memory_keyring.store
+    with pytest.raises(ConfigError):
+        secrets.get_password(cameras.state.stand.camera_at(1))
+
+
+def test_r4_address_is_not_editable(cameras):
+    from PySide6.QtCore import Qt as QtCore
+
+    cameras._on_found([FOUND])
+    flags = cameras.table.item(0, 1).flags()
+    assert not flags & QtCore.ItemFlag.ItemIsEditable
+
+
+def test_r5_new_search_renames_placed_camera(cameras, tmp_path):
+    cameras._on_found([FOUND])
+    type_in(cameras, PASSWORD, "test-secret-1")
+    cameras.choose_slot(0, 2)
+    renamed = FoundCamera(FOUND.address, FOUND.port, [], manufacturer="Ruware-Hisi", model="M2")
+    cameras._on_found([renamed])
+    assert load_stand(tmp_path / "stand.yaml").camera_at(2).name == "Ruware-Hisi M2"
+    assert cameras.slot_labels[2].text().startswith("Ruware-Hisi M2")
+
+
+@pytest.mark.parametrize("bad", ["user@host", "10.0.0.1 x"])
+def test_s5_tunnel_address_with_at_or_space_refused(cameras, bad):
+    cameras._on_found([FOUND])
+    type_in(cameras, LAN_ADDRESS, bad)
+    assert "адрес за туннелем" in cameras.warnings[0]
+    assert cameras.table.item(0, LAN_ADDRESS).text() == ""
+
+
+def test_s5_bad_port_on_placed_camera_keeps_stand(cameras, tmp_path):
+    cameras.place_camera(Camera(slot=2, address="192.0.2.10", username="admin"), "test-secret-1")
+    type_in(cameras, PORT, "0")
+    assert load_stand(tmp_path / "stand.yaml").camera_at(2).port == 80
+
+
+def test_s8_markup_in_search_name_is_text_on_run_card(qtbot, tmp_path, memory_keyring):
+    from qa_tool.gui.screens.run import RunScreen
+
+    create_app()
+    window = MainWindow(AppState(stand_path=tmp_path / "stand.yaml"))
+    qtbot.addWidget(window)
+    cameras = next(s for s in window.screens if isinstance(s, CamerasScreen))
+    cameras._on_found([FoundCamera("192.0.2.5", 80, [], manufacturer="<b>X</b>")])
+    type_in(cameras, PASSWORD, "test-secret-1")
+    cameras.choose_slot(0, 1)
+    run = next(s for s in window.screens if isinstance(s, RunScreen))
+    window.menu.setCurrentRow(3)
+    run.cameras.list.setCurrentRow(0)
+    assert run.card.model.text() == "<b>X</b>"
+    assert run.card.model.textFormat() == Qt.TextFormat.PlainText

@@ -272,7 +272,11 @@ class ProtocolsScreen(Screen):
             if stem != SUMMARY and not _PROTOCOL.fullmatch(stem):
                 self.empty.setText(NO_MD)
                 return None
-            write_markdown(run["dir"], stem)
+            try:
+                write_markdown(run["dir"], stem)
+            except (OSError, sqlite3.Error, KeyError, ValueError) as e:
+                self.empty.setText(f"Markdown не собран: {e}")
+                return None
         if not path.exists():
             self.empty.setText(f"Файла нет: {path.name}")
             return None

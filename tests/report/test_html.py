@@ -175,3 +175,15 @@ def test_markdown_summary_has_column_per_camera(store):
 def test_publish_writes_markdown(store):
     names = {p.name for p in publish(store)}
     assert {"protocol_1.md", "protocol_2.md", "summary.md"} <= names
+
+
+def test_markdown_keeps_spaces_and_escapes_tilde():
+    assert md_text("; ") == "; "
+    assert md_text("~~зачёркнуто~~") == "\\~\\~зачёркнуто\\~\\~"
+
+
+def test_markdown_pipe_in_camera_name_keeps_summary_table(store):
+    store.set_passport(2, {"manufacturer": "A|B", "model": "M"})
+    md = render_summary_md(build_summary(store))
+    header = next(line for line in md.splitlines() if line.startswith("| Проверка |"))
+    assert header.count("|") - header.count("\\|") == 4

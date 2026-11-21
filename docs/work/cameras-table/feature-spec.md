@@ -79,7 +79,7 @@ PRD: docs/PRD.md → экран «Камеры»
 
 ## Архитектура, API и данные — backend-architect
 
-Только `gui/screens/cameras.py` и `gui/camera_dialog.py`. Строка таблицы — черновик камеры в памяти экрана; на стенд она уходит через существующие `Stand.add_camera` / `remove_camera` и `secrets.set_password`. Модель `Camera` и формат stand.yaml не меняются.
+`gui/screens/cameras.py`, `gui/camera_dialog.py`, `gui/run_view.py`, `gui/screens/protocols.py`, `report/markdown.py` и шаблоны `templates/*.md`, `report/publish.py`. Строка таблицы — черновик камеры в памяти экрана, ключ строки — адрес:порт (адрес не правится, двойник по порту отклоняется); на стенд она уходит через `Stand.add_camera` / `remove_camera`, `secrets.set_password` и новый `secrets.forget_password` (стёртый пароль). Модель `Camera` получила свойство `title` (без новых полей): паспорт из поиска пишется в существующее поле `name`, формат stand.yaml прежний.
 
 ## Безопасность — backend-architect
 

@@ -1,7 +1,8 @@
 """Протоколы в Markdown: тот же протокол текстом — для задач, переписки и вставки в документы.
 
 Ответы камер — недоверенные данные: каждое значение экранируется (`finalize`), чтобы ни
-разметка, ни «|» из ответа камеры не ломали таблицы и не превращались в ссылки.
+разметка, ни «|» из ответа камеры не ломали таблицы, а «[…](…)» не становились ссылками.
+Голый адрес вида http://… просмотрщик может показать ссылкой — как в любом тексте.
 """
 
 import re
@@ -11,7 +12,7 @@ from jinja2 import Environment, PackageLoader
 
 from qa_tool.report.model import Protocol, Summary
 
-_SPECIAL = re.compile(r"([\\`*_\[\]|#])")
+_SPECIAL = re.compile(r"([\\`*_\[\]|#~])")
 
 
 def md_text(value) -> str:
@@ -20,7 +21,7 @@ def md_text(value) -> str:
         return ""
     text = _SPECIAL.sub(r"\\\1", str(value))
     text = text.replace("<", "&lt;").replace(">", "&gt;")
-    return "<br>".join(line.strip() for line in text.splitlines()) or ""
+    return "<br>".join(text.splitlines())
 
 
 _ENV = Environment(

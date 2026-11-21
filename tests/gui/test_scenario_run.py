@@ -309,3 +309,25 @@ def test_api_note_under_writes_checkbox_follows_it(qtbot, tmp_path, fleet):
     )
     scenario.allow_writes.setChecked(True)
     assert any(line.startswith("«API камеры» будет менять") for line in note.text().splitlines())
+
+
+def test_markdown_write_error_is_explained(qtbot, tmp_path, fleet, monkeypatch):
+    from qa_tool.gui.screens import protocols as protocols_module
+    from qa_tool.gui.screens.protocols import ProtocolsScreen
+
+    window = make_window(qtbot, tmp_path, fleet[:1], checks=["CORE-CONNECT-1"])
+    window.run_block.start_button.click()
+    qtbot.waitUntil(lambda: not window.state.running, timeout=60000)
+    for old in window.run_control.last_store.run_dir.glob("*.md"):
+        old.unlink()
+
+    def refuse(*_args):
+        raise PermissionError("папка только для чтения")
+
+    monkeypatch.setattr(protocols_module, "write_markdown", refuse)
+    protocols = screen(window, ProtocolsScreen)
+    window.menu.setCurrentRow(4)
+    protocols.refresh()
+    protocols.docs_table.selectRow(0)
+    assert protocols.open_selected("md") is None
+    assert "Markdown не собран: папка только для чтения" in protocols.empty.text()

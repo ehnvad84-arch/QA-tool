@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from qa_tool.core.models import MAX_SLOTS, Camera, ConfigError
-from qa_tool.core.secrets import get_password, set_password
+from qa_tool.core.secrets import forget_password, get_password, set_password
 from qa_tool.drivers.camera.discovery import discover
 from qa_tool.gui.camera_dialog import VENDORS, CameraDialog, vendor_from_manufacturer
 from qa_tool.gui.help import helped
@@ -49,7 +49,7 @@ COLUMNS = [
 SLOT, ADDRESS, PORT, RTSP_PORT, USERNAME, PASSWORD, VENDOR, PASSPORT, LAN_ADDRESS = range(
     len(COLUMNS)
 )
-# Колонки, которые правятся прямо в ячейке, и поле строки за каждой
+# Текстовые колонки и поле строки за каждой; адрес — ключ строки, его не правят (спека, S2)
 TEXT_FIELDS = {
     ADDRESS: "address",
     PORT: "port",
@@ -223,6 +223,8 @@ class CamerasScreen(Screen):
             if row is None:
                 vendor = vendor_from_manufacturer(cam.manufacturer)
                 self.rows.append(CameraRow(cam.address, cam.port, vendor=vendor, passport=passport))
+            elif row.slot is not None and row.passport != passport:
+                self.edit_row(self.rows.index(row), passport=passport)  # название на стенде тоже
             else:
                 row.passport = passport
         self.refresh()
@@ -265,9 +267,10 @@ class CamerasScreen(Screen):
         for index, row in enumerate(self.rows):
             for column, field in TEXT_FIELDS.items():
                 self.table.setItem(index, column, QTableWidgetItem(str(getattr(row, field))))
-            passport = QTableWidgetItem(row.passport)
-            passport.setFlags(passport.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(index, PASSPORT, passport)
+            self.table.setItem(index, PASSPORT, QTableWidgetItem(row.passport))
+            for column in (ADDRESS, PASSPORT):
+                item = self.table.item(index, column)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setCellWidget(index, SLOT, self._slot_box(index, row, free))
             self.table.setCellWidget(index, VENDOR, self._vendor_box(index, row))
         self.table.blockSignals(False)
@@ -305,9 +308,10 @@ class CamerasScreen(Screen):
 
     def _cell_edited(self, item: QTableWidgetItem) -> None:
         field = TEXT_FIELDS.get(item.column())
-        if field is None:
+        if field is None or item.column() == ADDRESS:
             return
-        text = item.text().strip()
+        # пробел по краю пароля — часть пароля, а не опечатка
+        text = item.text() if field == "password" else item.text().strip()
         try:
             value = _parse_port(text) if field in ("port", "rtsp_port") else text
         except ValueError as e:
@@ -328,7 +332,12 @@ class CamerasScreen(Screen):
         Returns:
             False — значение неверно, инженер получил объяснение, строка не изменилась.
         """
-        row = replace(self.rows[index], **changes)
+        old = self.rows[index]
+        row = replace(old, **changes)
+        twin = self._row_for(row.address, row.port)
+        if (row.address, row.port) != (old.address, old.port) and twin is not None:
+            self.warn("Камеры", f"Камера {row.address}:{row.port} уже есть в таблице.")
+            return False
         slot = row.slot or 1  # у строки без места адрес проверяется так же, как при постановке
         try:
             camera = row.camera(slot)
@@ -339,7 +348,11 @@ class CamerasScreen(Screen):
         if row.slot is not None:
             self.state.stand.remove_camera(row.slot)
             self.state.stand.add_camera(camera)
-            in_memory_only = bool(row.password) and not set_password(camera, row.password)
+            in_memory_only = False
+            if row.password:
+                in_memory_only = not set_password(camera, row.password)
+            else:
+                forget_password(camera)  # иначе прогон тихо шёл бы со стёртым из таблицы паролем
             self.state.save()
             self._refresh_slots()
             self.notify()
@@ -362,7 +375,9 @@ class CamerasScreen(Screen):
             return
         if row.slot is not None:
             self.state.stand.remove_camera(row.slot)
-            row.slot = None
+        # Место привязывается к этой строке сразу: иначе `_sync_rows` отдал бы его первой
+        # строке с тем же адресом
+        row.slot = slot
         if camera:
             self.place_camera(camera, row.password)
         else:
